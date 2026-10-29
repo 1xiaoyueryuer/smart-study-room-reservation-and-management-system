@@ -5,10 +5,6 @@ export function login(data) {
   return request.post('/auth/login', data, { silent: true, skipAuthHandling: true })
 }
 
-export function register(data) {
-  return request.post('/auth/register', data)
-}
-
 export function logout(token) {
   return request.post('/auth/logout', null, {
     // 登出后会立即清理 localStorage，因此显式携带本次要注销的令牌。

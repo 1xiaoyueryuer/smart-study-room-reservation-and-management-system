@@ -9,13 +9,15 @@ import { getRooms } from '../api/room'
 import { getOverview } from '../api/stats'
 import { getCreditOverview } from '../api/credit'
 import AppIcon from '../components/AppIcon.vue'
+import SBanner from '../components/ui/SBanner.vue'
+import SButton from '../components/ui/SButton.vue'
 
 const router = useRouter()
 const auth = useAuthStore()
 const notifStore = useNotificationStore()
 
 const who = computed(() => auth.user?.real_name || auth.user?.username || '同学')
-const roleText = computed(() => (auth.isAdmin ? '管理员' : '学生'))
+const roleText = computed(() => auth.roleLabel)
 const helloText = computed(() => (auth.isAdmin ? '欢迎回来，请查看今日运营情况' : '今天也要高效学习'))
 const todayText = computed(() =>
   new Date().toLocaleDateString('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' })
@@ -31,15 +33,20 @@ const greeting = computed(() => {
 
 const rooms = ref([])
 const statsOverview = ref(null)
+const statsError = ref('')
+const statsLoading = ref(false)
+const roomsError = ref('')
+const roomsLoading = ref(false)
 const creditOverview = ref(null)
+const creditError = ref('')
 const unread = computed(() => notifStore.unread)
 let unreadTimer = null
 
-const currentCredit = computed(() => creditOverview.value?.score ?? auth.user?.credit_score ?? 100)
-const totalSeats = computed(() => statsOverview.value?.total_seats ?? 158)
-const inUseNow = computed(() => statsOverview.value?.in_use_now ?? 0)
-const availableSeats = computed(() => Math.max(0, totalSeats.value - inUseNow.value))
-const roomCount = computed(() => rooms.value.length || 3)
+const currentCredit = computed(() => creditOverview.value?.score ?? auth.user?.credit_score ?? null)
+const totalSeats = computed(() => statsOverview.value?.total_seats ?? null)
+const inUseNow = computed(() => statsOverview.value?.in_use_now ?? null)
+const availableSeats = computed(() => totalSeats.value === null || inUseNow.value === null ? null : Math.max(0, totalSeats.value - inUseNow.value))
+const roomCount = computed(() => rooms.value.length)
 const openHours = computed(() => {
   if (rooms.value.length && rooms.value[0].open_time && rooms.value[0].close_time) {
     return {
@@ -47,34 +54,48 @@ const openHours = computed(() => {
       close: rooms.value[0].close_time.slice(0, 5)
     }
   }
-  return { open: '08:00', close: '22:00' }
+  return { open: '—', close: '—' }
 })
 
 function refreshUnread() {
   notifStore.refresh()
 }
 
-onMounted(async () => {
+async function loadRooms() {
+  roomsLoading.value = true
+  roomsError.value = ''
   try {
     const roomResp = await getRooms()
     rooms.value = roomResp.data || []
-  } catch (e) {
-    // 降级使用默认值
+  } catch (error) {
+    roomsError.value = error.message
+  } finally {
+    roomsLoading.value = false
   }
+}
 
+async function loadStats() {
+  if (!auth.isAdmin || statsLoading.value) return
+  statsLoading.value = true
+  statsError.value = ''
   try {
     const statsResp = await getOverview()
     statsOverview.value = statsResp.data
-  } catch (e) {
-    // 降级使用默认值
+  } catch (error) {
+    statsError.value = error.message
+  } finally {
+    statsLoading.value = false
   }
+}
 
-  if (auth.isStudent) {
+onMounted(async () => {
+  await Promise.all([loadRooms(), loadStats()])
+  if (auth.isOrdinary) {
     try {
       const credResp = await getCreditOverview()
       creditOverview.value = credResp.data
-    } catch (e) {
-      // 降级使用默认值
+    } catch (error) {
+      creditError.value = error.message
     }
   }
 
@@ -93,13 +114,6 @@ const shortcuts = computed(() => auth.isAdmin
   ? [
       { title: '热力图统计', desc: '座位利用率 · 高峰时段', icon: 'analytics', to: '/analytics', tone: 'warm' },
       { title: '管理端', desc: '自习室 · 座位 · 用户', icon: 'admin', to: '/admin', tone: 'primary' },
-      {
-        title: '消息中心',
-        desc: unread.value > 0 ? `${unread.value} 条未读通知` : '通知公告 · 异常提醒',
-        icon: unread.value > 0 ? 'notification' : 'notification-empty',
-        to: '/notifications',
-        tone: 'success'
-      },
       { title: '个人中心', desc: '查看管理员账户信息', icon: 'profile', to: '/profile', tone: 'violet' }
     ]
   : [
@@ -132,25 +146,24 @@ const cardToneClass = {
     <div class="split home-split">
     <!-- 左栏：账户 KPI + 快速贴士 -->
     <div class="split-left">
-      <section v-if="auth.isStudent" class="card overview-card">
+      <section v-if="auth.isOrdinary" class="card overview-card">
         <div class="card-title-row">
           <h3>账户概览</h3>
           <span class="role-pill" :class="auth.isAdmin ? 'role-pill--admin' : 'role-pill--student'">{{ roleText }}</span>
         </div>
+        <SBanner v-if="creditError" type="error" :title="creditError">信用记录加载失败，当前显示登录资料中的分数；可前往个人中心查询。</SBanner>
         <div class="kpi-grid">
           <div class="kpi">
-            <div class="kpi-num"><SAnimatedNumber :value="currentCredit" /></div>
+            <div class="kpi-num"><SAnimatedNumber v-if="currentCredit !== null" :value="currentCredit" /><span v-else>—</span></div>
             <div class="kpi-label">现有信用分</div>
           </div>
           <div class="kpi">
-            <div class="kpi-num"><SAnimatedNumber :value="roomCount" /></div>
+            <div class="kpi-num"><SAnimatedNumber v-if="!roomsLoading && !roomsError" :value="roomCount" /><span v-else>—</span></div>
             <div class="kpi-label">自习室可用</div>
           </div>
-          <div class="kpi kpi-ok">
-            <div class="kpi-num">
-              <SAnimatedNumber :value="availableSeats" /><span class="kpi-slash">/</span><span class="kpi-total">{{ totalSeats }}</span>
-            </div>
-            <div class="kpi-label">可用座位</div>
+          <div class="kpi">
+            <div class="kpi-num"><SButton variant="ghost" @click="router.push('/booking')">查询座位</SButton></div>
+            <div class="kpi-label">按日期与时段查询可约座位</div>
           </div>
           <div class="kpi">
             <div class="kpi-num kpi-time">
@@ -167,14 +180,16 @@ const cardToneClass = {
           <h3>管理概览</h3>
           <span class="role-pill role-pill--admin">管理员</span>
         </div>
+        <p v-if="statsLoading" class="muted">正在加载统计…</p>
+        <SBanner v-if="statsError" type="error" :title="statsError"><SButton size="sm" @click="loadStats">重试统计</SButton></SBanner>
         <div class="kpi-grid">
           <div class="kpi">
-            <div class="kpi-num"><SAnimatedNumber :value="roomCount" /></div>
+            <div class="kpi-num"><SAnimatedNumber v-if="!roomsLoading && !roomsError" :value="roomCount" /><span v-else>—</span></div>
             <div class="kpi-label">自习室</div>
           </div>
           <div class="kpi kpi-ok">
             <div class="kpi-num">
-              <SAnimatedNumber :value="availableSeats" /><span class="kpi-slash">/</span><span class="kpi-total">{{ totalSeats }}</span>
+              <SAnimatedNumber v-if="availableSeats !== null" :value="availableSeats" /><span v-else>—</span><span class="kpi-slash">/</span><span class="kpi-total">{{ totalSeats ?? '—' }}</span>
             </div>
             <div class="kpi-label">可用 / 总座位</div>
           </div>
@@ -221,8 +236,8 @@ const cardToneClass = {
           </button>
         </div>
       </section>
-      <StudyTips :title="auth.isStudent ? '使用小贴士' : '管理提示'">
-        <ul v-if="auth.isStudent" class="tips tips-list">
+      <StudyTips :title="auth.isOrdinary ? '使用小贴士' : '管理提示'">
+        <ul v-if="auth.isOrdinary" class="tips tips-list">
           <li>距开始不足 30 分钟取消预约将扣 <b>2 分</b>信用分</li>
           <li>超时未签到会自动记为违约，扣 <b>8 分</b>，并释放座位</li>
           <li>满座时段可加入 <b>候补</b>，空位释放时按序自动递补</li>
@@ -241,7 +256,9 @@ const cardToneClass = {
           <button v-for="room in rooms" :key="room.id" class="room-link" @click="router.push(auth.isAdmin ? '/admin' : '/booking')">
             <span><b>{{ room.name }}</b><small>{{ room.location }} · {{ room.open_time?.slice(0,5) }}–{{ room.close_time?.slice(0,5) }}</small></span><span aria-hidden="true">↗</span>
           </button>
-          <p v-if="!rooms.length" class="muted">暂无自习室信息</p>
+          <p v-if="roomsLoading" class="muted">正在加载自习室…</p>
+          <SBanner v-else-if="roomsError" type="error" :title="roomsError"><SButton size="sm" @click="loadRooms">重试</SButton></SBanner>
+          <p v-else-if="!rooms.length" class="muted">暂无自习室信息</p>
         </div>
       </section>
 
@@ -249,7 +266,7 @@ const cardToneClass = {
         <div class="card-title-row">
           <h3>系统介绍</h3>
         </div>
-        <div v-if="auth.isStudent" class="intro-grid">
+        <div v-if="auth.isOrdinary" class="intro-grid">
           <div class="intro-cell">
             <div class="intro-label">在线预约</div>
             <div class="intro-text">平面图可视化选座，时段冲突自动检测，支持签到 / 临时离开 / 签退全生命周期。</div>

@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 
+export const ROLE_LABELS = Object.freeze({ student: '学生', staff: '教职工', admin: '管理员' })
+
 // 认证状态: 令牌与用户信息, localStorage 持久化
 export const useAuthStore = defineStore('auth', {
   state: () => ({
@@ -9,7 +11,8 @@ export const useAuthStore = defineStore('auth', {
   getters: {
     isLoggedIn: (s) => !!s.token,
     isAdmin: (s) => s.user?.role === 'admin',
-    isStudent: (s) => s.user?.role === 'student',
+    isOrdinary: (s) => ['student', 'staff'].includes(s.user?.role),
+    roleLabel: (s) => (ROLE_LABELS[s.user?.role] || '未知角色'),
     roleHomePath: (s) => (s.user?.role === 'admin' ? '/admin' : '/')
   },
   actions: {

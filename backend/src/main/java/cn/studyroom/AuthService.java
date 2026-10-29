@@ -23,14 +23,12 @@ public class AuthService {
         this.db=db;this.redis=redis;this.algorithm=Algorithm.HMAC256(secret);this.clock=clock;
     }
     public Map<String,Object> register(Requests.Register req) {
-        long id=db.insert("INSERT INTO users(username,password_hash,real_name,student_no) VALUES(?,?,?,?)",
-                req.username().trim(),passwords.encode(req.password()),req.realName().trim(),blankNull(req.studentNo()));
-        return profile(id);
+        throw Api.fail(403,"校园账号由管理员维护，不开放公共注册");
     }
     public Map<String,Object> login(Requests.Login req) {
         var users=db.list("SELECT * FROM users WHERE username=?",req.username());
         Api.require(!users.isEmpty() && passwords.matches(req.password(),Store.text(users.get(0),"password_hash")),401,"用户名或口令错误");
-        var user=users.get(0); Api.require("active".equals(user.get("status")),403,"账号已被禁用");
+        var user=users.get(0); Api.require(isOrdinary(user.get("role"))||"admin".equals(user.get("role")),403,"账号角色无效"); Api.require("active".equals(user.get("status")),403,"账号已被禁用");
         Instant expires=clock.instant().plus(Duration.ofDays(7));
         String token=JWT.create().withIssuer("studyroom-java").withSubject(""+Store.id(user,"id"))
                 .withJWTId(UUID.randomUUID().toString()).withIssuedAt(Date.from(clock.instant())).withExpiresAt(Date.from(expires)).sign(algorithm);
@@ -54,6 +52,7 @@ public class AuthService {
     public Map<String,Object> profile(long id) {
         return db.one("SELECT id,username,real_name,student_no,role,credit_score,credit_banned_until,status,created_at FROM users WHERE id=?",id);
     }
+    public static boolean isOrdinary(Object role) { return "student".equals(role)||"staff".equals(role); }
     static String blankNull(String s) { return s==null||s.isBlank()?null:s.trim(); }
     private String revokedKey(String token) {
         try { return "studyroom-java:revoked:"+HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.UTF_8))); }

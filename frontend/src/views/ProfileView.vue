@@ -24,7 +24,7 @@ const banned = computed(() => {
 })
 
 onMounted(async () => {
-  if (!auth.isStudent) return
+  if (!auth.isOrdinary) return
   const resp = await getCreditOverview()
   overview.value = resp.data
 })
@@ -49,7 +49,7 @@ const { page, pages, pageItems } = usePagination(creditLogs, null)
         <div class="profile-sub">@{{ auth.user?.username }}</div>
         <div style="margin-top: 10px">
           <span class="role-pill" :class="auth.isAdmin ? 'role-pill--admin' : 'role-pill--student'">
-            {{ auth.isAdmin ? '管理员' : '学生' }}
+            {{ auth.roleLabel }}
           </span>
         </div>
       </section>
@@ -59,13 +59,13 @@ const { page, pages, pageItems } = usePagination(creditLogs, null)
         <div class="card-title-row"><h3>基本信息</h3></div>
         <div class="info-row"><span>姓名</span><b>{{ auth.user?.real_name || '—' }}</b></div>
         <div class="info-row"><span>用户名</span><b>{{ auth.user?.username || '—' }}</b></div>
-        <div v-if="auth.isStudent" class="info-row"><span>学号</span><b>{{ auth.user?.student_no || '—' }}</b></div>
-        <div class="info-row"><span>角色</span><b>{{ auth.isAdmin ? '管理员' : '学生' }}</b></div>
+        <div v-if="auth.isOrdinary" class="info-row"><span>{{ auth.user?.role === 'staff' ? '工号' : '学号' }}</span><b>{{ auth.user?.student_no || '—' }}</b></div>
+        <div class="info-row"><span>角色</span><b>{{ auth.roleLabel }}</b></div>
         <div class="info-row"><span>账号状态</span><b :class="{ 'status-off': auth.user?.status !== 'active' }">{{ auth.user?.status === 'active' ? '正常' : '已禁用' }}</b></div>
       </section>
 
       <!-- 信用卡 -->
-      <section v-if="auth.isStudent" class="card responsive-compact">
+      <section v-if="auth.isOrdinary" class="card responsive-compact">
         <div class="card-title-row"><h3>我的信用</h3></div>
         <div v-if="overview" class="credit-box">
           <SGauge :value="overview.score" :color="scoreColor" :size="152">
@@ -90,7 +90,7 @@ const { page, pages, pageItems } = usePagination(creditLogs, null)
       </section>
     </div>
 
-    <div v-if="auth.isStudent" class="split-right">
+    <div v-if="auth.isOrdinary" class="split-right">
       <section class="card">
         <div class="card-title-row">
           <h3>信用分流水</h3>

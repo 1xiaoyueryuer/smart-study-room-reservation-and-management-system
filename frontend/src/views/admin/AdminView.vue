@@ -1,4 +1,5 @@
 <script setup>
+import { ROLE_LABELS } from '../../stores/auth'
 import PageHelp from '../../components/PageHelp.vue'
 import { ref, onMounted, computed } from 'vue'
 import { message, confirmDialog, promptDialog } from '../../components/ui/feedback'
@@ -176,7 +177,7 @@ function creditColor(s) {
       <p class="heading-sub">自习室、座位与用户的全局管理</p>
     </div><PageHelp title="管理须知"><ul class="tips">
           <li>批量生成座位会<b>追加</b>而非覆盖现有座位</li>
-          <li>维护中座位学生端不可预约，不计入统计</li>
+          <li>维护中座位普通用户端不可预约，不计入统计</li>
           <li>管理员账号<b>无法禁用</b>，防止误操作锁死</li>
         </ul></PageHelp></header>
     <div class="split admin-split">
@@ -312,7 +313,7 @@ function creditColor(s) {
                   <td class="num">{{ row.student_no }}</td>
                   <td>
                     <STag :type="row.role === 'admin' ? 'danger' : 'primary'">
-                      {{ row.role === 'admin' ? '管理员' : '学生' }}
+                      {{ ROLE_LABELS[row.role] || '未知角色' }}
                     </STag>
                   </td>
                   <td class="num-col">
@@ -389,7 +390,7 @@ function creditColor(s) {
   <SDialog v-model="seatDialog" :title="`座位维护 - ${seatRoom?.name || ''}`" width="820px">
     <div class="seat-tip">
       <span class="seat-tip-icon"><AppIcon name="info" :size="17" /></span>
-      <span>点击右侧按钮切换座位状态，<b>维护中</b>的座位在学生端不可预约。</span>
+      <span>点击右侧按钮切换座位状态，<b>维护中</b>的座位在普通用户端不可预约。</span>
     </div>
     <div class="table-wrap">
       <div class="table-scroll" v-loading="seatLoading" tabindex="0" aria-label="座位维护表格，可左右滑动">

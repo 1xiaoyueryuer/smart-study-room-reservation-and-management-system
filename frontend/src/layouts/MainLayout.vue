@@ -178,7 +178,7 @@ watch(() => route.fullPath, async () => {
 onMounted(() => {
   narrowMediaQuery.addEventListener('change', onNarrowChange)
   window.addEventListener('keydown', onKeydown)
-  if (auth.isStudent) {
+  if (auth.isOrdinary) {
     refreshUnread()
     timer = setInterval(refreshUnread, 60000)
   }
@@ -322,7 +322,7 @@ onUnmounted(() => {
               {{ auth.user?.real_name || auth.user?.username }}
             </div>
             <span class="role-pill" :class="auth.isAdmin ? 'role-pill--admin' : 'role-pill--student'">
-              {{ auth.isAdmin ? '管理员' : '学生' }}
+              {{ auth.roleLabel }}
             </span>
           </div>
           <button

@@ -18,25 +18,25 @@ const routes = [
         path: '',
         name: 'home',
         component: () => import('../views/HomeView.vue'),
-        meta: { title: '首页', allowedRoles: ['student', 'admin'] }
+        meta: { title: '首页', allowedRoles: ['student', 'staff', 'admin'] }
       },
       {
         path: '/booking',
         name: 'booking',
         component: () => import('../views/BookingView.vue'),
-        meta: { title: '座位预约', requiresAuth: true, allowedRoles: ['student'] }
+        meta: { title: '座位预约', requiresAuth: true, allowedRoles: ['student', 'staff'] }
       },
       {
         path: '/mine',
         name: 'mine',
         component: () => import('../views/MyReservationsView.vue'),
-        meta: { title: '我的预约', requiresAuth: true, allowedRoles: ['student'] }
+        meta: { title: '我的预约', requiresAuth: true, allowedRoles: ['student', 'staff'] }
       },
       {
         path: '/waitlist',
         name: 'waitlist',
         component: () => import('../views/WaitlistView.vue'),
-        meta: { title: '我的候补', requiresAuth: true, allowedRoles: ['student'] }
+        meta: { title: '我的候补', requiresAuth: true, allowedRoles: ['student', 'staff'] }
       },
       {
         path: '/analytics',
@@ -48,13 +48,13 @@ const routes = [
         path: '/notifications',
         name: 'notifications',
         component: () => import('../views/NotificationsView.vue'),
-        meta: { title: '消息中心', requiresAuth: true, allowedRoles: ['student'] }
+        meta: { title: '消息中心', requiresAuth: true, allowedRoles: ['student', 'staff'] }
       },
       {
         path: '/profile',
         name: 'profile',
         component: () => import('../views/ProfileView.vue'),
-        meta: { title: '个人中心', requiresAuth: true, allowedRoles: ['student', 'admin'] }
+        meta: { title: '个人中心', requiresAuth: true, allowedRoles: ['student', 'staff', 'admin'] }
       },
       {
         path: '/admin',
@@ -77,7 +77,7 @@ router.beforeEach((to) => {
   if (to.meta.requiresAuth !== false && !auth.isLoggedIn && to.name !== 'login') {
     return { name: 'login', query: { redirect: to.fullPath } }
   }
-  if (auth.isLoggedIn && !auth.isAdmin && !auth.isStudent) {
+  if (auth.isLoggedIn && !auth.isAdmin && !auth.isOrdinary) {
     auth.logout()
     return { name: 'login' }
   }

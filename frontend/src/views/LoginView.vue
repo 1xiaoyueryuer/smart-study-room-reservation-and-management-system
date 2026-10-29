@@ -2,7 +2,7 @@
 import { reactive, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { message } from '../components/ui/feedback'
-import { login, register } from '../api/auth'
+import { login } from '../api/auth'
 import { useAuthStore } from '../stores/auth'
 import AppIcon from '../components/AppIcon.vue'
 import SButton from '../components/ui/SButton.vue'
@@ -13,14 +13,13 @@ const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
 
-const mode = ref('login') // login | register
 const loading = ref(false)
 const loginError = ref('')
 
 const loginForm = reactive({ username: 'stu01', password: '123456' })
-const regForm = reactive({ username: '', password: '', confirm: '', real_name: '', student_no: '' })
 
 async function onLogin() {
+  if (loading.value) return
   if (!loginForm.username || !loginForm.password) {
     message.warning('请输入用户名与口令')
     return
@@ -34,36 +33,6 @@ async function onLogin() {
     router.push(route.query.redirect || '/')
   } catch (error) {
     loginError.value = error.message
-  } finally {
-    loading.value = false
-  }
-}
-
-async function onRegister() {
-  const f = regForm
-  if (!f.username || !f.password || !f.real_name) {
-    message.warning('请完整填写必填项')
-    return
-  }
-  if (f.password.length < 6) {
-    message.warning('口令至少 6 位')
-    return
-  }
-  if (f.password !== f.confirm) {
-    message.warning('两次输入的口令不一致')
-    return
-  }
-  loading.value = true
-  try {
-    await register({
-      username: f.username,
-      password: f.password,
-      real_name: f.real_name,
-      student_no: f.student_no
-    })
-    message.success('注册成功，请登录')
-    loginForm.username = f.username
-    mode.value = 'login'
   } finally {
     loading.value = false
   }
@@ -107,31 +76,10 @@ const features = [
       <div class="hero-foot">{{ SYSTEM_NAME_ZH }} · 课程设计演示环境</div>
     </aside>
 
-    <!-- ============ 右侧：登录 / 注册 ============ -->
+    <!-- ============ 右侧：校园账号登录 ============ -->
     <main class="auth-panel">
-      <div class="auth-card"><header class="auth-heading"><h2>{{ mode === 'login' ? '欢迎回来' : '开启专注时光' }}</h2><p>为今天的学习，留一个好位置。</p></header>
-        <div v-active-track class="seg seg-block" role="tablist" aria-label="登录或注册">
-          <button
-            class="seg-btn"
-            role="tab"
-            :class="{ active: mode === 'login' }"
-            :aria-selected="mode === 'login'"
-            @click="mode = 'login'"
-          >
-            登录
-          </button>
-          <button
-            class="seg-btn"
-            role="tab"
-            :class="{ active: mode === 'register' }"
-            :aria-selected="mode === 'register'"
-            @click="mode = 'register'"
-          >
-            注册
-          </button>
-        </div>
-
-        <form v-if="mode === 'login'" class="auth-form" @submit.prevent="onLogin">
+      <div class="auth-card"><header class="auth-heading"><h2>欢迎回来</h2><p>为今天的学习，留一个好位置。</p></header>
+        <form class="auth-form" @submit.prevent="onLogin">
           <p v-if="loginError" role="alert" class="form-label">{{ loginError }}</p>
           <div class="form-field">
             <label class="form-label" for="login-username">用户名</label>
@@ -147,7 +95,6 @@ const features = [
               placeholder="口令"
               show-password
               autocomplete="current-password"
-              @keyup.enter="onLogin"
             />
           </div>
           <SButton type="submit" variant="primary" size="lg" block :loading="loading">
@@ -155,32 +102,7 @@ const features = [
           </SButton>
         </form>
 
-        <form v-else class="auth-form" @submit.prevent="onRegister">
-          <div class="form-field">
-            <label class="form-label" for="reg-username">用户名</label>
-            <SInput id="reg-username" v-model="regForm.username" size="lg" placeholder="用户名（≥3 位）" autocomplete="username" />
-          </div>
-          <div class="form-field">
-            <label class="form-label" for="reg-realname">真实姓名</label>
-            <SInput id="reg-realname" v-model="regForm.real_name" size="lg" placeholder="真实姓名" />
-          </div>
-          <div class="form-field">
-            <label class="form-label" for="reg-studentno">学号（选填）</label>
-            <SInput id="reg-studentno" v-model="regForm.student_no" size="lg" placeholder="学号（选填）" />
-          </div>
-          <div class="form-field">
-            <label class="form-label" for="reg-password">口令</label>
-            <SInput id="reg-password" v-model="regForm.password" type="password" size="lg" placeholder="口令（≥6 位）" show-password autocomplete="new-password" />
-          </div>
-          <div class="form-field">
-            <label class="form-label" for="reg-confirm">确认口令</label>
-            <SInput id="reg-confirm" v-model="regForm.confirm" type="password" size="lg" placeholder="再次输入口令" show-password autocomplete="new-password" />
-          </div>
-          <SButton type="submit" variant="primary" size="lg" block :loading="loading">
-            注册
-          </SButton>
-        </form>
-
+        <p class="auth-tip">校园账号由管理员维护，暂不开放自助注册。</p>
         <p class="auth-tip">
           演示账号：stu01 / 123456 · 管理员：admin / admin123
         </p>

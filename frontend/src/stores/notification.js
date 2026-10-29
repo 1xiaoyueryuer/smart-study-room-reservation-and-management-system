@@ -8,7 +8,7 @@ export const useNotificationStore = defineStore('notification', () => {
   const auth = useAuthStore()
 
   async function refresh() {
-    if (!auth.isLoggedIn || !auth.isStudent) {
+    if (!auth.isLoggedIn || !auth.isOrdinary) {
       unread.value = 0
       return
     }

@@ -39,12 +39,13 @@ public class BookingService {
     }
     private void eligible(long uid) {
         var user=db.one("SELECT * FROM users WHERE id=?",uid);
+        Api.require(AuthService.isOrdinary(user.get("role")),403,"仅学生和教职工可以预约");
         Api.require("active".equals(user.get("status")),403,"账号已被禁用");
         var until=user.get("credit_banned_until");
         Api.require(until==null||!LocalDateTime.parse(until.toString()).isAfter(LocalDateTime.now(clock)),403,"信用限制期间不能预约");
     }
     public void action(long uid,long resId,String action) {
-        db.lockBookings();var res=db.one("SELECT * FROM reservations WHERE id=?",resId);
+        db.lockBookings();requireOrdinary(uid);var res=db.one("SELECT * FROM reservations WHERE id=?",resId);
         Api.require(id(res,"user_id")==uid,403,"无权操作他人的预约");
         String state=text(res,"status"); LocalDateTime now=LocalDateTime.now(clock),start=starts(res),end=ends(res);
         switch(action) {
@@ -137,7 +138,7 @@ public class BookingService {
         return db.list("SELECT w.*,r.name AS room_name,CASE WHEN w.status='waiting' THEN (SELECT count(*) FROM waitlist q WHERE q.room_id=w.room_id AND q.res_date=w.res_date AND q.start_time=w.start_time AND q.end_time=w.end_time AND q.status='waiting' AND q.id<=w.id) ELSE 0 END AS position FROM waitlist w JOIN rooms r ON r.id=w.room_id WHERE w.user_id=? ORDER BY w.id DESC",uid);
     }
     public void cancelWait(long uid,long waitId) {
-        db.lockBookings();var row=db.one("SELECT * FROM waitlist WHERE id=?",waitId);
+        db.lockBookings();requireOrdinary(uid);var row=db.one("SELECT * FROM waitlist WHERE id=?",waitId);
         Api.require(id(row,"user_id")==uid,403,"无权操作他人的候补");Api.require("waiting".equals(row.get("status")),409,"候补已结束");
         db.update("UPDATE waitlist SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=?",waitId);
     }
@@ -169,6 +170,9 @@ public class BookingService {
     public void setUserStatus(long actor,long uid,String status) {
         db.lockBookings();Api.require(actor!=uid,400,"不能禁用当前登录账号");
         db.one("SELECT id FROM users WHERE id=?",uid);db.update("UPDATE users SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",status,uid);
+    }
+    private void requireOrdinary(long uid) {
+        Api.require(AuthService.isOrdinary(db.one("SELECT role FROM users WHERE id=?",uid).get("role")),403,"仅学生和教职工可操作本人预约或候补");
     }
     private LocalDateTime starts(Map<String,Object> r) { return LocalDate.parse(text(r,"res_date")).atTime(LocalTime.parse(text(r,"start_time"))); }
     private LocalDateTime ends(Map<String,Object> r) { return LocalDate.parse(text(r,"res_date")).atTime(LocalTime.parse(text(r,"end_time"))); }

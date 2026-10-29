@@ -22,16 +22,19 @@ public class WebSecurity implements WebMvcConfigurer {
         registry.addInterceptor(new HandlerInterceptor() {
             @Override public boolean preHandle(HttpServletRequest req,HttpServletResponse resp,Object handler) throws Exception {
                 try {
-                    String path=req.getRequestURI();
+                    String path=java.util.Objects.toString(req.getAttribute(org.springframework.web.servlet.HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE),req.getRequestURI());
                     if("OPTIONS".equals(req.getMethod())||path.equals("/api/health")) return true;
-                    if(path.equals("/api/auth/login")||path.equals("/api/auth/register")) {
+                    if(path.equals("/api/auth/register")) throw Api.fail(403,"校园账号由管理员维护，不开放公共注册");
+                    if(path.equals("/api/auth/login")) {
                         rate("login:"+req.getRemoteAddr(),10,60000); return true;
                     }
                     String header=req.getHeader("Authorization");
                     Api.require(header!=null&&header.startsWith("Bearer "),401,"请先登录");
                     String token=header.substring(7);
                     Map<String,Object> user=auth.authenticate(token); req.setAttribute("user",user);req.setAttribute("token",token);
-                    if(path.startsWith("/api/admin/")) Api.require("admin".equals(user.get("role")),403,"需要管理员权限");
+                    if(path.startsWith("/api/admin/")||path.startsWith("/api/stats/")) Api.require("admin".equals(user.get("role")),403,"需要管理员权限");
+                    if ("POST".equals(req.getMethod())&&(path.equals("/api/reservations")||path.startsWith("/api/reservations/")||path.equals("/api/waitlist")||path.startsWith("/api/waitlist/")))
+                        Api.require(AuthService.isOrdinary(user.get("role")),403,"仅学生和教职工可操作本人预约或候补");
                     if("POST".equals(req.getMethod())&&(path.equals("/api/reservations")||path.equals("/api/reservations/auto")))
                         rate("reserve:"+user.get("id"),2,1000);
                     return true;
