@@ -6,6 +6,15 @@
 
 当前是可运行的迁移底座。本组“三种找座方案、投诉申诉、累计违规限制”等业务改造尚待下一阶段落实，详见 [迁移说明与需求差距](docs/MIGRATION.md)。
 
+## 后续开发从这里开始
+
+1. 阅读 [AGENTS.md](AGENTS.md)、[CONTRIBUTING.md](CONTRIBUTING.md)、[团队分工](docs/团队分工.md) 和 [文档索引](docs/README.md)。
+2. **当前按单人模式直接在main开发、验证、中文提交并推送，不强制PR或独立审核。**较大新功能维护两份简明方案，小修复更新原文档即可。
+3. 既有首版标签v1.0.0-postgresql保留。member/a～member/d只是未来协作准备；多人分工和审批流程以后由用户决定是否启用。
+4. 仓库检查：`python scripts/check_repository.py`；检查器测试：`python -m unittest discover -s scripts/tests -v`。业务构建与验证见下文。
+
+智能体开工提示：先读上述约定，当前为单人模式。本次功能为Fxx-名称，按用户授权连续完成设计、实现、相关验证和自查；不覆盖已有无关改动，不制造平行核心或重复报告。用户授权上传后直接推main，不额外等待独立审核。
+
 ## 本机运行
 
 打开 Docker Desktop，在本项目目录运行：
