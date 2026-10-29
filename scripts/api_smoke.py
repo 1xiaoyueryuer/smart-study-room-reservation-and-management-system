@@ -54,6 +54,10 @@ def main():
     status, available = call('GET',f'/availability?room_id={room}&date={date}&strategy=earliest',token=student)
     check('最早连续空档与图列表共享结果',status == 200 and available['data']['strategy'] == 'earliest' and isinstance(available['data']['results'],list) and all('available_windows' in seat for seat in available['data']['seats']))
     check('空档最短30分钟且无他人私密记录',all(row['duration_minutes'] >= 30 and not any(key in row for key in ('user_id','username','real_name','code_value')) for row in available['data']['results']))
+    status, longest = call('GET',f'/availability?room_id={room}&date={date}&strategy=longest',token=student)
+    check('最长按完整单段时长降序',status == 200 and longest['data']['strategy'] == 'longest' and [row['duration_minutes'] for row in longest['data']['results']] == sorted((row['duration_minutes'] for row in longest['data']['results']),reverse=True))
+    status, duration = call('GET',f'/availability?room_id={room}&date={date}&strategy=duration&required_minutes=120',token=student)
+    check('所需时长只筛足够连续的片段',status == 200 and duration['data']['required_minutes'] == 120 and all(row['duration_minutes'] >= 120 and 'suggested_start' in row and 'suggested_end' in row for row in duration['data']['results']))
     status, body = call('GET',f'/rooms/{room}/seats?date={date}&start=10:00&end=11:00',token=student)
     check('座位图字段与布尔类型',status == 200 and isinstance(body['data']['seats'][0]['occupied'],bool))
     seats = [s for s in body['data']['seats'] if s['status']=='available' and s['bookable_for_slot'] and not s['occupied']]

@@ -91,8 +91,9 @@ class AvailabilityIntegrationTest {
     @Test void permissionsDateAndStrategyValidationAreRealHttpAndDefaultIsEarliest() throws Exception {
         String user=token("student"),adminToken=token("admin"),staffToken=token("staff");http.perform(get(url(day))).andExpect(status().isUnauthorized());http.perform(get(url(day)).header("Authorization","Bearer "+adminToken)).andExpect(status().isForbidden());
         for(String ordinary:List.of(user,staffToken)) http.perform(get(url(day)).header("Authorization","Bearer "+ordinary)).andExpect(status().isOk()).andExpect(jsonPath("$.data.strategy").value("earliest"));
+        http.perform(get(url(day)+"&strategy=longest").header("Authorization","Bearer "+user)).andExpect(status().isOk());
         http.perform(get(url(base.plusDays(2))).header("Authorization","Bearer "+user)).andExpect(status().isOk());
-        for(String strategy:List.of("longest","duration","unknown","")) http.perform(get(url(day)+"&strategy="+strategy).header("Authorization","Bearer "+user)).andExpect(status().isBadRequest());
+        for(String strategy:List.of("duration","unknown","")) http.perform(get(url(day)+"&strategy="+strategy).header("Authorization","Bearer "+user)).andExpect(status().isBadRequest());
         for(String invalid:List.of(base.minusDays(1).toString(),base.plusDays(3).toString(),"2026-99-00")) http.perform(get("/api/availability?room_id="+room+"&date="+invalid).header("Authorization","Bearer "+user)).andExpect(status().isBadRequest());
         http.perform(get("/api/availability?room_id=0&date="+day).header("Authorization","Bearer "+user)).andExpect(status().isBadRequest());http.perform(get("/api/availability?room_id=9223372036854775807&date="+day).header("Authorization","Bearer "+user)).andExpect(status().isNotFound());
     }
@@ -114,4 +115,52 @@ class AvailabilityIntegrationTest {
         finally { db.update("ALTER TABLE audit_events DROP CONSTRAINT s11_fail"); }
         assertFalse(results(find(base)).isEmpty());assertEquals(1,db.count("SELECT count(*) FROM violations"));
     }
+    Map<String,Object> strategy(String name,String required) { return availability.find(student,room,day.toString(),name,required); }
+    void blocked(long seat,String start,String end) { opening.saveBlock(admin,room,null,new Requests.Unavailability(seat,day.atTime(LocalTime.parse(start)).toString(),day.atTime(LocalTime.parse(end)).toString(),Store.id(resources.room(room),"version"),"S12原示例模拟不可用区间")); }
+    void originalThreeSeats() {
+        windows(day,"15:00","19:30");blocked(seatA,"15:00","15:10");blocked(seatA,"16:10","19:30");blocked(seatB,"15:00","15:30");blocked(seatC,"15:00","15:20");blocked(seatC,"17:20","19:30");
+    }
+    @Test void threeStrategiesSelectOriginalAThenBThenCAndPreserveFullGap() {
+        originalThreeSeats();var early=strategy("earliest",null);var longest=strategy("longest",null);var required=strategy("duration","120");
+        var a=results(early).get(0);assertEquals(seatA,Store.id(a,"seat_id"));assertEquals("15:10",a.get("available_start"));assertEquals("16:10",a.get("available_end"));assertEquals("15:10",a.get("suggested_start"));assertEquals("15:40",a.get("suggested_end"));assertTrue(early.containsKey("required_minutes"));assertNull(early.get("required_minutes"));
+        var b=results(longest).get(0);assertEquals(seatB,Store.id(b,"seat_id"));assertEquals(240L,b.get("duration_minutes"));assertEquals("19:30",b.get("available_end"));assertEquals("16:00",b.get("suggested_end"));
+        var c=results(required).get(0);assertEquals(seatC,Store.id(c,"seat_id"));assertEquals(120,required.get("required_minutes"));assertEquals("15:20",c.get("suggested_start"));assertEquals("17:20",c.get("suggested_end"));assertEquals(2,results(required).size());
+        for(var response:List.of(early,longest,required)) { @SuppressWarnings("unchecked") var meta=(Map<String,Object>)response.get("room");assertEquals(room,Store.id(meta,"id"));assertEquals(day.toString(),response.get("date"));assertEquals(response.get("computed_at"),response.get("server_now"));var nested=new ArrayList<Object>();for(var seat:seats(response)) nested.addAll((List<?>)seat.get("available_windows"));assertEquals(new HashSet<>(results(response)),new HashSet<>(nested)); }
+    }
+    @Test void requiredMinutesIsStrictAsciiDecimalAndNeverSilentlyIgnored() throws Exception {
+        String token=token("student");http.perform(get(url(day)+"&strategy=duration").header("Authorization","Bearer "+token)).andExpect(status().isBadRequest());
+        for(String raw:List.of("","29","0","-30","+30","30.0","NaN","1e2"," 30","30 ","３０","2147483648","999999999999999999999999")) http.perform(get(url(day)+"&strategy=duration").param("required_minutes",raw).header("Authorization","Bearer "+token)).andExpect(status().isBadRequest());
+        for(String nonDuration:List.of("earliest","longest")) for(String raw:List.of("30","")) http.perform(get(url(day)+"&strategy="+nonDuration).param("required_minutes",raw).header("Authorization","Bearer "+token)).andExpect(status().isBadRequest());
+        http.perform(get(url(day)+"&strategy=duration").param("required_minutes","00030").header("Authorization","Bearer "+token)).andExpect(status().isOk()).andExpect(jsonPath("$.data.required_minutes").value(30));
+        assertEquals(400,assertThrows(Api.Failure.class,()->strategy("duration","30.1")).status);assertEquals(400,assertThrows(Api.Failure.class,()->strategy("earliest","30")).status);
+    }
+    @Test void validBeyondDayAndIntegerMaximumAreHonestEmptyWithoutChangingCondition() {
+        for(String raw:List.of("1441","1500","2147483647")) {
+            var response=strategy("duration",raw);assertEquals(Integer.parseInt(raw),response.get("required_minutes"));assertEquals(day.toString(),response.get("date"));assertEquals("duration",response.get("strategy"));@SuppressWarnings("unchecked") var meta=(Map<String,Object>)response.get("room");assertEquals(room,Store.id(meta,"id"));assertTrue(results(response).isEmpty());for(var seat:seats(response)) assertEquals(List.of(),seat.get("available_windows"));
+        }
+    }
+    @Test void longestAndFilteredNestedWindowsUseSameStableOrderingWithoutSplicing() {
+        windows(day,"08:00","09:00","12:00","14:00","15:00","16:00");var response=strategy("longest",null);var rows=results(response);
+        assertEquals(List.of("A","B","C"),rows.subList(0,3).stream().map(row->row.get("seat_no")).toList());assertTrue(rows.subList(0,3).stream().allMatch(row->"12:00".equals(row.get("available_start"))));
+        for(var seat:seats(response)) { @SuppressWarnings("unchecked") var nested=(List<Map<String,Object>>)seat.get("available_windows");assertEquals(List.of("12:00","08:00","15:00"),nested.stream().map(row->row.get("available_start")).toList()); }
+        var filtered=strategy("duration","90");assertEquals(3,results(filtered).size());for(var seat:seats(filtered)) { @SuppressWarnings("unchecked") var nested=(List<Map<String,Object>>)seat.get("available_windows");assertEquals(1,nested.size());assertEquals("12:00",nested.get(0).get("available_start"));assertEquals("14:00",nested.get(0).get("available_end"));assertEquals("13:30",nested.get(0).get("suggested_end")); }
+        assertTrue(results(strategy("duration","180")).isEmpty()); // 单座合计240分钟，最长单段仅120，不能拼接。
+    }
+    @Test void required241AndLongerWindowsRemainFullAndReal241MinutePostIsLegal() throws Exception {
+        String token=token("student");var response=strategy("duration","241");var gap=results(response).get(0);assertEquals("08:00",gap.get("available_start"));assertEquals("22:00",gap.get("available_end"));assertEquals(840L,gap.get("duration_minutes"));assertEquals("12:01",gap.get("suggested_end"));
+        assertFalse(results(strategy("duration","481")).isEmpty());
+        http.perform(post("/api/reservations").header("Authorization","Bearer "+token).contentType("application/json").content(json.writeValueAsString(new Requests.Reservation(seatA,day.toString(),"08:00","12:01")))).andExpect(status().isOk());
+        assertEquals("12:01:00",db.one("SELECT end_time FROM reservations WHERE user_id=?",student).get("end_time"));assertEquals(1,db.count("SELECT count(*) FROM reservations"));
+    }
+    @Test void chosenDurationIsAdviceAndActiveShorterLegalPostDoesNotBecomeHardRestriction() throws Exception {
+        String token=token("student");var response=strategy("duration","120");var full=results(response).get(0);assertEquals("10:00",full.get("suggested_end"));assertEquals("22:00",full.get("available_end"));
+        http.perform(post("/api/reservations").header("Authorization","Bearer "+token).contentType("application/json").content(json.writeValueAsString(new Requests.Reservation(seatA,day.toString(),"08:00","08:30")))).andExpect(status().isOk());
+        assertEquals("08:30:00",db.one("SELECT end_time FROM reservations WHERE user_id=?",student).get("end_time"));var refreshed=strategy("duration","120");assertEquals("08:30",results(refreshed).get(0).get("suggested_start"));assertEquals("10:30",results(refreshed).get(0).get("suggested_end"));
+    }
+    @Test void durationSnapshotStillRechecksRealReservationConflictAtPost() throws Exception {
+        String token=token("student");var chosen=results(strategy("duration","120")).get(0);long seat=Store.id(chosen,"seat_id");bookings.create(staff,new Requests.Reservation(seat,day.toString(),"08:00","10:00"));
+        http.perform(post("/api/reservations").header("Authorization","Bearer "+token).contentType("application/json").content(json.writeValueAsString(new Requests.Reservation(seat,day.toString(),Store.text(chosen,"suggested_start"),Store.text(chosen,"suggested_end"))))).andExpect(status().isConflict());assertEquals(1,db.count("SELECT count(*) FROM reservations"));
+        var updated=results(strategy("duration","120")).stream().filter(row->Store.id(row,"seat_id")==seat).findFirst().orElseThrow();assertEquals("10:00",updated.get("available_start"));assertEquals("22:00",updated.get("available_end"));assertEquals("12:00",updated.get("suggested_end"));
+    }
+
 }

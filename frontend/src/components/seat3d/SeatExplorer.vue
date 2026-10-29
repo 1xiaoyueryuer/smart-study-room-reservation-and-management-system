@@ -6,7 +6,7 @@ import { windowKey } from '../../composables/availabilitySelection.js'
 import { feedbackState } from '../ui/feedback'
 import { seatType, seatState, stateLabels, stateColors, zoneName } from './seatPresentation'
 
-const props = defineProps({ origin: Object, room: Object, seats: Array, selectedId: Number, selectedWindow: Object, date: String, start: String, end: String, loading: Boolean, submitting: Boolean, submitError: String, policyReady: Boolean })
+const props = defineProps({ origin: Object, room: Object, seats: Array, selectedId: Number, selectedWindow: Object, date: String, start: String, end: String, loading: Boolean, submitting: Boolean, submitError: String, policyReady: Boolean, strategyLabel: String, requiredMinutes: Number, shortfall: String })
 const emit = defineEmits(['select', 'select-window', 'update:start', 'update:end', 'submit', 'closed'])
 const panel = ref(null), backdrop = ref(null), content = ref(null), snapshot = ref(null)
 const Scene = shallowRef(null), error = ref(''), ready = ref(false), closing = ref(false), opening = ref(true), view = ref('overview')
@@ -152,7 +152,7 @@ onBeforeUnmount(() => {
         <div ref="snapshot" class="explorer-snapshot" aria-hidden="true" />
         <div ref="content" class="explorer-content">
           <header class="explorer-head">
-            <div><div class="explorer-eyebrow">SPACE / 3D SEATING</div><h3 id="explorer-title">{{ room?.name || '自习室' }} <span>3D 选座</span></h3><p>{{ date }} · {{ selectedWindow ? start + ' – ' + end + '（本次预约）' : '请选择连续空档' }} <span class="layout-note">· 座位布局示意</span></p></div>
+            <div><div class="explorer-eyebrow">SPACE / 3D SEATING</div><h3 id="explorer-title">{{ room?.name || '自习室' }} <span>3D 选座</span></h3><p>{{ date }} · {{ selectedWindow ? start + ' – ' + end + '（本次预约）' : '请选择连续空档' }} <span class="layout-note">· {{ strategyLabel }} · 座位布局示意</span></p></div>
             <button class="explorer-close" aria-label="关闭 3D 选座" :disabled="submitting" @click="close()">×</button>
           </header>
           <div class="explorer-toolbar">
@@ -169,8 +169,9 @@ onBeforeUnmount(() => {
             <div v-if="ready && !error && view === 'firstPerson'" class="seated-tools"><span aria-live="polite">正在体验 {{ selected?.seat_no }}</span><button :disabled="busy" @click="sceneRef?.resetLook()">回正视线</button></div>
             <div v-if="ready && !error" class="scene-hint">{{ view === 'firstPerson' ? '拖动 / 方向键环视 · 点击总览退出体验' : '拖动旋转 · 滚轮 / 双指缩放 · 点击桌椅选座' }}</div>
           </div>
+          <p v-if="shortfall" role="status" class="explorer-shortfall">{{ shortfall }}；本次预约已主动缩短，不代表满足原找座时长。</p><p v-if="requiredMinutes" class="explorer-required">找座所需{{ requiredMinutes }}分钟；下方完整空档、建议与本次起止分别展示。</p>
           <p v-if="submitError" role="alert" class="explorer-submit-error">{{ submitError }}</p>
-          <div v-if="selected" class="explorer-slot"><label>完整空档<select :value="windowKey(selectedWindow)" :disabled="busy" @change="chooseSegment"><option value="" disabled>选择该座位的片段</option><option v-for="window in selected.available_windows" :key="windowKey(window)" :value="windowKey(window)">{{ window.available_start }}–{{ window.available_end }} · {{ window.duration_minutes }}分钟 · 等待{{ window.wait_minutes }}分钟</option></select></label><template v-if="selectedWindow"><label>本次开始<input :value="start" type="time" step="60" :disabled="busy" @input="emit('update:start',$event.target.value)" /></label><label>本次结束<input :value="end" maxlength="5" placeholder="HH:mm，可24:00" :disabled="busy" @input="emit('update:end',$event.target.value)" /></label></template></div>
+          <div v-if="selected" class="explorer-slot"><label>完整空档<select :value="windowKey(selectedWindow)" :disabled="busy" @change="chooseSegment"><option value="" disabled>选择该座位的片段</option><option v-for="window in selected.available_windows" :key="windowKey(window)" :value="windowKey(window)">{{ window.available_start }}–{{ window.available_end }} · {{ window.duration_minutes }}分钟 · 建议{{ window.suggested_start }}–{{ window.suggested_end }} · 等待{{ window.wait_minutes }}分钟</option></select></label><template v-if="selectedWindow"><label>本次开始<input :value="start" type="time" step="60" :disabled="busy" @input="emit('update:start',$event.target.value)" /></label><label>本次结束<input :value="end" maxlength="5" placeholder="HH:mm，可24:00" :disabled="busy" @input="emit('update:end',$event.target.value)" /></label></template></div>
           <footer class="explorer-footer">
             <div class="explorer-selection" aria-live="polite"><strong>{{ selected ? `已选择 ${selected.seat_no}` : '找一个喜欢的位置' }}</strong><span>{{ selected ? `${seatType(selected)} · ${zoneName[selected.zone]}${selected.near_window ? ' · 靠窗' : ''}` : '选择有连续空档的桌椅，再选择片段' }}</span></div>
             <label class="seat-list"><span class="sr-only">按编号选择座位</span><select :value="selectedId ?? ''" :disabled="busy || !!error" @change="chooseFromList"><option value="" disabled>按编号选座</option><option v-for="s in seats" :key="s.id" :value="s.id" :disabled="s.status !== 'available' || !s.available_windows?.length">{{ s.seat_no }} · {{ stateLabels[seatState(s, selectedId)] }}</option></select></label>
@@ -183,6 +184,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.explorer-shortfall{color:var(--amber-strong);padding:8px 20px;font-size:var(--fs-caption)}.explorer-required{padding:4px 20px;font-size:var(--fs-caption);color:var(--text-2)}
 .explorer-slot{display:flex;gap:12px;padding:10px 20px;flex-wrap:wrap;max-height:170px;overflow:auto}.explorer-slot label{display:grid;gap:4px;min-width:0;max-width:100%;font-size:var(--fs-caption)}.explorer-slot input,.explorer-slot select{max-width:100%;min-width:0;padding:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-1);border-radius:var(--r-sm)}
 .explorer-submit-error { color:var(--red-strong); padding:10px 20px; font-size:var(--fs-caption); }
 .seat-explorer { position: fixed; inset: 0; z-index: var(--z-dialog); display: grid; place-items: center; }

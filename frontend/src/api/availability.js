@@ -1,5 +1,7 @@
 import request from './request'
 
-export function getAvailability(roomId, date) {
-  return request.get('/availability', { params: { room_id: roomId, date, strategy: 'earliest' }, silent: true })
+export function getAvailability(roomId, date, strategy = 'earliest', requiredMinutes = null) {
+  const params = { room_id: roomId, date, strategy }
+  if (strategy === 'duration') params.required_minutes = requiredMinutes
+  return request.get('/availability', { params, silent: true })
 }

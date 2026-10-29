@@ -4,7 +4,7 @@ import vm from 'node:vm'
 import { readFile } from 'node:fs/promises'
 import { ref, computed } from 'vue'
 import { validateSlot, minuteValue, minuteText, serverStartMinute } from '../src/composables/bookingPolicy.js'
-import { windowKey, validateWindowSlot } from '../src/composables/availabilitySelection.js'
+import { windowKey, validateWindowSlot, queryRequiredMinutes, shortfallText } from '../src/composables/availabilitySelection.js'
 const policy = (server_now = '2026-11-01T08:00:00+08:00') => ({server_now,campus_today:'2026-11-01',dates:['2026-11-01','2026-11-02','2026-11-03'],campus_zone:'Asia/Shanghai',min_duration_minutes:30})
 test('server second and nanosecond fractions round upward without millisecond truncation', () => {
   assert.equal(serverStartMinute(policy('2026-11-01T08:00:00.000000001+08:00')),481)
@@ -33,7 +33,7 @@ test('minute forms enforce minimum and date membership with no four/eight hour c
 async function booking(overrides = {}) {
   const calls = [], cleanup = []
   const currentRoom = {id:1,name:'测试空间',enabled:true,opening_windows:[{start:'00:00',end:'24:00'}]}
-  const segment = {room_id:1,seat_id:2,seat_no:'A1',available_start:'22:00',available_end:'24:00',duration_minutes:120,wait_minutes:2280}
+  const segment = {room_id:1,seat_id:2,seat_no:'A1',available_start:'22:00',available_end:'24:00',duration_minutes:120,wait_minutes:2280,suggested_start:'22:00',suggested_end:'22:30'}
   const seat = {id:2,seat_no:'A1',status:'available',available_windows:[segment]}
   const api = { getBookingPolicy: async()=>({data:policy()}),createReservation:async data=>{calls.push(['create',data]);return{data:{room_name:'测试空间',seat_no:'A1'}}},...overrides }
   const mocks = {
@@ -41,14 +41,14 @@ async function booking(overrides = {}) {
     '../components/seat3d/seatPresentation':{seatType:()=>'',zoneName:{regular:'普通区'},getWindowSides:()=>({})},
     '../components/ui/feedback':{message:{success(){},info(){},warning(){}},confirmDialog:overrides.confirmDialog || (async()=>{})},
     '../api/room':{getRooms:async()=>({data:[currentRoom]})},
-    '../api/availability':{getAvailability:overrides.getAvailability || (async(id,date)=>{calls.push(['map',{id,date}]);return{data:{room:{...currentRoom,version:9},date,strategy:'earliest',server_now:policy().server_now,campus_today:policy().campus_today,computed_at:policy().server_now,campus_zone:'Asia/Shanghai',seats:[seat],results:[segment]}}})},
-    '../composables/availabilitySelection.js':{windowKey,validateWindowSlot},
+    '../api/availability':{getAvailability:overrides.getAvailability || (async(id,date,strategy='earliest',requiredMinutes=null)=>{calls.push(['map',{id,date,strategy,requiredMinutes}]);return{data:{room:{...currentRoom,version:9},date,strategy,required_minutes:requiredMinutes,server_now:policy().server_now,campus_today:policy().campus_today,computed_at:policy().server_now,campus_zone:'Asia/Shanghai',seats:[seat],results:[segment]}}})},
+    '../composables/availabilitySelection.js':{windowKey,validateWindowSlot,queryRequiredMinutes,shortfallText},
     '../api/reservation':api,
     '../composables/bookingPolicy.js':{validateSlot,minuteValue,minuteText,serverStartMinute}
   }
   const context=vm.createContext({})
   const source=(await readFile(new URL('../src/views/BookingView.vue',import.meta.url),'utf8')).split('<script setup>')[1].split('</script>')[0]
-  const module=new vm.SourceTextModule(source+'\nexport {loadPolicy,refreshPolicy,loadAvailability,policy,policyError,bookingError,inputError,mapErrorText,submitting,date,start,end,roomId,room,rooms,seats,selected,selectedWindow,results,availability,chooseWindow,onSeatClick,changeActualTime,confirmBooking}',{context})
+  const module=new vm.SourceTextModule(source+'\nexport {loadPolicy,refreshPolicy,loadAvailability,policy,policyError,bookingError,inputError,mapErrorText,submitting,date,start,end,roomId,room,rooms,seats,selected,selectedWindow,results,availability,chooseWindow,onSeatClick,changeActualTime,confirmBooking,strategy,requiredDraft,queryDirty,changeRequired,changeStrategy,shortfall}',{context})
   await module.link(specifier=>{
     const values=mocks[specifier]||(specifier.endsWith('.vue')?{default:{}}:null)
     assert.ok(values,specifier)
@@ -56,7 +56,7 @@ async function booking(overrides = {}) {
   })
   await module.evaluate()
   const page=module.namespace
-  page.policy.value=policy();page.room.value=currentRoom;page.roomId.value=1;page.seats.value=[seat];page.selected.value=seat;page.selectedWindow.value=segment;page.results.value=[segment];page.availability.value={computed_at:policy().server_now};page.date.value='2026-11-02';page.start.value='22:00';page.end.value='24:00'
+  page.policy.value=policy();page.room.value=currentRoom;page.roomId.value=1;page.seats.value=[seat];page.selected.value=seat;page.selectedWindow.value=segment;page.results.value=[segment];page.queryDirty.value=false;page.availability.value={strategy:'earliest',required_minutes:null,computed_at:policy().server_now};page.date.value='2026-11-02';page.start.value='22:00';page.end.value='24:00'
   return{...page,calls,cleanup,fixture:{currentRoom,segment,seat}}
 }
 test('policy failure is persistent and fail-closed without inventing fallback dates',async()=>{
@@ -157,7 +157,10 @@ test('historical waitlist SFC shows historical counts and does not claim a froze
   assert.match(template,/row.status === 'waiting'/)
 })
 
-const snapshotResponse=(page,segments= [page.fixture.segment],date=page.date.value)=>({data:{room:page.fixture.currentRoom,date,strategy:'earliest',server_now:policy().server_now,campus_today:policy().campus_today,computed_at:policy().server_now,campus_zone:'Asia/Shanghai',seats:[{...page.fixture.seat,available_windows:segments}],results:segments}})
+const snapshotResponse=(page,segments=[page.fixture.segment],date=page.date.value,strategy=page.strategy.value,requiredMinutes=strategy==='duration'?queryRequiredMinutes(strategy,page.requiredDraft.value):null)=>{
+  const windows=segments.map(segment=>({...segment,suggested_start:segment.available_start,suggested_end:minuteText(minuteValue(segment.available_start)+(requiredMinutes||30))}))
+  return{data:{room:page.fixture.currentRoom,date,strategy,required_minutes:requiredMinutes,server_now:policy().server_now,campus_today:policy().campus_today,computed_at:policy().server_now,campus_zone:'Asia/Shanghai',seats:[{...page.fixture.seat,available_windows:windows}],results:windows}}
+}
 test('continuous window bounds preserve arbitrary minutes, 241 minutes and 24:00 without combining fragments',()=>{
   const window={room_id:1,seat_id:2,available_start:'18:00',available_end:'24:00'}
   assert.equal(validateWindowSlot(policy(),'2026-11-02','19:59','24:00',window),241)
@@ -167,7 +170,7 @@ test('continuous window bounds preserve arbitrary minutes, 241 minutes and 24:00
 })
 test('one seat exposes all windows without implicit selection; choosing a fragment defaults only the actual booking to 30 minutes',async()=>{
   const page=await booking()
-  const second={...page.fixture.segment,available_start:'12:00',available_end:'17:00',duration_minutes:300}
+  const second={...page.fixture.segment,available_start:'12:00',available_end:'17:00',duration_minutes:300,suggested_start:'12:00',suggested_end:'12:30'}
   page.seats.value=[{...page.fixture.seat,available_windows:[second,page.fixture.segment]}];page.selected.value=null;page.selectedWindow.value=null
   page.onSeatClick(page.seats.value[0]);assert.equal(page.selected.value.id,2);assert.equal(page.selectedWindow.value,null)
   page.chooseWindow(second);assert.equal(page.selectedWindow.value.available_end,'17:00');assert.equal(page.start.value,'12:00');assert.equal(page.end.value,'12:30')
@@ -206,7 +209,7 @@ test('confirmation binds the full segment and actual slot while a conflicting PO
 test('2D and 3D share real window selection rather than passing has-window into old occupied flags',async()=>{
   const bookingSource=await readFile(new URL('../src/views/BookingView.vue',import.meta.url),'utf8')
   assert.doesNotMatch(bookingSource,/getSeatMap|bookable_for_slot|s\.occupied/)
-  assert.match(bookingSource,/@select-window="chooseWindow"/);assert.match(bookingSource,/results/);assert.match(bookingSource,/最早优先/)
+  assert.match(bookingSource,/@select-window="chooseWindow"/);assert.match(bookingSource,/results/);assert.match(bookingSource,/首选结果/)
   const explorer=await readFile(new URL('../src/components/seat3d/SeatExplorer.vue',import.meta.url),'utf8')
   assert.match(explorer,/selected\.available_windows/);assert.match(explorer,/emit\('select-window', window\)/);assert.match(explorer,/!selectedWindow/)
   const {seatState}=await import('../src/components/seat3d/seatPresentation.js')
@@ -219,4 +222,78 @@ test('availability API requests only selected room/date and the actual earliest 
   const module=new vm.SourceTextModule(await readFile(new URL('../src/api/availability.js',import.meta.url),'utf8'),{context})
   await module.link(()=>new vm.SyntheticModule(['default'],function(){this.setExport('default',{get:(...value)=>{args=value}})},{context}));await module.evaluate()
   module.namespace.getAvailability(7,'2026-11-02');assert.equal(args[0],'/availability');assert.equal(args[1].params.strategy,'earliest');assert.equal(args[1].params.room_id,7);assert.equal(args[1].params.date,'2026-11-02');assert.equal('start'in args[1].params,false)
+})
+
+test('required minutes use strict decimal integer syntax without business duration ceilings',()=>{
+  for(const value of ['', '29','30.0','1e2','+120','-120',' 120','120 ','NaN','１２0','2147483648']) assert.throws(()=>queryRequiredMinutes('duration',value))
+  assert.equal(queryRequiredMinutes('duration','00030'),30)
+  assert.equal(queryRequiredMinutes('duration','241'),241);assert.equal(queryRequiredMinutes('duration','1500'),1500)
+  assert.equal(queryRequiredMinutes('duration','2147483647'),2147483647)
+  assert.equal(queryRequiredMinutes('longest','invalid retained draft'),null)
+})
+test('switching strategies retains date, room and required draft while clearing old selection and consuming server order',async()=>{
+  const seen=[];let page
+  page=await booking({getAvailability:async(id,date,strategy,required)=>{seen.push({id,date,strategy,required});return snapshotResponse(page,[{...page.fixture.segment,available_start:'18:00',available_end:'24:00',duration_minutes:360}],date,strategy,required)}})
+  page.requiredDraft.value='00241';await page.changeStrategy('longest')
+  assert.equal(page.selectedWindow.value,null);assert.equal(page.start.value,'');assert.equal(page.date.value,'2026-11-02');assert.equal(page.roomId.value,1);assert.equal(page.requiredDraft.value,'00241')
+  assert.equal(seen[0].strategy,'longest');assert.equal(seen[0].required,null);assert.equal(page.results.value[0].available_start,'18:00')
+  await page.changeStrategy('duration');assert.equal(seen[1].required,241);assert.equal(page.requiredDraft.value,'00241')
+})
+test('duration uses full server suggestion but permits a deliberate 30-minute booking with truthful editing and snapshot confirmation',async()=>{
+  let page,confirmation='',posted
+  page=await booking({getAvailability:async(id,date,strategy,required)=>snapshotResponse(page,[{...page.fixture.segment,available_start:'12:00',available_end:'17:00',duration_minutes:300}],date,strategy,required),confirmDialog:async text=>{confirmation=text},createReservation:async body=>{posted=body;return{data:{room_name:'测试空间',seat_no:'A1'}}}})
+  await page.changeStrategy('duration');page.chooseWindow(page.results.value[0])
+  assert.equal(page.selectedWindow.value.available_end,'17:00');assert.equal(page.start.value,'12:00');assert.equal(page.end.value,'14:00')
+  assert.equal(page.shortfall.value,'');page.changeActualTime('end','12:30')
+  assert.equal(page.shortfall.value,'本次30分钟，短于找座时输入的120分钟')
+  await page.confirmBooking();assert.equal(posted.start_time,'12:00');assert.equal(posted.end_time,'12:30');assert.equal('required_minutes' in posted,false)
+  assert.match(confirmation,/找座所需：120分钟/);assert.match(confirmation,/建议：12:00–14:00/);assert.match(confirmation,/本次30分钟，短于找座时输入的120分钟/)
+})
+test('241-minute suggestion and above-day empty query preserve exact duration input and chosen place',async()=>{
+  let page
+  page=await booking({getAvailability:async(id,date,strategy,required)=>snapshotResponse(page,required>1440?[]:[{...page.fixture.segment,available_start:'18:00',duration_minutes:360}],date,strategy,required)})
+  page.requiredDraft.value='241';await page.changeStrategy('duration');page.chooseWindow(page.results.value[0]);assert.equal(page.end.value,'22:01')
+  page.changeRequired('1500');assert.equal(page.results.value.length,0);assert.equal(page.availability.value,null);assert.equal(page.queryDirty.value,true)
+  await page.loadAvailability();assert.equal(page.results.value.length,0);assert.equal(page.availability.value.required_minutes,1500);assert.equal(page.requiredDraft.value,'1500');assert.equal(page.date.value,'2026-11-02');assert.equal(page.roomId.value,1)
+})
+test('invalid duration keeps input visible and cannot call API or reuse a previous fragment',async()=>{
+  const page=await booking();page.requiredDraft.value='29'
+  await page.changeStrategy('duration');assert.equal(page.calls.length,0);assert.match(page.mapErrorText.value,/至少30/);assert.equal(page.selectedWindow.value,null);assert.equal(page.requiredDraft.value,'29')
+})
+test('rapid strategy or required-draft changes invalidate old responses before they can claim new query success',async()=>{
+  const pending=[];const page=await booking({getAvailability:(id,date,strategy,required)=>new Promise(resolve=>pending.push({resolve,date,strategy,required}))})
+  const old=page.loadAvailability();const latest=page.changeStrategy('longest')
+  pending[1].resolve(snapshotResponse(page,[],pending[1].date,pending[1].strategy,pending[1].required));await latest
+  pending[0].resolve(snapshotResponse(page,[page.fixture.segment],pending[0].date,pending[0].strategy,pending[0].required));await old
+  assert.equal(page.availability.value.strategy,'longest');assert.equal(page.results.value.length,0)
+  const durationRequest=page.changeStrategy('duration');page.changeRequired('241')
+  pending[2].resolve(snapshotResponse(page,[{...page.fixture.segment,available_start:'18:00',duration_minutes:360}],pending[2].date,pending[2].strategy,pending[2].required));await durationRequest
+  assert.equal(page.availability.value,null);assert.equal(page.results.value.length,0);assert.equal(page.queryDirty.value,true);assert.equal(page.requiredDraft.value,'241')
+})
+test('duration conflict refresh uses unchanged strategy and required snapshot without changing search input',async()=>{
+  const queries=[];let page
+  page=await booking({getAvailability:async(id,date,strategy,required)=>{queries.push({id,date,strategy,required});return snapshotResponse(page,[],date,strategy,required)},createReservation:async()=>{throw{status:409,message:'刚被抢占'}}})
+  page.strategy.value='duration';page.availability.value={...page.availability.value,strategy:'duration',required_minutes:120}
+  page.end.value='22:30';await page.confirmBooking()
+  assert.match(page.bookingError.value,/刚被抢占/);assert.equal(queries[0].strategy,'duration');assert.equal(queries[0].required,120);assert.equal(page.requiredDraft.value,'120');assert.equal(page.date.value,'2026-11-02')
+})
+test('all availability strategies send only their applicable parameters; 3D uses same suggested and shortfall fields',async()=>{
+  const calls=[];const context=vm.createContext({})
+  const module=new vm.SourceTextModule(await readFile(new URL('../src/api/availability.js',import.meta.url),'utf8'),{context})
+  await module.link(()=>new vm.SyntheticModule(['default'],function(){this.setExport('default',{get:(...value)=>calls.push(value)})},{context}));await module.evaluate()
+  module.namespace.getAvailability(1,'2026-11-02','earliest','120');module.namespace.getAvailability(1,'2026-11-02','longest','120');module.namespace.getAvailability(1,'2026-11-02','duration',241)
+  assert.equal('required_minutes' in calls[0][1].params,false);assert.equal('required_minutes' in calls[1][1].params,false);assert.equal(calls[2][1].params.required_minutes,241)
+  const explorer=await readFile(new URL('../src/components/seat3d/SeatExplorer.vue',import.meta.url),'utf8')
+  assert.match(explorer,/strategyLabel/);assert.match(explorer,/suggested_start/);assert.match(explorer,/v-if="shortfall"/);assert.match(explorer,/本次预约已主动缩短/)
+})
+
+test('confirmation keeps original strategy and required minutes together with actual slot despite later live state changes',async()=>{
+  let release,posted,confirmation=''
+  const page=await booking({confirmDialog:text=>{confirmation=text;return new Promise(resolve=>{release=resolve})},createReservation:async body=>{posted=body;return{data:{room_name:'测试空间',seat_no:'A1'}}}})
+  page.strategy.value='duration';page.availability.value={...page.availability.value,strategy:'duration',required_minutes:120};page.end.value='22:30'
+  const attempt=page.confirmBooking();assert.equal(page.submitting.value,true)
+  page.changeRequired('241');assert.equal(page.requiredDraft.value,'120')
+  page.strategy.value='longest';page.requiredDraft.value='241';page.start.value='23:00';page.end.value='24:00'
+  release();await attempt
+  assert.equal(posted.start_time,'22:00');assert.equal(posted.end_time,'22:30');assert.match(confirmation,/满足学习时长/);assert.match(confirmation,/找座所需：120分钟/);assert.match(confirmation,/本次30分钟，短于找座时输入的120分钟/)
 })

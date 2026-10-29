@@ -12,6 +12,9 @@ import org.springframework.transaction.annotation.Transactional;
 public class AvailabilityService {
     private static final List<String> ROOM_FIELDS=List.of("id","name","building","floor","location","enabled","seat_rows","seat_cols","description","version","resource_reason","seat_count","capacity","bookable_capacity","campus_zone","campus_today","opening_date","opening_windows","closed_reasons");
     private static final List<String> SEAT_FIELDS=List.of("id","room_id","seat_no","row_no","col_no","zone","has_power","near_window","status","version","resource_reason");
+    private static final Comparator<Map<String,Object>> EARLIEST=Comparator.comparing((Map<String,Object> item)->Store.text(item,"available_start"))
+        .thenComparing(item->Store.text(item,"building")).thenComparing(item->Store.text(item,"floor")).thenComparing(item->Store.text(item,"location")).thenComparing(item->Store.text(item,"room_name"))
+        .thenComparing(item->Store.text(item,"seat_no")).thenComparingLong(item->Store.id(item,"seat_id")).thenComparing(item->Store.text(item,"available_end"));
     private record Interval(LocalDateTime start,LocalDateTime end) {}
     private final Store db;
     private final AuthService auth;
@@ -20,9 +23,12 @@ public class AvailabilityService {
     private final BookingService bookings;
     private final OpeningScheduleService opening;
     public AvailabilityService(Store db,AuthService auth,Clock clock,BookingPolicy policy,BookingService bookings,OpeningScheduleService opening) { this.db=db;this.auth=auth;this.clock=clock;this.policy=policy;this.bookings=bookings;this.opening=opening; }
-    public Map<String,Object> find(long uid,long roomId,String date,String strategy) {
+    public Map<String,Object> find(long uid,long roomId,String date,String strategy) { return find(uid,roomId,date,strategy,null); }
+    public Map<String,Object> find(long uid,long roomId,String date,String strategy,String requiredMinutes) {
         db.lockBookings();var user=auth.profile(uid);Api.require(AuthService.isOrdinary(user.get("role"))&&"active".equals(user.get("status")),403,"仅学生和教职工可查询本人找座方案");
-        Api.require(roomId>0,400,"空间编号无效");Api.require("earliest".equals(strategy),400,"当前仅支持 earliest 最早方案");
+        Api.require(roomId>0,400,"空间编号无效");Api.require(strategy!=null&&Set.of("earliest","longest","duration").contains(strategy),400,"找座方案须为 earliest、longest 或 duration");
+        Integer required=parseRequired(strategy,requiredMinutes);int suggested=required==null?Slot.MIN_DURATION_MINUTES:required;
+        Comparator<Map<String,Object>> order=strategy.equals("longest")?Comparator.<Map<String,Object>>comparingLong(item->((Number)item.get("duration_minutes")).longValue()).reversed().thenComparing(EARLIEST):EARLIEST;
         LocalDate day;try { day=LocalDate.parse(date); } catch(DateTimeException|NullPointerException e) { throw Api.fail(400,"校园日期格式错误"); }
         LocalDateTime snapshot=LocalDateTime.ofInstant(clock.instant(),BookingPolicy.CAMPUS_ZONE).truncatedTo(ChronoUnit.MICROS);policy.validateDate(day,snapshot);
         var calendar=opening.calendar(roomId,day);bookings.reconcileAvailability(uid,roomId,day,snapshot);
@@ -42,23 +48,27 @@ public class AvailabilityService {
                 var start=day.atStartOfDay().plusMinutes(window.startMinute());var end=day.atStartOfDay().plusMinutes(window.endMinute());
                 for(var gap:subtract(new Interval(start,end),occupied)) {
                     var left=ceilMinute(gap.start());if(day.equals(snapshot.toLocalDate())&&left.isBefore(ceilMinute(snapshot))) left=ceilMinute(snapshot);
-                    var right=gap.end().truncatedTo(ChronoUnit.MINUTES);long duration=Duration.between(left,right).toMinutes();if(duration<Slot.MIN_DURATION_MINUTES) continue;
-                    var item=result(publicRoom,seat,day,left,right,snapshot,duration);windows.add(item);results.add(item);
+                    var right=gap.end().truncatedTo(ChronoUnit.MINUTES);long duration=Duration.between(left,right).toMinutes();if(duration<suggested) continue;
+                    var item=result(publicRoom,seat,day,left,right,snapshot,duration,suggested);windows.add(item);results.add(item);
                 }
             }
-            var safe=copy(seat,SEAT_FIELDS);safe.put("opening_windows",legal.view());safe.put("closed_reasons",legal.closedReasons());safe.put("available_windows",windows);seats.add(safe);
+            windows.sort(order);var safe=copy(seat,SEAT_FIELDS);safe.put("opening_windows",legal.view());safe.put("closed_reasons",legal.closedReasons());safe.put("available_windows",windows);seats.add(safe);
         }
-        results.sort(Comparator.comparing((Map<String,Object> item)->Store.text(item,"available_start"))
-            .thenComparing(item->Store.text(item,"building")).thenComparing(item->Store.text(item,"floor")).thenComparing(item->Store.text(item,"location")).thenComparing(item->Store.text(item,"room_name"))
-            .thenComparing(item->Store.text(item,"seat_no")).thenComparingLong(item->Store.id(item,"seat_id")).thenComparing(item->Store.text(item,"available_end")));
+        results.sort(order);
         var response=new LinkedHashMap<String,Object>();String now=snapshot.atZone(BookingPolicy.CAMPUS_ZONE).toOffsetDateTime().toString();
-        response.put("room",publicRoom);response.put("date",day.toString());response.put("strategy",strategy);response.put("server_now",now);response.put("campus_today",snapshot.toLocalDate().toString());response.put("computed_at",now);response.put("campus_zone",BookingPolicy.CAMPUS_ZONE.getId());response.put("seats",seats);response.put("results",results);return response;
+        response.put("room",publicRoom);response.put("date",day.toString());response.put("strategy",strategy);response.put("required_minutes",required);response.put("server_now",now);response.put("campus_today",snapshot.toLocalDate().toString());response.put("computed_at",now);response.put("campus_zone",BookingPolicy.CAMPUS_ZONE.getId());response.put("seats",seats);response.put("results",results);return response;
     }
-    private Map<String,Object> result(Map<String,Object> room,Map<String,Object> seat,LocalDate day,LocalDateTime start,LocalDateTime end,LocalDateTime now,long duration) {
+    private Map<String,Object> result(Map<String,Object> room,Map<String,Object> seat,LocalDate day,LocalDateTime start,LocalDateTime end,LocalDateTime now,long duration,int suggested) {
         var item=new LinkedHashMap<String,Object>();item.put("seat_id",seat.get("id"));item.put("seat_no",seat.get("seat_no"));item.put("room_id",room.get("id"));item.put("room_name",room.get("name"));
         for(String field:List.of("building","floor","location")) item.put(field,room.get(field));item.put("row_no",seat.get("row_no"));item.put("col_no",seat.get("col_no"));
-        item.put("available_start",Slot.format((int)Duration.between(day.atStartOfDay(),start).toMinutes()));item.put("available_end",Slot.format((int)Duration.between(day.atStartOfDay(),end).toMinutes()));item.put("duration_minutes",duration);
+        item.put("available_start",Slot.format((int)Duration.between(day.atStartOfDay(),start).toMinutes()));item.put("available_end",Slot.format((int)Duration.between(day.atStartOfDay(),end).toMinutes()));item.put("duration_minutes",duration);item.put("suggested_start",item.get("available_start"));item.put("suggested_end",Slot.format((int)Duration.between(day.atStartOfDay(),start).toMinutes()+suggested));
         Duration waiting=Duration.between(now,start);if(waiting.isNegative()) throw new IllegalStateException("空档开始早于计算快照");item.put("wait_minutes",waiting.getSeconds()/60+(waiting.getSeconds()%60!=0||waiting.getNano()!=0?1:0));return item;
+    }
+    private Integer parseRequired(String strategy,String raw) {
+        if(!strategy.equals("duration")) { Api.require(raw==null,400,"仅所需时长方案可提供 required_minutes");return null; }
+        Api.require(raw!=null&&raw.matches("[0-9]+"),400,"required_minutes 须为至少30的十进制整数");
+        try { int value=Integer.parseInt(raw);Api.require(value>=Slot.MIN_DURATION_MINUTES,400,"所需时长须至少30分钟");return value; }
+        catch(NumberFormatException e) { throw Api.fail(400,"required_minutes 超出整数解析范围"); }
     }
     private List<Interval> union(List<Interval> ranges) {
         ranges.sort(Comparator.comparing(Interval::start).thenComparing(Interval::end));var result=new ArrayList<Interval>();
