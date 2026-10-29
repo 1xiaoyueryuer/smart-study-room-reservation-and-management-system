@@ -39,7 +39,7 @@ class PermissionIntegrationTest {
 
     @BeforeEach void fixture() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"),"禁止操作其他数据库");
-        for(String table:List.of("resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         remote="s02-test-"+UUID.randomUUID();
         ids=new LinkedHashMap<>();
         String hash=new BCryptPasswordEncoder().encode(PASSWORD);
@@ -109,6 +109,15 @@ class PermissionIntegrationTest {
         http.perform(post("/api/auth/register")).andExpect(status().isForbidden());
         assertEquals(403,assertThrows(Api.Failure.class,()->auth.register(new Requests.Register("intruder","123456","test",null))).status);
         assertEquals(before,db.count("SELECT count(*) FROM users"));
+    }
+    @Test void deletedLoginIdentityIsUnauthorizedButMissingBusinessResourceStaysNotFound() throws Exception {
+        String deleted=token("staff"),valid=token("student");long id=ids.get("staff");
+        // 此用户无任何业务引用；仅删除专用测试库的当前测试夹具。
+        assertEquals(1,db.update("DELETE FROM users WHERE id=?",id));
+        http.perform(get("/api/rooms").header("Authorization","Bearer "+deleted)).andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value(401));
+        var failure=assertThrows(Api.Failure.class,()->auth.authenticate(deleted));assertEquals(401,failure.status);assertEquals("登录身份已失效，请重新登录",failure.getMessage());
+        assertEquals(404,assertThrows(Api.Failure.class,()->auth.profile(id)).status);
+        http.perform(get("/api/rooms/999999999/seats").param("date",LocalDate.now(clock).plusDays(1).toString()).param("start","10:00").param("end","11:00").header("Authorization","Bearer "+valid)).andExpect(status().isNotFound());
     }
     @Test void logoutAndDisableInvalidateExistingTokens() throws Exception {
         String student=token("student");revokedTokens.add(student);

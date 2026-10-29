@@ -7,7 +7,6 @@ import { useAuthStore } from '../stores/auth'
 import { useNotificationStore } from '../stores/notification'
 import { getRooms, getOpeningWindows } from '../api/room'
 import { getOverview } from '../api/stats'
-import { getCreditOverview } from '../api/credit'
 import AppIcon from '../components/AppIcon.vue'
 import SBanner from '../components/ui/SBanner.vue'
 import SButton from '../components/ui/SButton.vue'
@@ -45,12 +44,9 @@ const statsError = ref('')
 const statsLoading = ref(false)
 const roomsError = ref('')
 const roomsLoading = ref(false)
-const creditOverview = ref(null)
-const creditError = ref('')
 const unread = computed(() => notifStore.unread)
 let unreadTimer = null
 
-const currentCredit = computed(() => creditOverview.value?.score ?? auth.user?.credit_score ?? null)
 const totalSeats = computed(() => statsOverview.value?.total_seats ?? null)
 const inUseNow = computed(() => statsOverview.value?.in_use_now ?? null)
 const availableSeats = computed(() => totalSeats.value === null || inUseNow.value === null ? null : Math.max(0, totalSeats.value - inUseNow.value))
@@ -98,15 +94,6 @@ async function loadStats() {
 
 onMounted(async () => {
   await Promise.all([loadRooms(), loadStats()])
-  if (auth.isOrdinary) {
-    try {
-      const credResp = await getCreditOverview()
-      creditOverview.value = credResp.data
-    } catch (error) {
-      creditError.value = error.message
-    }
-  }
-
   refreshUnread()
   unreadTimer = setInterval(refreshUnread, 30000)
 })
@@ -159,11 +146,10 @@ const cardToneClass = {
           <h3>账户概览</h3>
           <span class="role-pill" :class="auth.isAdmin ? 'role-pill--admin' : 'role-pill--student'">{{ roleText }}</span>
         </div>
-        <SBanner v-if="creditError" type="error" :title="creditError">信用记录加载失败，当前显示登录资料中的分数；可前往个人中心查询。</SBanner>
         <div class="kpi-grid">
           <div class="kpi">
-            <div class="kpi-num"><SAnimatedNumber v-if="currentCredit !== null" :value="currentCredit" /><span v-else>—</span></div>
-            <div class="kpi-label">现有信用分</div>
+            <div class="kpi-num"><SButton variant="ghost" @click="router.push('/profile')">查看本人违规</SButton></div>
+            <div class="kpi-label">独立事件明细与历史资料</div>
           </div>
           <div class="kpi">
             <div class="kpi-num"><SAnimatedNumber v-if="!roomsLoading && !roomsError" :value="roomCount" /><span v-else>—</span></div>
@@ -246,10 +232,10 @@ const cardToneClass = {
       </section>
       <StudyTips :title="auth.isOrdinary ? '使用小贴士' : '管理提示'">
         <ul v-if="auth.isOrdinary" class="tips tips-list">
-          <li>距开始不足 30 分钟取消预约将扣 <b>2 分</b>信用分</li>
-          <li>超时未签到会自动记为违约，扣 <b>8 分</b>，并释放座位</li>
+          <li>开始前取消不登记新违规；开始后未签到主动放弃会登记一次未使用违约</li>
+          <li>到开始后15分钟仍未签到，系统结束预约、释放余时并登记一次未签到违约</li>
           <li>按服务端校园日期选择今天至后天，预约至少<b>30分钟</b>，使用分钟起止</li>
-          <li>信用分低于 60，<b>3 天内</b>无法发起新预约</li>
+          <li>历史信用只读，不再新增奖惩或低分触发；已有旧限制由服务端按原截止核对</li>
         </ul>
         <ul v-else class="tips tips-list">
           <li>定期检查自习室开放时间与座位规模是否准确</li>
@@ -288,8 +274,8 @@ const cardToneClass = {
             <div class="intro-text">保留原候补状态及预约来源，可查询历史记录并退出仍在等待的条目；不再新增或递补。</div>
           </div>
           <div class="intro-cell">
-            <div class="intro-label">信用治理</div>
-            <div class="intro-text">违约扣分、履约加分、低分限约，保留真实流水供本人查询。</div>
+            <div class="intro-label">独立违规记录</div>
+            <div class="intro-text">本人查询自动未使用违约明细及有效性；历史信用流水另行只读保留，不按分数换算违规。</div>
           </div>
         </div>
         <div v-else class="intro-grid">
@@ -303,7 +289,7 @@ const cardToneClass = {
           </div>
           <div class="intro-cell">
             <div class="intro-label">用户管理</div>
-            <div class="intro-text">查看普通用户信息与信用状态，并按需启用或禁用用户账号。</div>
+            <div class="intro-text">查看校园身份与账号状态，按需维护和启停账号；历史信用仅作溯源。</div>
           </div>
           <div class="intro-cell">
             <div class="intro-label">运营分析</div>

@@ -38,7 +38,12 @@ public class AuthService {
         try {
             var jwt=JWT.require(algorithm).withIssuer("studyroom-java").build().verify(token);
             Api.require(!Boolean.TRUE.equals(redis.hasKey(revokedKey(token))),401,"登录已注销");
-            var user=profile(Long.parseLong(jwt.getSubject()));
+            Map<String,Object> user;
+            try { user=profile(Long.parseLong(jwt.getSubject())); }
+            catch(Api.Failure e) {
+                if(e.status==404) throw Api.fail(401,"登录身份已失效，请重新登录");
+                throw e;
+            }
             Api.require("active".equals(user.get("status")),401,"账号已被禁用");
             return user;
         } catch(Api.Failure e) { throw e; }

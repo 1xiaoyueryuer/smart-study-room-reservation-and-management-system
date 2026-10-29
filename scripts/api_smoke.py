@@ -1,4 +1,4 @@
-"""对正在运行的 Java 服务验证前端 API 契约；使用模拟账号，测试预约最终取消。"""
+"""仅对studyroom_java_test专用服务验证API；模拟预约最终取消。"""
 import json
 import os
 import sys
@@ -6,7 +6,7 @@ import time
 import urllib.request
 import urllib.error
 
-BASE = os.environ.get('STUDYROOM_API', 'http://127.0.0.1:8080/api')
+BASE = os.environ.get('STUDYROOM_API', 'http://127.0.0.1:8081/api')
 if sys.platform == 'win32':
     sys.stdout.reconfigure(encoding='utf-8')
 checks = []
@@ -31,6 +31,7 @@ def check(name, condition):
 def main():
     status, body = call('GET', '/health')
     check('Java + PostgreSQL + Redis 健康检查', status == 200 and body['data']['backend'] == 'java' and body['data']['database'] == 'PostgreSQL')
+    check('写入前确认专用测试库', body['data'].get('database_name') == 'studyroom_java_test')
     check('匿名请求被拦截', call('GET', '/rooms')[0] == 401)
     check('错误密码被拦截', call('POST', '/auth/login', {'username':'stu01','password':'wrong'})[0] == 401)
     status, body = call('POST','/auth/login',{'username':'admin','password':'admin123'})
@@ -75,8 +76,11 @@ def main():
     finally:
         if res_id:
             check('本人取消释放座位',call('POST',f'/reservations/{res_id}/cancel',{},student)[0] == 200)
+    status, body = call('GET','/violations/mine',token=student)
+    check('本人独立违规明细',status == 200 and isinstance(body['data'],list))
+    check('开始前取消未登记独立违规',all(v['reservation_id'] != res_id for v in body['data']))
     status, body = call('GET','/credit',token=student)
-    check('信用概览及流水',status == 200 and 'score' in body['data'] and isinstance(body['data']['logs'],list))
+    check('只读历史信用及流水',status == 200 and body['data']['history_only'] is True and 'score' in body['data'] and isinstance(body['data']['logs'],list))
     status, body = call('GET','/notifications',token=student)
     check('消息中心',status == 200 and isinstance(body['data'],list))
     check('消息一键已读',call('POST','/notifications/read_all',{},student)[0] == 200)

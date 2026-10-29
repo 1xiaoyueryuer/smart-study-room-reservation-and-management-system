@@ -31,7 +31,7 @@ class BookingIntegrationTest {
     }
     @BeforeEach void setup() {
         assertTrue(env.getProperty("spring.datasource.url","").endsWith("/studyroom_java_test"),"必须使用独立测试库");
-        for(String table:List.of("resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         u1=db.insert("INSERT INTO users(username,password_hash) VALUES('test1','unused')");
         u2=db.insert("INSERT INTO users(username,password_hash) VALUES('test2','unused')");
         admin=db.insert("INSERT INTO users(username,password_hash,role) VALUES('resource-admin','unused','admin')");
@@ -61,21 +61,22 @@ class BookingIntegrationTest {
         assertNotNull(bookings.create(u2,request(s1,"11:00","12:00")));
         bookings.action(u1,id,"cancel");assertNotNull(bookings.create(u1,request(s1,"10:00","11:00")));
     }
-    @Test void ownershipAndRepeatedCheckoutCannotDuplicateCredit() {
+    @Test void ownershipAndRepeatedCheckoutCannotCreateNewCredit() {
         long id=Store.id(bookings.create(u1,request(s1,"10:00","11:00")),"id");
         assertEquals(403,assertThrows(Api.Failure.class,()->bookings.action(u2,id,"cancel")).status);
         db.update("UPDATE reservations SET start_time=TIME '09:00',end_time=TIME '10:00' WHERE id=?",id);
         bookings.action(u1,id,"checkin");bookings.action(u1,id,"checkout");
         assertEquals(409,assertThrows(Api.Failure.class,()->bookings.action(u1,id,"checkout")).status);
-        assertEquals(1,db.count("SELECT count(*) FROM credit_logs WHERE reservation_id=?",id));
+        assertEquals(0,db.count("SELECT count(*) FROM credit_logs WHERE reservation_id=?",id));
     }
     @Test void repeatedTimeoutTicksCountOneViolation() {
         long id=Store.id(bookings.create(u1,request(s1,"10:00","11:00")),"id");
         db.update("UPDATE reservations SET start_time=TIME '08:00',end_time=TIME '09:00' WHERE id=?",id);
         bookings.tick();bookings.tick();
-        assertEquals("violation",db.one("SELECT status FROM reservations WHERE id=?",id).get("status"));
-        assertEquals(1,db.count("SELECT count(*) FROM credit_logs WHERE reservation_id=?",id));
-        assertEquals(92,db.count("SELECT credit_score FROM users WHERE id=?",u1));
+        assertEquals("unused_ended",db.one("SELECT status FROM reservations WHERE id=?",id).get("status"));
+        assertEquals(1,db.count("SELECT count(*) FROM violations WHERE reservation_id=? AND type='no_show'",id));
+        assertEquals(0,db.count("SELECT count(*) FROM credit_logs WHERE reservation_id=?",id));
+        assertEquals(100,db.count("SELECT credit_score FROM users WHERE id=?",u1));
         assertEquals(0.0,((Number)stats.overview().get("today_utilization")).doubleValue());
     }
     @Test void retiredWaitlistNeverPromotesAndHistoricalPreferencesRemainCancellable() {

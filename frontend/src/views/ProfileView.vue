@@ -9,11 +9,19 @@ import SButton from '../components/ui/SButton.vue'
 import { useAuthStore } from '../stores/auth'
 import { getCreditOverview } from '../api/credit'
 import SEmpty from '../components/ui/SEmpty.vue'
-import SGauge from '../components/ui/SGauge.vue'
+import ViolationsPanel from '../components/ViolationsPanel.vue'
 import SBanner from '../components/ui/SBanner.vue'
 
 const auth = useAuthStore()
 const overview = ref(null)
+const creditLoading = ref(false), creditError = ref('')
+async function loadCredit() {
+  creditLoading.value = true
+  creditError.value = ''
+  try { const response = await getCreditOverview(); overview.value = response.data }
+  catch (failure) { creditError.value = failure.message }
+  finally { creditLoading.value = false }
+}
 const contacts = ref({ phone: '', email: '' })
 const profileLoading = ref(false)
 const profileError = ref('')
@@ -54,23 +62,10 @@ async function saveContacts() {
   }
 }
 
-const scoreColor = computed(() => {
-  const s = overview.value?.score ?? 100
-  if (s >= 80) return 'var(--green)'
-  if (s >= 60) return 'var(--amber)'
-  return 'var(--red)'
-})
-
-const banned = computed(() => {
-  const until = overview.value?.banned_until
-  return until && new Date(until) > new Date() ? new Date(until).toLocaleString('zh-CN', { hour12: false }) : null
-})
-
 onMounted(async () => {
   await loadProfile()
   if (!auth.isOrdinary) return
-  const resp = await getCreditOverview()
-  overview.value = resp.data
+  await loadCredit()
 })
 const creditLogs = computed(() => overview.value?.logs || [])
 const { page, pages, pageItems } = usePagination(creditLogs, null)
@@ -80,7 +75,7 @@ const { page, pages, pageItems } = usePagination(creditLogs, null)
   <div v-reveal class="page-view">
     <header class="view-heading" data-page-title>
       <h1>个人中心</h1>
-      <p class="heading-sub">账户信息与信用分记录</p>
+      <p class="heading-sub">账户联系方式、本人违规与历史信用资料</p>
     </header>
     <div class="split profile-split" :class="{ 'profile-admin': auth.isAdmin }">
     <div class="split-left">
@@ -122,38 +117,27 @@ const { page, pages, pageItems } = usePagination(creditLogs, null)
         </form>
       </section>
 
-      <!-- 信用卡 -->
       <section v-if="auth.isOrdinary" class="card responsive-compact">
-        <div class="card-title-row"><h3>我的信用</h3></div>
-        <div v-if="overview" class="credit-box">
-          <SGauge :value="overview.score" :color="scoreColor" :size="152">
-            <div class="score-num" :style="{ color: scoreColor }">{{ overview.score }}</div>
-            <div class="score-label">信用分</div>
-          </SGauge>
-          <SBanner
-            v-if="banned"
-            type="error"
-            style="margin-top: 14px; width: 100%"
-            :title="`信用分低于 60，禁止预约至 ${banned}`"
-          />
-          <SBanner
-            v-else type="success"
-            style="margin-top: 14px; width: 100%"
-            title="信用状态正常，可正常预约"
-          />
-          <div class="rule-tip">
-            规则：违约 −8 · 迟到取消 −2 · 按期履约 +1 · 低于 60 分禁约 3 天
-          </div>
-        </div>
+        <div class="card-title-row"><h3>历史信用资料（只读）</h3><SButton size="sm" :loading="creditLoading" @click="loadCredit">刷新历史资料</SButton></div>
+        <p v-if="creditLoading" role="status">正在读取历史信用资料…</p>
+        <SBanner v-else-if="creditError" type="error" :title="creditError"><SButton size="sm" @click="loadCredit">重试历史查询</SButton></SBanner>
+        <template v-else-if="overview">
+          <p class="score-num">{{ overview.score }}</p><p class="muted">历史信用分仅作溯源，不再新增奖惩或触发低分限制；预约资格由服务端复核，不能由分数推断。</p>
+          <SBanner v-if="overview.legacy_ban_active === true" type="warning" :title="`旧限制仍有效至 ${overview.legacy_banned_until || overview.banned_until}（校园时区Asia/Shanghai），按原截止保留，不新增或延长`" />
+          <p v-else-if="overview.legacy_banned_until || overview.banned_until" class="muted">历史限制截止记录：{{ overview.legacy_banned_until || overview.banned_until }}（Asia/Shanghai）；此处保留原依据。</p>
+          <p v-else class="muted">无旧限制截止记录；这不代表其他预约条件已经满足。</p>
+        </template>
       </section>
     </div>
 
     <div v-if="auth.isOrdinary" class="split-right">
+      <ViolationsPanel />
       <section class="card">
         <div class="card-title-row">
-          <h3>信用分流水</h3>
-          <span class="muted">最新 {{ overview?.logs?.length || 0 }} 条记录</span>
+          <h3>历史信用流水（只读）</h3>
+          <span v-if="!creditLoading && !creditError && overview" class="muted">已读取 {{ overview.logs.length }} 条历史记录</span>
         </div>
+        <p v-if="creditLoading" role="status">正在读取历史流水…</p><p v-else-if="creditError" class="muted">历史流水未读取成功，请使用左侧重试按钮。</p>
         <div v-list-motion="pageItems.map(row => row.id + row.status).join()" class="table-wrap">
           <div class="table-scroll" tabindex="0" aria-label="信用分流水表格，可左右滑动">
             <table class="table credit-table">
@@ -167,7 +151,7 @@ const { page, pages, pageItems } = usePagination(creditLogs, null)
               </thead>
               <tbody>
                 <tr v-for="row in pageItems" :key="row.id">
-                  <td class="num">{{ new Date(row.created_at).toLocaleString('zh-CN', { hour12: false }) }}</td>
+                  <td class="num">{{ row.created_at }}</td>
                   <td>
                     <span :class="row.delta > 0 ? 'up' : 'down'">
                       {{ row.delta > 0 ? '+' + row.delta : row.delta }}
@@ -178,7 +162,7 @@ const { page, pages, pageItems } = usePagination(creditLogs, null)
                 </tr>
               </tbody>
             </table>
-            <SEmpty v-if="!overview?.logs?.length" description="暂无信用记录" />
+            <SEmpty v-if="!creditLoading && !creditError && overview && !overview.logs.length" description="尚无已保存的历史信用流水" />
           </div>
         </div>
         <SPagination v-model="page" :pages="pages" :total="creditLogs.length" />

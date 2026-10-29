@@ -32,3 +32,7 @@ export function checkoutReservation(id) {
 export function getBookingPolicy() {
   return request.get('/booking-policy', { silent: true })
 }
+
+export function abandonReservation(id) {
+  return request.post(`/reservations/${id}/abandon`, null, { silent:true })
+}

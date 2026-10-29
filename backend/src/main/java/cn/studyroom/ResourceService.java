@@ -19,7 +19,8 @@ public class ResourceService {
     private final Validator validator;
     private final OpeningScheduleService opening;
     private final Clock clock;
-    public ResourceService(Store db,AuthService auth,AuditService audit,Validator validator,OpeningScheduleService opening,Clock clock) { this.db=db;this.auth=auth;this.audit=audit;this.validator=validator;this.opening=opening;this.clock=clock; }
+    private final BookingService bookings;
+    public ResourceService(Store db,AuthService auth,AuditService audit,Validator validator,OpeningScheduleService opening,Clock clock,BookingService bookings) { this.db=db;this.auth=auth;this.audit=audit;this.validator=validator;this.opening=opening;this.clock=clock;this.bookings=bookings; }
     public List<Map<String,Object>> rooms() {
         var rooms=db.list(ROOMS+" ORDER BY r.id");
         for(var room:rooms) decorate(room,opening.calendar(Store.id(room,"id")),LocalDate.now(clock));
@@ -30,8 +31,8 @@ public class ResourceService {
         var day=calendar.day(date,null);room.remove("open_time");room.remove("close_time");room.put("campus_zone",OpeningScheduleService.ZONE);room.put("campus_today",LocalDate.now(clock).toString());room.put("opening_date",date.toString());room.put("opening_windows",day.view());room.put("closed_reasons",day.closedReasons());
     }
     public Map<String,Object> managementSeats(long roomId) { return Map.of("room",room(roomId),"seats",db.list("SELECT * FROM seats WHERE room_id=? ORDER BY row_no,col_no",roomId)); }
-    public Map<String,Object> seatMap(long roomId,String date,String start,String end) {
-        Slot slot=Slot.parse(date,start,end);var calendar=opening.calendar(roomId);var room=db.one(ROOMS+" WHERE r.id=?",roomId);decorate(room,calendar,slot.date());room.put("bookable_for_slot",calendar.day(slot.date(),null).contains(slot));
+    @Transactional public Map<String,Object> seatMap(long roomId,String date,String start,String end) {
+        Slot slot=Slot.parse(date,start,end);bookings.reconcileRoom(roomId,slot.date());var calendar=opening.calendar(roomId);var room=db.one(ROOMS+" WHERE r.id=?",roomId);decorate(room,calendar,slot.date());room.put("bookable_for_slot",calendar.day(slot.date(),null).contains(slot));
         var seats=db.list("SELECT s.*,EXISTS(SELECT 1 FROM reservations rv WHERE rv.seat_id=s.id AND rv.res_date=? AND rv.status IN "+ACTIVE+" AND rv.start_time<CAST(? AS TIME) AND rv.end_time>CAST(? AS TIME)) AS occupied FROM seats s WHERE room_id=? ORDER BY row_no,col_no",
                 Date.valueOf(slot.date()),slot.endText(),slot.startText(),roomId);
         for(var seat:seats) {
@@ -95,7 +96,11 @@ public class ResourceService {
     private Map<String,Object> seat(long id) { return db.one("SELECT * FROM seats WHERE id=?",id); }
     private void bumpRoom(long id) { db.update("UPDATE rooms SET version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",id); }
     private void bounds(Map<String,Object> room,Requests.Seat req) { Api.require(req.rowNo()<=((Number)room.get("seat_rows")).intValue()&&req.colNo()<=((Number)room.get("seat_cols")).intValue(),400,"座位行列超出空间布局范围"); }
-    private void ensureNoActive(String condition,long id) { Api.require(db.count("SELECT count(*) FROM reservations rv WHERE "+condition+" AND rv.status IN "+ACTIVE+" AND rv.res_date+rv.end_time>?",id,java.sql.Timestamp.valueOf(LocalDateTime.now(clock)))==0,409,"资源变更影响有效预约，请先处理预约"); }
+    private void ensureNoActive(String condition,long id) {
+        LocalDateTime now=LocalDateTime.now(clock);
+        boolean blocked=db.list("SELECT rv.* FROM reservations rv WHERE "+condition+" AND rv.status IN "+ACTIVE,id).stream().anyMatch(row->!ReservationDeadline.expiredPending(row,now)&&Slot.endpoint(LocalDate.parse(Store.text(row,"res_date")),Store.text(row,"end_time")).isAfter(now));
+        Api.require(!blocked,409,"资源变更影响有效预约，请先处理预约");
+    }
     private void version(Map<String,Object> before,Long expected) { Api.require(expected!=null,400,"资源版本必填");Api.require(Store.id(before,"version")==expected,409,"资源已变化，请刷新后重试"); }
     private void requireAdmin(long actor) { var user=auth.profile(actor);Api.require("admin".equals(user.get("role"))&&"active".equals(user.get("status")),403,"需要管理员权限"); }
     private void validate(Object req) { var errors=validator.validate(req);Api.require(errors.isEmpty(),400,errors.stream().map(x->x.getPropertyPath()+": "+x.getMessage()).sorted().findFirst().orElse("参数错误")); }

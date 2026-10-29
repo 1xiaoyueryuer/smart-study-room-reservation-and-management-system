@@ -80,10 +80,9 @@ Java 从 `.local/server.jar` 独立副本运行，不锁定 Maven 构建产物�
 
 ```powershell
 ./scripts/Build.ps1 -Integration
-python ./scripts/api_smoke.py
 ```
 
-集成测试只使用并清理专用测试库 `studyroom_java_test`，代码会检查库名。HTTP联调使用开发服务的模拟账号，测试预约最终取消，临时无历史房间会删除。普通构建可省略 `-Integration`。
+集成测试只使用并清理专用测试库 `studyroom_java_test`，代码会检查库名。普通构建可省略 `-Integration`。需要额外HTTP联调时，先在8081启动明确连接测试库且已有模拟种子的独立服务，再执行 `python ./scripts/api_smoke.py`；脚本默认8081，并在任何业务写入前核对健康响应的实际库名，只允许 `studyroom_java_test`。可通过 `STUDYROOM_API` 指定专用测试服务地址，但不能指向开发库；模拟预约最终取消，临时无历史房间会删除。
 
 [本次验证结果](docs/VALIDATION.md) 与上游资料分开保存。`docs/upstream/` 和 `diagrams/` 是原作者材料，不等于本组贡献或本次测试结果。
 

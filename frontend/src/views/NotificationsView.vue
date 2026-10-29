@@ -18,9 +18,10 @@ const filterType = ref('all')
 
 const typeMeta = {
   reservation_success: { text: '预约成功', color: 'var(--green-strong)', bg: 'var(--green-weak)' },
+  reservation_cancelled:{ text:'预约取消', color:'var(--text-3)', bg:'var(--surface-3)' },
   checkin_reminder:   { text: '签到提醒', color: 'var(--primary-active)', bg: 'var(--primary-weak)' },
   violation:          { text: '违约警告', color: 'var(--red-strong)', bg: 'var(--red-weak)' },
-  credit_change:      { text: '信用变动', color: 'var(--amber-strong)', bg: 'var(--amber-weak)' },
+  credit_change:      { text: '历史信用变动', color: 'var(--amber-strong)', bg: 'var(--amber-weak)' },
   waitlist_promoted:  { text: '候补递补', color: 'var(--violet-strong)', bg: 'var(--violet-weak)' },
   system:             { text: '系统',     color: 'var(--text-2)', bg: 'var(--surface-3)' }
 }
@@ -78,6 +79,7 @@ const typeNav = computed(() => ([
 function typeIcon(k) {
   return {
     reservation_success: 'circle-success',
+    reservation_cancelled:'circle-muted',
     checkin_reminder: 'waitlist',
     violation: 'warning',
     credit_change: 'credit',

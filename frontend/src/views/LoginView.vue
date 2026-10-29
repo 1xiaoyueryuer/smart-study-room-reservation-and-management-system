@@ -42,7 +42,7 @@ const features = [
   { icon: 'booking', title: '可视化选座', desc: '平面图实时选座，冲突自动检测' },
   { icon: 'booking', title: '分钟预约', desc: '校园日期与开放窗口统一复核' },
   { icon: 'notification', title: '站内消息', desc: '查询预约结果与历史通知' },
-  { icon: 'credit', title: '信用治理', desc: '履约加分，违约扣分，公平利用' }
+  { icon: 'warning', title: '本人违规', desc: '独立记录未使用事件，保留处理依据' }
 ]
 </script>
 

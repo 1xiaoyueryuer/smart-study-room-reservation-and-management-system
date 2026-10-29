@@ -24,7 +24,7 @@ public class ApiController {
     }
     @GetMapping("/health") Object health() {
         db.count("SELECT count(*) FROM booking_mutex");redis.hasKey("studyroom-java:health");
-        return ok(Map.of("status","healthy","backend","java","database","PostgreSQL"));
+        return ok(Map.of("status","healthy","backend","java","database","PostgreSQL","database_name",db.one("SELECT current_database() AS name").get("name")));
     }
     @PostMapping("/auth/login") Object login(@Valid @RequestBody Requests.Login req) { return ok(auth.login(req)); }
     @PostMapping("/auth/register") Object register(@Valid @RequestBody Requests.Register req) { return ok(auth.register(req)); }
@@ -38,13 +38,13 @@ public class ApiController {
     @PostMapping("/reservations/auto") Object allocate(HttpServletRequest req,@Valid @RequestBody Requests.Allocation body) { return ok(bookings.allocate(uid(req),body)); }
     @GetMapping("/reservations/mine") Object mine(HttpServletRequest req) { return ok(bookings.mine(uid(req))); }
     @PostMapping("/reservations/{id}/{action}") Object action(HttpServletRequest req,@PathVariable long id,@PathVariable String action) {
-        bookings.action(uid(req),id,action);
-        return ok(action.equals("cancel")?Map.of("cancelled",id):Map.of("id",id,"action",switch(action){case "checkin","return"->"checked_in";case "leave"->"temp_leave";case "checkout"->"completed";default->action;}));
+        var result=bookings.action(uid(req),id,action);
+        // Service代理已成功提交事务，才把已落实deadline的冲突映为HTTP错误。
+        if(result.status()!=200) throw Api.fail(result.status(),result.message(),result.details());
+        return ok(result.data());
     }
-    @GetMapping("/credit") Object credit(HttpServletRequest req) {
-        var user=auth.profile(uid(req));var result=new java.util.LinkedHashMap<String,Object>();result.put("score",user.get("credit_score"));result.put("banned_until",user.get("credit_banned_until"));
-        result.put("logs",db.list("SELECT * FROM credit_logs WHERE user_id=? ORDER BY id DESC LIMIT 50",uid(req)));return ok(result);
-    }
+    @GetMapping("/violations/mine") Object violations(HttpServletRequest req) { return ok(bookings.violationsMine(uid(req))); }
+    @GetMapping("/credit") Object credit(HttpServletRequest req) { return ok(bookings.legacyCredit(uid(req))); }
     @GetMapping("/notifications") Object notifications(HttpServletRequest req) { return ok(db.list("SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 200",uid(req))); }
     @GetMapping("/notifications/unread_count") Object unread(HttpServletRequest req) { return ok(Map.of("count",db.count("SELECT count(*) FROM notifications WHERE user_id=? AND is_read=FALSE",uid(req)))); }
     @PostMapping("/notifications/{id}/read") Object read(HttpServletRequest req,@PathVariable long id) {

@@ -47,7 +47,7 @@ class MinuteBookingIntegrationTest {
     static final String PASSWORD="S02-test-only-password";
     @BeforeEach void fixture() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"));
-        for(String table:List.of("resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         base=LocalDate.now(BookingPolicy.CAMPUS_ZONE).minusDays(1);clock.set(base.atTime(9,0));remote="s07-test-"+UUID.randomUUID();
         String hash=new BCryptPasswordEncoder().encode(PASSWORD);
         admin=db.insert("INSERT INTO users(username,password_hash,role) VALUES('s07_admin',?,'admin')",hash);
@@ -97,13 +97,13 @@ class MinuteBookingIntegrationTest {
         for(var times:List.of(new String[]{"23:31","24:00"},new String[]{"24:00","24:00"},new String[]{"23:30","24:01"},new String[]{"22:00","02:00"})) assertEquals(400,assertThrows(Api.Failure.class,()->bookings.create(staff,req(seat2,0,times[0],times[1]))).status);
         assertEquals(3,db.count("SELECT count(*) FROM reservations"));
     }
-    @Test void midnightLifecycleSettlementAndStatsEndAtNextDayZeroWithoutDuplicateCredit() {
+    @Test void midnightLifecycleSettlementAndStatsEndAtNextDayZeroWithoutNewCredit() {
         long id=Store.id(bookings.create(student,req(seat1,0,"23:30","24:00")),"id");
         clock.set(base.atTime(23,30));bookings.action(student,id,"checkin");
         clock.set(base.plusDays(1).atStartOfDay());bookings.tick();bookings.tick();
         var row=db.one("SELECT status,checkout_at,end_time FROM reservations WHERE id=?",id);
         assertEquals("completed",row.get("status"));assertEquals(base.plusDays(1).atStartOfDay(),LocalDateTime.parse(row.get("checkout_at").toString()));assertEquals("24:00:00",row.get("end_time"));
-        assertEquals(1,db.count("SELECT count(*) FROM credit_logs WHERE reservation_id=?",id));
+        assertEquals(0,db.count("SELECT count(*) FROM credit_logs WHERE reservation_id=?",id));
         assertEquals(0.5,((Number)stats.top(14,10).get(0).get("hours")).doubleValue(),0.00001);
         assertNotNull(stats.heatmap(room,d(0)));
         var peak=stats.peak(14);assertEquals(24,peak.size());assertTrue(peak.stream().anyMatch(bucket->"00:00".equals(bucket.get("hour"))));
