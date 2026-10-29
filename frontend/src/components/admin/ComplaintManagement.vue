@@ -1,9 +1,9 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
-import { listAdminComplaints, getAdminComplaint, acceptComplaint, recordComplaintVerification } from '../../api/complaint'
+import { listAdminComplaints, getAdminComplaint, acceptComplaint, recordComplaintVerification, feedbackComplaint } from '../../api/complaint'
 import { listUsers } from '../../api/admin'
 import { getRooms } from '../../api/room'
-import { complaintTypes, complaintStatuses, verificationOutcomes, reservationStatuses, positiveId, verificationPayload } from '../../composables/complaintForm.js'
+import { complaintTypes, complaintStatuses, verificationOutcomes, reservationStatuses, positiveId, verificationPayload, feedbackPayload } from '../../composables/complaintForm.js'
 import { confirmDialog } from '../ui/feedback'
 import ComplaintRecord from '../ComplaintRecord.vue'
 import UsageRecordSummary from '../UsageRecordSummary.vue'
@@ -16,7 +16,7 @@ const selectedId=ref(null),detail=ref(null),detailLoading=ref(false),detailError
 const submitting=ref(false),unknown=ref(false),readPending=ref(false),actionError=ref(''),writeNotice=ref(''),pending=ref(null)
 const busy=computed(()=>submitting.value||unknown.value||readPending.value)
 const blank=()=>({outcome:'',occurred_at:'',public_note:'',private_note:'',subject_user_id:null,identity_confirmed:false,identity_basis:'',facts_confirmed:false,valid_reservation_confirmed:false})
-const form=ref(blank())
+const form=ref(blank()),feedbackForm=ref({result:'',basis:''})
 const outcomeOptions=computed(()=>Object.entries(verificationOutcomes).filter(([value])=>detail.value?.type==='occupation'?value!=='service_verified':!['cooperated','verified_refusal'].includes(value)).map(([value,label])=>({value,label})))
 const occupancy=computed(()=>['cooperated','verified_refusal'].includes(form.value.outcome))
 const subjectOptions=computed(()=>[{value:null,label:'身份未知，不关联账号'},...users.value.filter(user=>!occupancy.value||user.id!==detail.value?.reporter?.id).map(user=>({value:user.id,label:`#${user.id} ${user.real_name} · ${user.username} · ${user.campus_id || '校园编号未登记'}${user.status==='active'?'':'（账号已禁用，仍可核实身份）'}`}))])
@@ -33,18 +33,18 @@ async function loadList(force=false){if(busy.value&&force!==true)return false;co
 }
 async function readDetail(id,{afterWrite=false}={}){const ticket=++detailSequence;detailLoading.value=true;detailError.value=''
   try{const response=await getAdminComplaint(id);if(!alive||ticket!==detailSequence)return false;const value=response.data;if(value?.id!==id||!Array.isArray(value.admin_events)||!Number.isInteger(value.version))throw new Error('管理详情返回不完整');detail.value=value
-    if(afterWrite){readPending.value=false;if(pending.value?.action==='verification')form.value=blank();pending.value=null}return true
+    if(afterWrite){readPending.value=false;if(pending.value?.action==='verification')form.value=blank();if(pending.value?.action==='feedback')feedbackForm.value={result:'',basis:''};pending.value=null}return true
   }catch(failure){if(alive&&ticket===detailSequence)detailError.value=(afterWrite?'操作已保存，详情读取失败，请重试读取，不要重复写入：':'')+failure.message;return false}
   finally{if(alive&&ticket===detailSequence)detailLoading.value=false}
 }
-async function openDetail(id){if(busy.value)return;scope++;selectedId.value=id;detail.value=null;form.value=blank();actionError.value='';writeNotice.value='';pending.value=null;return readDetail(id)}
+async function openDetail(id){if(busy.value)return;scope++;selectedId.value=id;detail.value=null;form.value=blank();feedbackForm.value={result:'',basis:''};actionError.value='';writeNotice.value='';pending.value=null;return readDetail(id)}
 function changeOutcome(value){if(busy.value)return;form.value.outcome=value
   if(value==='identity_pending'){form.value.subject_user_id=null;form.value.identity_confirmed=false}
   if(['cooperated','verified_refusal'].includes(value)&&form.value.subject_user_id===detail.value?.reporter?.id){form.value.subject_user_id=null;form.value.identity_confirmed=false}
 }
 function changeSubject(value){if(busy.value)return;form.value.subject_user_id=value;form.value.identity_confirmed=false;form.value.identity_basis=''}
 async function sendPending(){actionError.value='';const operation=copy(pending.value),ticket=scope
-  try{const response=await (operation.action==='accept'?acceptComplaint:recordComplaintVerification)(operation.id,operation.body)
+  try{const response=await ({accept:acceptComplaint,verification:recordComplaintVerification,feedback:feedbackComplaint})[operation.action](operation.id,operation.body)
     if(!alive||ticket!==scope)return
     const value=response.data
     if(value?.operation_id!==operation.body.operation_id||!Number.isInteger(value.event_id)||value.event_id<=0||value.complaint?.id!==operation.id||!Number.isInteger(value.complaint.version)||!Array.isArray(value.complaint.admin_events))throw new Error('写入回执不完整，请以原操作ID核对')
@@ -57,12 +57,12 @@ async function sendPending(){actionError.value='';const operation=copy(pending.v
   }
 }
 async function act(action){if(busy.value||detailLoading.value||detailError.value||!detail.value)return
-  if((action==='accept'&&detail.value.status!=='submitted')||(action==='verification'&&detail.value.status!=='processing'))return
+  if((action==='accept'&&detail.value.status!=='submitted')||(action==='verification'&&detail.value.status!=='processing')||(action==='feedback'&&(detail.value.status!=='processing'||!detail.value.admin_allowed_actions?.includes('feedback'))))return
   let payload={}
-  try{if(action==='verification')payload=verificationPayload(form.value,detail.value)}catch(failure){actionError.value=failure.message;return}
+  try{if(action==='verification')payload=verificationPayload(form.value,detail.value);if(action==='feedback')payload=feedbackPayload(feedbackForm.value)}catch(failure){actionError.value=failure.message;return}
   pending.value={id:detail.value.id,action,body:{...payload,version:detail.value.version,operation_id:crypto.randomUUID()}}
   const ticket=scope;submitting.value=true;actionError.value=''
-  try{try{await confirmDialog(action==='accept'?'确认受理并开始核查？首受理人将记录当前管理员，受理不代表已解决。':'确认追加这条核实记录？已有事件不会被覆盖；本次不登记违规或处罚。','确认管理操作',{type:'warning'})}catch{return}
+  try{try{await confirmDialog(action==='accept'?'确认受理并开始核查？首受理人将记录当前管理员，受理不代表已解决。':action==='feedback'?'确认发出本次正式反馈？结果与依据将公开给投诉人，并从本次反馈起给予7×24小时确认期；请勿复制私有身份或核实资料。':'确认追加这条核实记录？已有事件不会被覆盖；本次不登记违规或处罚。','确认管理操作',{type:'warning'})}catch{return}
     if(alive&&ticket===scope)await sendPending()
   }finally{if(alive&&ticket===scope)submitting.value=false}
 }
@@ -85,7 +85,8 @@ defineExpose({loadList})
       <template v-if="detail"><p>投诉记录版本：{{ detail.version }}。</p><p>投诉人：{{ detail.reporter?.real_name }} · {{ detail.reporter?.username }} · {{ detail.reporter?.campus_id || '校园编号未登记' }}。下方主体选择不会默认此人。</p><ComplaintRecord :record="detail" />
         <section class="current-context"><h4>当前关联只读核对</h4><p>读取时刻：{{ detail.current_context?.observed_at }}。当前提示不能代替事实发生当时的权利核实，也不能推定真实占用者。</p><template v-if="detail.current_context?.reservation"><p>{{ detail.current_context.reservation.room_name }} / {{ detail.current_context.reservation.seat_no }} / {{ detail.current_context.reservation.date }} {{ detail.current_context.reservation.start_time }}—{{ detail.current_context.reservation.end_time }} · 当前{{ reservationStatuses[detail.current_context.reservation.status] || detail.current_context.reservation.status }}</p><p>签到截止：{{ detail.current_context.reservation.checkin_deadline }}；是否已过：{{ detail.current_context.reservation.deadline_passed===true?'是':detail.current_context.reservation.deadline_passed===false?'否':'未提供' }}；原结束是否已过：{{ detail.current_context.reservation.scheduled_end_passed===true?'是':detail.current_context.reservation.scheduled_end_passed===false?'否':'未提供' }}</p><p>当前剩余资源合法：{{ detail.current_context.reservation.remaining_resource_legal===true?'是':detail.current_context.reservation.remaining_resource_legal===false?'否':'未提供' }}；{{ detail.current_context.reservation.closed_reasons?.join('；') }}</p><p>当前位置：{{ detail.current_context.reservation.building || '楼栋未登记' }} · {{ detail.current_context.reservation.floor || '楼层未登记' }} · {{ detail.current_context.reservation.location || '位置未登记' }}；剩余核对起点：{{ detail.current_context.reservation.remaining_start || '未提供' }}。当前开放：{{ detail.current_context.reservation.opening_windows?.length ? detail.current_context.reservation.opening_windows.map(window=>window.start+'—'+window.end).join('、') : '无开放窗口' }}。</p><UsageRecordSummary :record="detail.current_context.reservation.usage_record" /></template><p v-else-if="detail.current_context?.room">当前关联空间：{{ detail.current_context.room.room_name }}</p><p v-else>无当前预约关联，不据此补造预约或占座事实。</p></section>
         <SButton v-if="detail.status==='submitted'" variant="primary" :disabled="busy||detailLoading||!!detailError" :loading="submitting" @click="act('accept')">受理并开始核查</SButton>
-        <section><h4>管理私有核实记录</h4><p v-if="!detail.admin_events.length">尚无管理事件。</p><article v-for="event in detail.admin_events" :key="event.id" class="private-event"><p>{{ event.type==='accepted'?'受理':event.type==='verification'?'核实':event.type }} · {{ event.actor_display_name }} · 登记{{ event.created_at }} · 发生{{ event.occurred_at || '未提供' }}</p><p v-if="event.outcome">结果：{{ verificationOutcomes[event.outcome] || event.outcome }}</p><p>核实对象：{{ event.subject ? '#'+event.subject.id+' '+event.subject.real_name+' / '+event.subject.username : '未知或未关联账号' }}</p><p v-if="event.private_note">私有事实：{{ event.private_note }}</p><p v-if="event.identity_basis">身份依据（管理员自报）：{{ event.identity_basis }}</p><p>身份自报确认：{{ event.identity_confirmed===true?'是':event.identity_confirmed===false?'否':'未记录' }}；事实自报确认：{{ event.facts_confirmed===true?'是':event.facts_confirmed===false?'否':'未记录' }}；发生时有效预约权利自报确认：{{ event.valid_reservation_confirmed===true?'是':event.valid_reservation_confirmed===false?'否':'未记录' }}。</p></article></section>
+        <section><h4>管理私有核实记录</h4><p v-if="!detail.admin_events.length">尚无管理事件。</p><article v-for="event in detail.admin_events" :key="event.id" class="private-event"><p>{{ ({submitted:'本人提交',accepted:'受理',verification:'核实',feedback:'正式反馈',withdrawn:'本人撤回',confirmed:'本人确认反馈',objected:'本人提出异议',auto_closed:'系统自动结案'})[event.type] || event.type }} · {{ event.source==='system'?'系统':event.actor_display_name || '记录人未提供' }} · 登记{{ event.created_at }} · 发生{{ event.occurred_at || '未提供' }}</p><p v-if="event.outcome">结果：{{ verificationOutcomes[event.outcome] || event.outcome }}</p><p>核实对象：{{ event.subject ? '#'+event.subject.id+' '+event.subject.real_name+' / '+event.subject.username : '未知或未关联账号' }}</p><p v-if="event.private_note">私有事实：{{ event.private_note }}</p><p v-if="event.identity_basis">身份依据（管理员自报）：{{ event.identity_basis }}</p><p>身份自报确认：{{ event.identity_confirmed===true?'是':event.identity_confirmed===false?'否':'未记录' }}；事实自报确认：{{ event.facts_confirmed===true?'是':event.facts_confirmed===false?'否':'未记录' }}；发生时有效预约权利自报确认：{{ event.valid_reservation_confirmed===true?'是':event.valid_reservation_confirmed===false?'否':'未记录' }}。</p></article></section>
+        <form v-if="detail.status==='processing' && detail.admin_allowed_actions?.includes('feedback')" class="verification-form formal-feedback" @submit.prevent="act('feedback')"><h4>发出正式反馈</h4><p>以下结果与依据将对投诉人公开，与管理私有核实记录分开。发出后等待本人确认或异议，确认期为本次反馈起7×24小时；待确认期间不能直接覆盖。</p><label>公开反馈结果<SInput v-model="feedbackForm.result" type="textarea" maxlength="2000" :disabled="busy" required /></label><label>公开反馈依据（勿复制私有身份或核实资料）<SInput v-model="feedbackForm.basis" type="textarea" maxlength="2000" :disabled="busy" required /></label><SButton type="submit" variant="primary" :disabled="busy||detailLoading||!!detailError" :loading="submitting">发出正式反馈并等待确认</SButton></form>
         <form v-if="detail.status==='processing'" class="verification-form" @submit.prevent="act('verification')"><h4>追加核实事件（不是反馈结案）</h4><p>所有启用管理员可追加，首受理人不改变。以下确认由管理员据实自报，不代表系统验证了物理身份或现场。</p><label>核实结果<SSelect :model-value="form.outcome" :options="outcomeOptions" :disabled="busy" @update:model-value="changeOutcome" /></label><label>事实发生时刻（Asia/Shanghai）<SInput v-model="form.occurred_at" type="datetime-local" step="0.000001" :disabled="busy" required /></label><label>给投诉人的公开进度（请勿填他人身份或联系方式）<SInput v-model="form.public_note" type="textarea" maxlength="1000" :disabled="busy" required /></label><label>管理私有事实与协调说明<SInput v-model="form.private_note" type="textarea" maxlength="2000" :disabled="busy" required placeholder="据实填写核实依据；工程模拟请明确注明，不冒充真实现场核查" /></label><label><span><input v-model="form.facts_confirmed" type="checkbox" :disabled="busy" /> 管理员自报已核实所述事实</span></label><label v-if="occupancy"><span><input v-model="form.valid_reservation_confirmed" type="checkbox" :disabled="busy" /> 我已核实事实发生时刻存在有效预约使用权（不以当前状态自动认定）</span></label>
           <SBanner v-if="optionsError" type="error" :title="optionsError"><SButton size="sm" :disabled="busy" @click="loadOptions">重试账号和空间选项</SButton></SBanner><label v-if="form.outcome!=='identity_pending'">{{ form.outcome==='verified_refusal'?'已核实主体账号（本结果必填，不得是投诉人）':'已核实主体账号（可未知，不默认投诉人）' }}<SSelect :model-value="form.subject_user_id" :options="subjectOptions" :disabled="busy" @update:model-value="changeSubject" /></label><template v-if="form.subject_user_id"><label><span><input v-model="form.identity_confirmed" type="checkbox" :disabled="busy" /> 管理员自报已核实该账号对应的身份</span></label><label>身份核实依据（仅管理可见）<SInput v-model="form.identity_basis" type="textarea" maxlength="1000" :disabled="busy" required /></label></template><p>配合纠正仅生成提醒，不计违规；其他分支也不会在本次操作自动记违规或处罚。私有依据不发送给投诉人。</p><SButton type="submit" variant="primary" :disabled="busy||detailLoading||!!detailError" :loading="submitting">追加核实记录</SButton></form>
       </template>

@@ -10,8 +10,8 @@ import org.springframework.web.multipart.*;
 @RestController
 @RequestMapping("/api")
 public class ComplaintController {
-    private final ComplaintService complaints;private final AttachmentService attachments;private final ObjectMapper json;
-    public ComplaintController(ComplaintService complaints,AttachmentService attachments,ObjectMapper json) { this.complaints=complaints;this.attachments=attachments;this.json=json; }
+    private final ComplaintService complaints;private final AttachmentService attachments;private final ObjectMapper json;private final ComplaintWorkflowService workflow;
+    public ComplaintController(ComplaintService complaints,AttachmentService attachments,ObjectMapper json,ComplaintWorkflowService workflow) { this.complaints=complaints;this.attachments=attachments;this.json=json;this.workflow=workflow; }
     @PostMapping("/complaint-attachments") Object upload(HttpServletRequest req,@RequestPart("file") MultipartFile file) {
         Api.require(req instanceof MultipartHttpServletRequest,400,"材料必须以单文件表单上传");var multipart=(MultipartHttpServletRequest)req;Api.require(multipart.getMultiFileMap().keySet().equals(Set.of("file"))&&multipart.getMultiFileMap().get("file").size()==1&&req.getParameterMap().isEmpty(),400,"每次只接受一个file，不接受路径或其他字段");return Api.ok(attachments.upload(WebSecurity.uid(req),file));
     }
@@ -19,6 +19,10 @@ public class ComplaintController {
     @PostMapping("/complaints") Object create(HttpServletRequest req,@RequestBody Map<String,Object> body) {
         Api.require(Set.of("type","reservation_id","room_id","description","attachment_ids","operation_id").containsAll(body.keySet())&&body.keySet().containsAll(Set.of("type","description","operation_id")),400,"投诉仅接受类型、本人关联、说明、材料编号和操作标识");Api.require(body.get("description") instanceof String&&body.get("type") instanceof String,400,"投诉类型和说明须为文本");Requests.Complaint request;try { request=json.convertValue(body,Requests.Complaint.class); } catch(IllegalArgumentException e) { throw Api.fail(400,"投诉参数格式错误"); }return Api.ok(complaints.create(WebSecurity.uid(req),request));
     }
-    @GetMapping("/complaints/mine") Object mine(HttpServletRequest req) { return Api.ok(complaints.mine(WebSecurity.uid(req))); }
-    @GetMapping("/complaints/{id}") Object detail(HttpServletRequest req,@PathVariable long id) { return Api.ok(complaints.detail(WebSecurity.uid(req),id)); }
+    @GetMapping("/complaints/mine") Object mine(HttpServletRequest req) { return Api.ok(workflow.mine(WebSecurity.uid(req))); }
+    @GetMapping("/complaints/{id}") Object detail(HttpServletRequest req,@PathVariable long id) { return Api.ok(workflow.detail(WebSecurity.uid(req),id)); }
+    @PostMapping("/complaints/{id}/{action:withdraw|confirm|object}") Object action(HttpServletRequest req,@PathVariable long id,@PathVariable String action,@RequestBody Map<String,Object> body) {
+        var allowed=action.equals("object")?Set.of("version","operation_id","description"):Set.of("version","operation_id");Api.require(allowed.containsAll(body.keySet()),400,"投诉操作只接受版本、操作标识和本次允许的说明");for(String key:List.of("operation_id","description")) Api.require(!body.containsKey(key)||body.get(key)==null||body.get(key) instanceof String,400,key+"须为文本");Requests.ComplaintResponse request;try{request=json.convertValue(body,Requests.ComplaintResponse.class);}catch(IllegalArgumentException e){throw Api.fail(400,"投诉操作参数格式错误");}
+        var result=workflow.action(WebSecurity.uid(req),id,action,request);if(result.status()!=200)throw Api.fail(result.status(),result.message(),result.details());return Api.ok(result.data());
+    }
 }

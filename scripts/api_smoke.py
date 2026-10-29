@@ -125,6 +125,29 @@ def main():
     check('已受理后原提交重放返回真实进度',status == 200 and replayed_service['data']['replayed'] is True and replayed_service['data']['status'] == 'processing')
     status, reminders = call('GET','/reminders/mine',token=student)
     check('本人提醒明确不计违规且不泄投诉来源',status == 200 and all(item['counts_as_violation'] is False and not any(key in item for key in ('complaint_id','reporter','private_note','identity_basis')) for item in reminders['data']))
+    feedback_req = {'version':verified['data']['complaint']['version'],'operation_id':str(uuid.uuid4()),'result':'API工程模拟：服务处理结果待本人确认','basis':'工程测试核实记录，仅验证流程，不代表真实现场处理'}
+    status, feedback = call('POST',f'/admin/complaints/{service_id}/feedback',feedback_req,admin)
+    check('正式反馈转待确认并给出七天',status == 200 and feedback['data']['complaint']['status'] == 'awaiting_confirmation')
+    first_feedback = feedback['data']['complaint']['current_feedback']
+    check('确认期从本次反馈精确起算7乘24小时',datetime.fromisoformat(first_feedback['deadline']) - datetime.fromisoformat(first_feedback['feedback_at']) == timedelta(days=7))
+    objection = {'version':feedback['data']['complaint']['version'],'operation_id':str(uuid.uuid4()),'description':'API工程模拟：补充异议，要求继续核查'}
+    check('他人不能替本人提交异议',call('POST',f'/complaints/{service_id}/object',objection,other)[0] == 403)
+    status, objected = call('POST',f'/complaints/{service_id}/object',objection,student)
+    check('本人异议回到处理中',status == 200 and objected['data']['complaint']['status'] == 'processing')
+    status, feedback_again = call('POST',f'/admin/complaints/{service_id}/feedback',{**feedback_req,'version':objected['data']['complaint']['version'],'operation_id':str(uuid.uuid4()),'result':'API工程模拟：继续核查后的新反馈'},admin)
+    check('再次反馈生成新一轮并保留旧反馈',status == 200 and feedback_again['data']['complaint']['current_feedback']['id'] != first_feedback['id'])
+    latest_feedback = feedback_again['data']['complaint']['current_feedback']
+    check('新一轮仍按本次反馈起算七天',datetime.fromisoformat(latest_feedback['deadline']) - datetime.fromisoformat(latest_feedback['feedback_at']) == timedelta(days=7))
+    confirmation = {'version':feedback_again['data']['complaint']['version'],'operation_id':str(uuid.uuid4())}
+    status, confirmed = call('POST',f'/complaints/{service_id}/confirm',confirmation,student)
+    check('本人确认结案保留真实关闭类型',status == 200 and confirmed['data']['complaint']['status'] == 'closed' and confirmed['data']['complaint']['closure_type'] == 'confirmed')
+    status, confirmation_again = call('POST',f'/complaints/{service_id}/confirm',confirmation,student)
+    check('确认原操作重试不重复结案',status == 200 and confirmation_again['data']['replayed'] is True)
+    status, retractable = call('POST','/complaints',{**service_req,'description':'API工程模拟：未受理撤回验证','operation_id':str(uuid.uuid4())},student)
+    check('撤回测试记录保持待受理',status == 200 and retractable['data']['status'] == 'submitted')
+    retract_id = retractable['data']['id']
+    status, withdrawn = call('POST',f'/complaints/{retract_id}/withdraw',{'version':retractable['data']['version'],'operation_id':str(uuid.uuid4())},student)
+    check('本人仅撤回尚未受理记录',status == 200 and withdrawn['data']['complaint']['status'] == 'withdrawn')
     status, body = call('GET','/credit',token=student)
     check('只读历史信用及流水',status == 200 and body['data']['history_only'] is True and 'score' in body['data'] and isinstance(body['data']['logs'],list))
     status, body = call('GET','/notifications',token=student)

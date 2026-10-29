@@ -56,4 +56,6 @@ public final class Requests {
             @JsonProperty("subject_user_id") Long subjectUserId,@JsonProperty("identity_confirmed") Boolean identityConfirmed,
             @JsonProperty("identity_basis") String identityBasis,@JsonProperty("facts_confirmed") Boolean factsConfirmed,
             @JsonProperty("valid_reservation_confirmed") Boolean validReservationConfirmed) {}
+    public record ComplaintFeedback(Long version,@JsonProperty("operation_id") String operationId,String result,String basis) {}
+    public record ComplaintResponse(Long version,@JsonProperty("operation_id") String operationId,String description) {}
 }

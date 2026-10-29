@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { readFile } from 'node:fs/promises'
 import { ref, computed } from 'vue'
-import { complaintPayload, validateEvidenceFile, positiveId, complaintTypes, complaintStatuses, reservationStatuses } from '../src/composables/complaintForm.js'
+import { complaintPayload, validateEvidenceFile, positiveId, complaintTypes, complaintStatuses, reservationStatuses, ownerComplaintActions } from '../src/composables/complaintForm.js'
 const tick=()=>new Promise(resolve=>setImmediate(resolve))
 async function script(file,mocks,exports,extra={}) {
   const context=vm.createContext({defineExpose(){},...extra}),source=(await readFile(new URL(file,import.meta.url),'utf8')).split('<script setup>')[1].split('</script>')[0],module=new vm.SourceTextModule(source+`\nexport {${exports}}`,{context})
@@ -104,7 +104,7 @@ test('own list distinguishes not-yet-read, failed and verified empty responses',
 })
 test('independent detail query ignores an older response and never reads detail from a partial list',async()=>{
   const pending=[],props={id:'1'}
-  const page=await script('../src/views/ComplaintDetailView.vue',{vue:{ref,watch(){},onBeforeUnmount(){}},'../api/complaint':{getComplaint:id=>new Promise(resolve=>pending.push({id,resolve}))}},'load,record,error',{defineProps:()=>props})
+  const page=await script('../src/views/ComplaintDetailView.vue',{vue:{ref,computed,watch(){},onBeforeUnmount(){}},'../api/complaint':{getComplaint:id=>new Promise(resolve=>pending.push({id,resolve})),withdrawComplaint:async()=>{},confirmComplaintFeedback:async()=>{},objectComplaintFeedback:async()=>{}},'../composables/complaintForm.js':{ownerComplaintActions},'../components/ui/feedback':{confirmDialog:async()=>{}}},'load,record,error',{defineProps:()=>props})
   const old=page.load();props.id='2';const latest=page.load()
   pending[1].resolve({data:{id:2,attachments:[],events:[]}});await latest;pending[0].resolve({data:{id:1,attachments:[],events:[]}});await old
   assert.equal(page.record.value.id,2)
@@ -114,4 +114,13 @@ test('creation replay of an already processing complaint confirms original opera
   let saved
   const page=await form({createComplaint:async body=>{saved={...detail(body),replayed:true,status:'processing'};return{data:saved}},getComplaint:async()=>({data:saved})})
   await page.submit();assert.equal(page.uncertain.value,false);assert.equal(page.receipt.value.status,'processing');assert.equal(page.record.value.status,'processing')
+})
+
+test('creation replay accepts every implemented current state with matching operation and materials, but a new request cannot start past submitted',async()=>{
+  for(const status of ['submitted','processing','awaiting_confirmation','closed','withdrawn']){
+    let saved
+    const page=await form({createComplaint:async body=>{saved={...detail(body),replayed:true,status};return{data:saved}},getComplaint:async()=>({data:saved})})
+    await page.submit();assert.equal(page.uncertain.value,false);assert.equal(page.receipt.value.status,status);assert.equal(page.record.value.status,status)
+  }
+  const invalid=await form({createComplaint:async body=>({data:{...detail(body),replayed:false,status:'closed'}})});await invalid.submit();assert.equal(invalid.receipt.value,null);assert.equal(invalid.uncertain.value,true)
 })

@@ -41,7 +41,7 @@ class ComplaintManagementIntegrationTest {
     String remote;
     @BeforeEach void fixture() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"));
-        for(String table:List.of("reminders","complaint_attachments","complaint_events","complaints","resource_change_operations","usage_records","seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("notifications","reminders","complaint_attachments","complaint_events","complaints","resource_change_operations","usage_records","seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         base=LocalDate.now(BookingPolicy.CAMPUS_ZONE).minusDays(1);clock.set(base.atTime(9,0));remote="s14-test-"+UUID.randomUUID();
         String hash=new BCryptPasswordEncoder().encode("S02-test-only-password");
         admin=db.insert("INSERT INTO users(username,password_hash,role,campus_id) VALUES('s14_admin',?,'admin','S09-admin')",hash);
@@ -82,7 +82,7 @@ class ComplaintManagementIntegrationTest {
         for(String ordinary:List.of(studentToken,staffToken)) {http.perform(auth(get("/api/admin/complaints"),ordinary)).andExpect(status().isForbidden());http.perform(auth(get("/api/admin/complaints/"+id),ordinary)).andExpect(status().isForbidden());http.perform(body(post(acceptPath(id)),new Requests.ComplaintAccept(1L,key()),ordinary)).andExpect(status().isForbidden());}
         assertEquals(403,assertThrows(Api.Failure.class,()->management.list(student,null,null,null)).status);assertEquals(403,assertThrows(Api.Failure.class,()->management.accept(staff,id,new Requests.ComplaintAccept(1L,key()))).status);
         http.perform(auth(get("/api/admin/complaints").param("status","submitted").param("type","service"),adminToken)).andExpect(status().isOk()).andExpect(jsonPath("$.data[0].id").value(id)).andExpect(jsonPath("$.data[0].version").value(1));
-        for(String invalid:List.of("","closed","accepted")) http.perform(auth(get("/api/admin/complaints").param("status",invalid),adminToken)).andExpect(status().isBadRequest());
+        for(String invalid:List.of("","not_a_state","accepted")) http.perform(auth(get("/api/admin/complaints").param("status",invalid),adminToken)).andExpect(status().isBadRequest());
         http.perform(auth(get("/api/admin/complaints").param("type","unknown"),adminToken)).andExpect(status().isBadRequest());http.perform(auth(get("/api/admin/complaints").param("room_id","1.5"),adminToken)).andExpect(status().isBadRequest());
         db.update("UPDATE users SET status='disabled' WHERE id=?",admin);assertEquals(403,assertThrows(Api.Failure.class,()->management.detail(admin,id)).status);
     }

@@ -24,6 +24,8 @@ const typeMeta = {
   violation:          { text: '违约警告', color: 'var(--red-strong)', bg: 'var(--red-weak)' },
   credit_change:      { text: '历史信用变动', color: 'var(--amber-strong)', bg: 'var(--amber-weak)' },
   waitlist_promoted:  { text: '候补递补', color: 'var(--violet-strong)', bg: 'var(--violet-weak)' },
+  complaint_feedback:{ text:'投诉反馈',color:'var(--primary-active)',bg:'var(--primary-weak)' },
+  complaint_auto_closed:{ text:'投诉自动结案',color:'var(--text-2)',bg:'var(--surface-3)' },
   system:             { text: '系统',     color: 'var(--text-2)', bg: 'var(--surface-3)' }
 }
 
@@ -52,6 +54,8 @@ async function onMarkAll() {
   notifStore.clear()
   load()
 }
+
+function complaintTarget(n) { return ['complaint_feedback','complaint_auto_closed'].includes(n.type) && Number.isSafeInteger(n.complaint_id) && n.complaint_id > 0 ? `/complaints/${n.complaint_id}` : null }
 
 function fmtTime(t) {
   return new Date(t).toLocaleString('zh-CN', { hour12: false })
@@ -88,6 +92,8 @@ function typeIcon(k) {
     violation: 'warning',
     credit_change: 'credit',
     waitlist_promoted: 'ticket',
+    complaint_feedback:'ticket',
+    complaint_auto_closed:'circle-muted',
     system: 'announcement'
   }[k] || 'circle-muted'
 }
@@ -151,9 +157,8 @@ const { page, pages, pageItems } = usePagination(filtered, filterType)
 
         <div v-list-motion="pageItems.map(row => row.id).join()" v-loading="loading" class="list">
           <SEmpty v-if="!filtered.length && !loading" icon="inbox" description="暂无消息" />
+          <div v-for="n in pageItems" :key="n.id" class="msg-entry">
           <button
-            v-for="n in pageItems"
-            :key="n.id"
             class="msg-item"
             :class="{ unread: !n.is_read }"
             @click="onMarkRead(n)"
@@ -173,6 +178,8 @@ const { page, pages, pageItems } = usePagination(filtered, filterType)
             </div>
             <span class="msg-time">{{ fmtTime(n.created_at) }}</span>
           </button>
+          <RouterLink v-if="complaintTarget(n)" class="complaint-link" :to="complaintTarget(n)">查看关联投诉详情</RouterLink>
+          </div>
         </div>
         <SPagination v-model="page" :pages="pages" :total="filtered.length" />
       </section>
@@ -182,6 +189,7 @@ const { page, pages, pageItems } = usePagination(filtered, filterType)
 </template>
 
 <style scoped>
+.msg-entry{min-width:0}.complaint-link{display:inline-block;margin:0 16px 10px 106px;font-size:var(--fs-caption)}@media(max-width:600px){.complaint-link{margin-left:16px}}
 
 
 .list {

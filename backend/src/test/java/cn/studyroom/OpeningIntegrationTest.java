@@ -38,7 +38,7 @@ class OpeningIntegrationTest {
     @Autowired Clock clock;
     long room,seat1,seat2,student,admin;
     String remote;
-    static final List<String> TABLES=List.of("reminders","complaint_attachments","complaint_events","complaints","resource_change_operations","usage_records","seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users");
+    static final List<String> TABLES=List.of("notifications","reminders","complaint_attachments","complaint_events","complaints","resource_change_operations","usage_records","seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","waitlist","reservations","seats","rooms","users");
     @BeforeEach void setup() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"));
         TABLES.forEach(t->db.update("DELETE FROM "+t));remote="s06-test-"+UUID.randomUUID();

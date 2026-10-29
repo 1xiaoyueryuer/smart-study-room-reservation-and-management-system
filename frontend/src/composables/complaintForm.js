@@ -1,5 +1,5 @@
 export const complaintTypes = { occupation: '座位被占求助', service: '一般服务投诉' }
-export const complaintStatuses = { submitted:'待受理', processing:'处理中' }
+export const complaintStatuses = { submitted:'待受理', processing:'处理中',awaiting_confirmation:'待确认反馈',closed:'已结案',withdrawn:'已撤回' }
 export const verificationOutcomes = { cooperated:'已配合纠正并提醒（不计违规）',identity_pending:'身份待核',unsubstantiated:'未查实',verified_refusal:'核实拒不配合（本次未登记违规）',service_verified:'服务事实已核实' }
 export const reservationStatuses = { pending:'待签到',checked_in:'使用中',completed:'已结束',cancelled:'已取消',unused_ended:'未使用结束',violation:'旧违约状态（历史）',temp_leave:'旧暂离状态（历史）' }
 export function positiveId(value) {
@@ -50,4 +50,14 @@ export function verificationPayload(form, detail) {
   if (outcome === 'verified_refusal' && !subject_user_id) throw new Error('核实拒不配合必须明确关联已核实身份的账号')
   if (outcome === 'service_verified' && (detail.type !== 'service' || !form.facts_confirmed)) throw new Error('服务事实核实仅用于一般服务投诉，且须明确核实事实')
   return {outcome,occurred_at,public_note,private_note,subject_user_id,identity_confirmed:!!form.identity_confirmed,identity_basis:subject_user_id?identity_basis:null,facts_confirmed:!!form.facts_confirmed,valid_reservation_confirmed:!!form.valid_reservation_confirmed}
+}
+
+export function feedbackPayload(form) {
+  const result = form.result.trim(), basis = form.basis.trim()
+  if (!result || result.length > 2000 || !basis || basis.length > 2000) throw new Error('正式反馈结果和公开依据均须1至2000字，请勿复制管理私有核实记录')
+  return {result,basis}
+}
+export function ownerComplaintActions(record) {
+  if (!record || ['closed','withdrawn'].includes(record.status) || !Array.isArray(record.allowed_actions)) return []
+  return record.allowed_actions.filter(action=>['withdraw','confirm','object'].includes(action))
 }

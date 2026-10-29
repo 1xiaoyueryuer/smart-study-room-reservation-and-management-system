@@ -13,3 +13,8 @@ export const getAdminComplaint = id => request.get(`/admin/complaints/${id}`, { 
 export const acceptComplaint = (id, body) => request.post(`/admin/complaints/${id}/accept`, body, { silent: true, timeout: 120000 })
 export const recordComplaintVerification = (id, body) => request.post(`/admin/complaints/${id}/verifications`, body, { silent: true, timeout: 120000 })
 export const listMyReminders = () => request.get('/reminders/mine', { silent: true })
+
+export const feedbackComplaint = (id, body) => request.post(`/admin/complaints/${id}/feedback`, body, { silent: true, timeout: 120000 })
+export const withdrawComplaint = (id, body) => request.post(`/complaints/${id}/withdraw`, body, { silent: true, timeout: 120000 })
+export const confirmComplaintFeedback = (id, body) => request.post(`/complaints/${id}/confirm`, body, { silent: true, timeout: 120000 })
+export const objectComplaintFeedback = (id, body) => request.post(`/complaints/${id}/object`, body, { silent: true, timeout: 120000 })

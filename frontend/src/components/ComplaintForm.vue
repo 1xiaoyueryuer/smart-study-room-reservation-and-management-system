@@ -91,7 +91,7 @@ async function submit() {
     const response=await createComplaint(JSON.parse(JSON.stringify(frozenBody)))
     if(!alive||ticket!==scope)return
     const value=response.data
-    if(!value?.id || value.operation_id!==frozenBody.operation_id || !(value.status==='submitted' || (value.replayed===true && Object.hasOwn(complaintStatuses,value.status))) || !Array.isArray(value.attachments) || !Array.isArray(value.events) || value.attachment_count!==frozenBody.attachment_ids.length || value.attachments.length!==frozenBody.attachment_ids.length || value.attachments.some(item=>!frozenBody.attachment_ids.includes(item.id)))throw new Error('提交回执不完整，结果需以原操作ID核对')
+    if(!Number.isSafeInteger(value?.id) || value.id<=0 || value.operation_id!==frozenBody.operation_id || !(value.status==='submitted' || (value.replayed===true && Object.hasOwn(complaintStatuses,value.status))) || !Array.isArray(value.attachments) || !Array.isArray(value.events) || value.attachment_count!==frozenBody.attachment_ids.length || value.attachments.length!==frozenBody.attachment_ids.length || value.attachments.some(item=>!frozenBody.attachment_ids.includes(item.id)))throw new Error('提交回执不完整，结果需以原操作ID核对')
     uncertain.value=false;receipt.value=value;record.value=null;emit('created',value.id)
     await refreshCreated()
   }catch(failure){if(alive&&ticket===scope){uncertain.value=failure.status==null||failure.status===408||failure.status>=500;error.value=uncertain.value?'提交结果尚未确认。原文字、材料ID和操作ID已锁定，请主动以原操作ID重试核对，不要重复创建。':failure.status===409?`请求冲突：${failure.message}。请核对本人列表和材料状态，未确认创建新记录。`:failure.message}}
