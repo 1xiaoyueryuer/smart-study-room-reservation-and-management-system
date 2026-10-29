@@ -9,8 +9,8 @@ export function updateRoom(id, data) {
   return request.put(`/admin/rooms/${id}`, data)
 }
 
-export function deleteRoom(id) {
-  return request.delete(`/admin/rooms/${id}`)
+export function deleteRoom(id, data) {
+  return request.delete(`/admin/rooms/${id}`, { data })
 }
 
 export function batchGenSeats(roomId, data) {
@@ -21,8 +21,8 @@ export function updateSeat(id, data) {
   return request.put(`/admin/seats/${id}`, data)
 }
 
-export function deleteSeat(id) {
-  return request.delete(`/admin/seats/${id}`)
+export function deleteSeat(id, data) {
+  return request.delete(`/admin/seats/${id}`, { data })
 }
 
 export function listUsers() {
@@ -58,4 +58,12 @@ export function confirmUserImport(file, fileSha256, initialPassword, reason) {
   data.append('initial_password', initialPassword)
   data.append('reason', reason)
   return request.post('/admin/users/import/confirm', data, { timeout: 120000, silent: true })
+}
+
+export function listRoomSeats(roomId) {
+  return request.get(`/admin/rooms/${roomId}/seats`)
+}
+
+export function createSeat(roomId, data) {
+  return request.post(`/admin/rooms/${roomId}/seats`, data)
 }

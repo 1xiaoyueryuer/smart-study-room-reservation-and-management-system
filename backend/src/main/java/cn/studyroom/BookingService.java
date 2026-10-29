@@ -121,7 +121,7 @@ public class BookingService {
         return result;
     }
     private List<Map<String,Object>> candidates(long roomId,Slot slot) {
-        return db.list("SELECT s.* FROM seats s WHERE s.room_id=? AND s.status='available' AND NOT EXISTS(SELECT 1 FROM reservations rv WHERE rv.seat_id=s.id AND rv.res_date=? AND rv.status IN "+ACTIVE+" AND rv.start_time<? AND rv.end_time>?) ORDER BY row_no,col_no",
+        return db.list("SELECT s.* FROM seats s JOIN rooms r ON r.id=s.room_id WHERE s.room_id=? AND r.enabled AND s.status='available' AND NOT EXISTS(SELECT 1 FROM reservations rv WHERE rv.seat_id=s.id AND rv.res_date=? AND rv.status IN "+ACTIVE+" AND rv.start_time<? AND rv.end_time>?) ORDER BY row_no,col_no",
                 roomId,Date.valueOf(slot.date()),Time.valueOf(slot.end()),Time.valueOf(slot.start()));
     }
     public Map<String,Object> join(long uid,Requests.Wait req) {
@@ -155,7 +155,7 @@ public class BookingService {
             Slot slot=Slot.parse(text(wait,"res_date"),text(wait,"start_time"),text(wait,"end_time"));
             if(slot.startsAt().isBefore(now.plusMinutes(10))) { db.update("UPDATE waitlist SET status='expired',updated_at=CURRENT_TIMESTAMP WHERE id=?",id(wait,"id"));continue; }
             long uid=id(wait,"user_id");
-            try { eligible(uid); } catch(Api.Failure e) { continue; }
+            try { eligible(uid);slot.validateRoom(db.one("SELECT * FROM rooms WHERE id=?",id(wait,"room_id"))); } catch(Api.Failure e) { continue; }
             if(conflict("user_id",uid,slot)) continue;
             for(var seat:candidates(id(wait,"room_id"),slot)) {
                 if(wait.get("zone")!=null&&!wait.get("zone").equals(seat.get("zone"))) continue;

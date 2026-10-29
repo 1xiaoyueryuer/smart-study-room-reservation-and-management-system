@@ -58,12 +58,6 @@ public class ApiController {
     @GetMapping("/stats/trend") Object trend(@RequestParam(defaultValue="14") int days) { return ok(stats.trend(days)); }
     @GetMapping("/stats/peak") Object peak(@RequestParam(defaultValue="14") int days) { return ok(stats.peak(days)); }
     @GetMapping("/stats/top-seats") Object top(@RequestParam(defaultValue="14") int days,@RequestParam(defaultValue="10") int limit) { return ok(stats.top(days,limit)); }
-    @PostMapping("/admin/rooms") Object createRoom(@Valid @RequestBody Requests.Room body) { return ok(resources.save(null,body)); }
-    @PutMapping("/admin/rooms/{id}") Object updateRoom(@PathVariable long id,@Valid @RequestBody Requests.Room body) { return ok(resources.save(id,body)); }
-    @DeleteMapping("/admin/rooms/{id}") Object deleteRoom(@PathVariable long id) { resources.deleteRoom(id);return ok(Map.of("deleted",id)); }
-    @PostMapping("/admin/rooms/{id}/seats/batch") Object batch(@PathVariable long id,@Valid @RequestBody Requests.Batch body) { return ok(Map.of("room_id",id,"created",resources.batch(id,body))); }
-    @PutMapping("/admin/seats/{id}") Object updateSeat(@PathVariable long id,@Valid @RequestBody Requests.Seat body) { resources.updateSeat(id,body);return ok(Map.of("updated",id)); }
-    @DeleteMapping("/admin/seats/{id}") Object deleteSeat(@PathVariable long id) { resources.deleteSeat(id);return ok(Map.of("deleted",id)); }
     @GetMapping("/admin/users") Object users(HttpServletRequest req) { return ok(users.list(uid(req))); }
     @PostMapping("/admin/users") Object createUser(HttpServletRequest req,@Valid @RequestBody Requests.UserChange body) { return ok(users.save(uid(req),null,body)); }
     @PutMapping("/admin/users/{id}") Object updateUser(HttpServletRequest req,@PathVariable long id,@Valid @RequestBody Requests.UserChange body) { return ok(users.save(uid(req),id,body)); }

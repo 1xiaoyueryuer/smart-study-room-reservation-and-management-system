@@ -24,7 +24,7 @@ class BookingIntegrationTest {
     @Autowired Environment env;
     @Autowired AuditService audit;
     @Autowired org.springframework.transaction.support.TransactionTemplate transactions;
-    long u1,u2,room,s1,s2;
+    long u1,u2,admin,room,s1,s2;
     @TestConfiguration static class TimeConfig {
         @Bean @Primary Clock fixedClock() { return Clock.fixed(Instant.parse("2026-10-30T01:00:00Z"),ZoneId.of("Asia/Shanghai")); }
     }
@@ -33,9 +33,15 @@ class BookingIntegrationTest {
         for(String table:List.of("audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         u1=db.insert("INSERT INTO users(username,password_hash) VALUES('test1','unused')");
         u2=db.insert("INSERT INTO users(username,password_hash) VALUES('test2','unused')");
-        room=Store.id(resources.save(null,new Requests.Room("测试空间","测试楼","08:00","22:00",1,2,"测试数据")),"id");
-        resources.batch(room,new Requests.Batch(1,2));
+        admin=db.insert("INSERT INTO users(username,password_hash,role) VALUES('resource-admin','unused','admin')");
+        room=Store.id(resources.save(admin,null,new Requests.Room("测试空间","测试楼","08:00","22:00",1,2,"测试数据",null,null,true,null,"测试空间初始化")),"id");
+        resources.batch(admin,room,new Requests.Batch(1,2,1L,"测试批量座位"));
+        db.update("DELETE FROM audit_events");
         var seats=db.list("SELECT * FROM seats ORDER BY id");s1=Store.id(seats.get(0),"id");s2=Store.id(seats.get(1),"id");
+    }
+    private Requests.Seat seatRequest(long id,String zone,boolean power,boolean window,String status) {
+        var seat=db.one("SELECT * FROM seats WHERE id=?",id);
+        return new Requests.Seat(zone,power,window,status,Store.text(seat,"seat_no"),((Number)seat.get("row_no")).intValue(),((Number)seat.get("col_no")).intValue(),Store.id(seat,"version"),"测试维护座位");
     }
     private Requests.Reservation request(long seat,String start,String end) { return new Requests.Reservation(seat,"2026-10-30",start,end); }
     @Test void twentyConcurrentUsersCannotReserveOverlappingSeat() throws Exception {
@@ -71,7 +77,7 @@ class BookingIntegrationTest {
         assertEquals(0.0,((Number)stats.overview().get("today_utilization")).doubleValue());
     }
     @Test void waitlistRespectsPreferencesAndPromotesOnlyOnce() {
-        resources.updateSeat(s2,new Requests.Seat("quiet",true,true,"available"));
+        resources.updateSeat(admin,s2,seatRequest(s2,"quiet",true,true,"available"));
         long held=Store.id(bookings.create(u1,request(s2,"10:00","11:00")),"id");
         long waiting=Store.id(bookings.join(u2,new Requests.Wait(room,"2026-10-30","10:00","11:00","quiet",true,true)),"id");
         bookings.tick();assertEquals("waiting",db.one("SELECT status FROM waitlist WHERE id=?",waiting).get("status"));
@@ -83,15 +89,15 @@ class BookingIntegrationTest {
     @Test void blockedUserAndMaintenanceSeatCannotBeBooked() {
         db.update("UPDATE users SET credit_banned_until=TIMESTAMP '2026-11-01 00:00:00' WHERE id=?",u1);
         assertEquals(403,assertThrows(Api.Failure.class,()->bookings.create(u1,request(s1,"10:00","11:00"))).status);
-        resources.updateSeat(s1,new Requests.Seat("regular",false,false,"maintenance"));
+        resources.updateSeat(admin,s1,seatRequest(s1,"regular",false,false,"maintenance"));
         assertEquals(409,assertThrows(Api.Failure.class,()->bookings.create(u2,request(s1,"10:00","11:00"))).status);
         assertEquals(0,db.count("SELECT count(*) FROM reservations"));assertEquals(0,db.count("SELECT count(*) FROM notifications"));
     }
     @Test void resourceChangesPreserveExistingReservationsAndHistory() {
         bookings.create(u1,request(s1,"10:00","11:00"));
-        assertThrows(Api.Failure.class,()->resources.updateSeat(s1,new Requests.Seat("regular",false,false,"disabled")));
-        assertThrows(Api.Failure.class,()->resources.save(room,new Requests.Room("测试空间","测试楼","12:00","22:00",1,2,"")));
-        assertThrows(Api.Failure.class,()->resources.deleteRoom(room));
+        assertThrows(Api.Failure.class,()->resources.updateSeat(admin,s1,seatRequest(s1,"regular",false,false,"disabled")));
+        assertThrows(Api.Failure.class,()->resources.save(admin,room,new Requests.Room("测试空间","测试楼","12:00","22:00",1,2,"",null,null,true,Store.id(resources.room(room),"version"),"测试缩短开放")));
+        assertThrows(Api.Failure.class,()->resources.deleteRoom(admin,room,new Requests.ResourceDelete(Store.id(resources.room(room),"version"),"测试删除")));
         assertEquals("available",db.one("SELECT status FROM seats WHERE id=?",s1).get("status"));
     }
     @Test void auditSharesBusinessCommitAndRollback() {

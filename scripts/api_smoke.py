@@ -82,15 +82,21 @@ def main():
     check('统计总览字段',status == 200 and len(body['data']['trend_14']) == 14)
     status, body = call('GET',f'/stats/heatmap?room_id={room}&date={date}',token=admin)
     check('热力矩阵尺寸',status == 200 and len(body['data']['cells']) == len(body['data']['seats']) and len(body['data']['cells'][0]) == len(body['data']['hours']))
-    room_req = {'name':'API临时验证_'+str(time.time_ns()),'location':'验证楼','open_time':'08:00','close_time':'22:00','seat_rows':1,'seat_cols':2,'description':''}
+    room_req = {'name':'API临时验证_'+str(time.time_ns()),'location':'验证楼','open_time':'08:00','close_time':'22:00','seat_rows':1,'seat_cols':2,'description':'','building':'API验证楼','floor':'B1','enabled':True,'reason':'API模拟资源验证'}
     status, body = call('POST','/admin/rooms',room_req,admin)
     check('管理端创建房间',status == 200)
     temp = body['data']['id']
+    version = body['data']['version']
     try:
-        check('管理端生成座位',call('POST',f'/admin/rooms/{temp}/seats/batch',{'seat_rows':1,'seat_cols':2},admin)[0] == 200)
-        check('重复生成被阻止',call('POST',f'/admin/rooms/{temp}/seats/batch',{'seat_rows':1,'seat_cols':2},admin)[0] == 409)
+        status, generated = call('POST',f'/admin/rooms/{temp}/seats/batch',{'seat_rows':1,'seat_cols':2,'version':version,'reason':'API初次生成模拟座位'},admin)
+        check('管理端生成座位', status == 200)
+        version = generated['data']['room']['version']
+        check('重复生成被阻止',call('POST',f'/admin/rooms/{temp}/seats/batch',{'seat_rows':1,'seat_cols':2,'version':version,'reason':'API重复生成应被拒绝'},admin)[0] == 409)
     finally:
-        check('删除无历史临时房间',call('DELETE',f'/admin/rooms/{temp}',token=admin)[0] == 200)
+        status, current = call('GET', '/rooms', token=admin)
+        if status == 200:
+            version = next((room['version'] for room in current['data'] if room['id'] == temp), version)
+        check('删除无历史临时房间',call('DELETE',f'/admin/rooms/{temp}',{'version':version,'reason':'API清理无历史模拟资源'},admin)[0] == 200)
     check('注销成功',call('POST','/auth/logout',{},student)[0] == 200)
     check('注销令牌立即失效',call('GET','/auth/profile',token=student)[0] == 401)
     print(f'通过 {len(checks)}/{len(checks)}')

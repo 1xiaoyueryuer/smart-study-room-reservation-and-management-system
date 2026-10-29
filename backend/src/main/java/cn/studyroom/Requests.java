@@ -9,11 +9,19 @@ public final class Requests {
     public record Register(@NotBlank @Size(min=3,max=50) String username,@NotBlank @Size(min=6,max=64) String password,
                            @JsonProperty("real_name") @NotBlank @Size(max=50) String realName,@JsonProperty("student_no") @Size(max=20) String studentNo) {}
     public record Room(@NotBlank @Size(max=100) String name,@Size(max=200) String location,
-                       @JsonProperty("open_time") @NotBlank String openTime,@JsonProperty("close_time") @NotBlank String closeTime,@JsonProperty("seat_rows") @Min(1) @Max(30) int seatRows,
-                       @JsonProperty("seat_cols") @Min(1) @Max(30) int seatCols,@Size(max=5000) String description) {}
-    public record Batch(@JsonProperty("seat_rows") @Min(1) @Max(30) int seatRows,@JsonProperty("seat_cols") @Min(1) @Max(30) int seatCols) {}
-    public record Seat(@NotBlank @Pattern(regexp="quiet|regular|discussion|computer") String zone,@JsonProperty("has_power") Boolean hasPower,@JsonProperty("near_window") Boolean nearWindow,
-                       @Pattern(regexp="available|maintenance|disabled") String status) {}
+                       @JsonProperty("open_time") @NotBlank String openTime,@JsonProperty("close_time") @NotBlank String closeTime,
+                       @JsonProperty("seat_rows") @Min(1) @Max(30) int seatRows,@JsonProperty("seat_cols") @Min(1) @Max(30) int seatCols,
+                       @Size(max=5000) String description,@Size(max=100) String building,@Size(max=30) String floor,
+                       @NotNull Boolean enabled,@Positive Long version,@NotBlank @Size(max=1000) String reason) {}
+    public record Batch(@JsonProperty("seat_rows") @Min(1) @Max(30) int seatRows,@JsonProperty("seat_cols") @Min(1) @Max(30) int seatCols,
+                        @NotNull @Positive Long version,@NotBlank @Size(max=1000) String reason) {}
+    public record Seat(@NotBlank @Pattern(regexp="quiet|regular|discussion|computer") String zone,
+                       @JsonProperty("has_power") @NotNull Boolean hasPower,@JsonProperty("near_window") @NotNull Boolean nearWindow,
+                       @NotBlank @Pattern(regexp="available|maintenance|disabled") String status,
+                       @JsonProperty("seat_no") @NotBlank @Size(max=20) String seatNo,
+                       @JsonProperty("row_no") @Min(1) int rowNo,@JsonProperty("col_no") @Min(1) int colNo,
+                       @NotNull @Positive Long version,@NotBlank @Size(max=1000) String reason) {}
+    public record ResourceDelete(@NotNull @Positive Long version,@NotBlank @Size(max=1000) String reason) {}
     public record Status(@NotBlank @Pattern(regexp="active|disabled") String status,@NotBlank @Size(max=1000) String reason) {}
     public record UserChange(@NotBlank @Size(min=3,max=50) String username,
             @JsonProperty("real_name") @NotBlank @Size(max=50) String realName,

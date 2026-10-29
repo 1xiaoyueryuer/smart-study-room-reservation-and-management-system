@@ -27,7 +27,7 @@ class SlotTest {
         assertThrows(Api.Failure.class,()->slot.validateFuture(Clock.fixed(Instant.parse("2026-10-30T00:50:01Z"),ZoneId.of("Asia/Shanghai"))));
     }
     @Test void enforcesRoomOpeningBoundaries() {
-        var room=java.util.Map.<String,Object>of("open_time","08:00:00","close_time","21:00:00");
+        var room=java.util.Map.<String,Object>of("enabled",true,"open_time","08:00:00","close_time","21:00:00");
         Slot.parse("2026-10-30","08:00","09:00").validateRoom(room);
         Slot.parse("2026-10-30","20:00","21:00").validateRoom(room);
         assertThrows(Api.Failure.class,()->Slot.parse("2026-10-30","20:00","21:30").validateRoom(room));

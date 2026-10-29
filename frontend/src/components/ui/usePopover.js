@@ -1,4 +1,4 @@
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onScopeDispose, ref, watch } from 'vue'
 
 /**
  * 弹层定位：Teleport 到 body 的 fixed 定位 popover
@@ -12,11 +12,15 @@ export function usePopover(triggerRef, popupRef) {
     const el = triggerRef.value
     if (!el) return
     const rect = el.getBoundingClientRect()
+    // Teleport后的弹层不再继承触发器所在对话框的层叠上下文。
+    const dialog = el.closest('[role="dialog"]')
+    const dialogLayer = dialog ? Number.parseInt(window.getComputedStyle(dialog).zIndex, 10) : null
     const spaceBelow = window.innerHeight - rect.bottom
     const above = spaceBelow < 300 && rect.top > spaceBelow
     const left = Math.max(8, Math.min(rect.left, window.innerWidth - Math.max(rect.width, 180) - 8))
     popupStyle.value = {
       position: 'fixed',
+      ...(dialog ? { zIndex: Number.isFinite(dialogLayer) ? dialogLayer + 1 : 'calc(var(--z-dialog) + 1)' } : {}),
       left: `${Math.round(left)}px`,
       minWidth: `${Math.round(rect.width)}px`,
       ...(above
@@ -50,15 +54,21 @@ export function usePopover(triggerRef, popupRef) {
     if (open.value) update()
   }
 
+  function cleanup() {
+    document.removeEventListener('pointerdown', onDocPointerDown, true)
+    window.removeEventListener('scroll', onUiReposition, true)
+    window.removeEventListener('resize', onUiReposition)
+  }
+
+  onScopeDispose(cleanup)
+
   watch(open, (value) => {
     if (value) {
       document.addEventListener('pointerdown', onDocPointerDown, true)
       window.addEventListener('scroll', onUiReposition, true)
       window.addEventListener('resize', onUiReposition)
     } else {
-      document.removeEventListener('pointerdown', onDocPointerDown, true)
-      window.removeEventListener('scroll', onUiReposition, true)
-      window.removeEventListener('resize', onUiReposition)
+      cleanup()
     }
   })
 

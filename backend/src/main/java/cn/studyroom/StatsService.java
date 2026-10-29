@@ -26,7 +26,7 @@ public class StatsService {
     private double hours(Map<String,Object> row) { return Math.max(0,Duration.between(from(row),to(row)).toSeconds()/3600.0); }
     private double capacity() {
         double n=0;
-        for(var room:db.list("SELECT r.*, (SELECT count(*) FROM seats s WHERE s.room_id=r.id AND s.status='available') AS seats FROM rooms r"))
+        for(var room:db.list("SELECT r.*, (SELECT count(*) FROM seats s WHERE s.room_id=r.id AND s.status='available') AS seats FROM rooms r WHERE r.enabled"))
             n+=Duration.between(LocalTime.parse(text(room,"open_time")),LocalTime.parse(text(room,"close_time"))).toMinutes()/60.0*id(room,"seats");
         return n;
     }
@@ -54,7 +54,7 @@ public class StatsService {
     }
     public Map<String,Object> overview() {
         LocalDate today=LocalDate.now(clock);double cap=capacity(),hours=used(today,today).stream().mapToDouble(this::hours).sum();
-        return Map.of("total_seats",db.count("SELECT count(*) FROM seats WHERE status='available'"),
+        return Map.of("total_seats",db.count("SELECT count(*) FROM seats s JOIN rooms r ON r.id=s.room_id WHERE s.status='available' AND r.enabled"),
                 "active_today",db.count("SELECT count(*) FROM reservations WHERE res_date=? AND status<>'cancelled'",Date.valueOf(today)),
                 "in_use_now",db.count("SELECT count(*) FROM reservations WHERE res_date=? AND status IN ('checked_in','temp_leave')",Date.valueOf(today)),
                 "today_utilization",cap==0?0:hours/cap,"trend_14",trend(14),"peak",peak(14),"top_seats",top(14,10));
