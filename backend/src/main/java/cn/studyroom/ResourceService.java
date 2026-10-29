@@ -10,7 +10,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ResourceService {
     private static final String ACTIVE="('pending','checked_in')";
-    private static final String ROOMS="SELECT r.*,(SELECT count(*) FROM seats s WHERE s.room_id=r.id) AS seat_count,(SELECT count(*) FROM seats s WHERE s.room_id=r.id AND s.status='available') AS capacity,CASE WHEN r.enabled THEN (SELECT count(*) FROM seats s WHERE s.room_id=r.id AND s.status='available') ELSE 0 END AS bookable_capacity FROM rooms r";
+    private static final String ROOMS="SELECT r.* FROM rooms r";
     private static final List<String> ROOM_FIELDS=List.of("name","building","floor","location","enabled","seat_rows","seat_cols","description","version","resource_reason");
     private static final List<String> SEAT_FIELDS=List.of("room_id","seat_no","row_no","col_no","zone","has_power","near_window","status","version","resource_reason");
     private final Store db;
@@ -27,8 +27,11 @@ public class ResourceService {
         return rooms;
     }
     public Map<String,Object> room(long id) { var room=db.one(ROOMS+" WHERE r.id=?",id);decorate(room,opening.calendar(id),LocalDate.now(clock));return room; }
-    private void decorate(Map<String,Object> room,OpeningScheduleService.Calendar calendar,LocalDate date) {
-        var day=calendar.day(date,null);room.remove("open_time");room.remove("close_time");room.put("campus_zone",OpeningScheduleService.ZONE);room.put("campus_today",LocalDate.now(clock).toString());room.put("opening_date",date.toString());room.put("opening_windows",day.view());room.put("closed_reasons",day.closedReasons());
+    private void decorate(Map<String,Object> room,OpeningScheduleService.Calendar calendar,LocalDate date) { decoratePublicRoom(room,calendar,date,LocalDate.now(clock)); }
+    static void decoratePublicRoom(Map<String,Object> room,OpeningScheduleService.Calendar calendar,LocalDate date,LocalDate today) {
+        long capacity=calendar.seats.stream().filter(seat->"available".equals(seat.get("status"))).count();
+        room.put("seat_count",(long)calendar.seats.size());room.put("capacity",capacity);room.put("bookable_capacity",Boolean.TRUE.equals(room.get("enabled"))?capacity:0L);
+        var day=calendar.day(date,null);room.remove("open_time");room.remove("close_time");room.put("campus_zone",OpeningScheduleService.ZONE);room.put("campus_today",today.toString());room.put("opening_date",date.toString());room.put("opening_windows",day.view());room.put("closed_reasons",day.closedReasons());
     }
     public Map<String,Object> managementSeats(long roomId) { return Map.of("room",room(roomId),"seats",db.list("SELECT * FROM seats WHERE room_id=? ORDER BY row_no,col_no",roomId)); }
     @Transactional public Map<String,Object> seatMap(long roomId,String date,String start,String end) {

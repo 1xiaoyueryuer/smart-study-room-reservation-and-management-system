@@ -57,15 +57,20 @@ public class OpeningScheduleService {
     private final Clock clock;
     private final Validator validator;
     public OpeningScheduleService(Store db,AuthService auth,AuditService audit,Clock clock,Validator validator) { this.db=db;this.auth=auth;this.audit=audit;this.clock=clock;this.validator=validator; }
-    public Calendar calendar(long roomId) {
+    public Calendar calendar(long roomId) { return loadCalendar(roomId,null); }
+    public Calendar calendar(long roomId,LocalDate date) { return loadCalendar(roomId,Objects.requireNonNull(date)); }
+    private Calendar loadCalendar(long roomId,LocalDate date) {
         var room=db.one("SELECT * FROM rooms WHERE id=?",roomId);
         var seats=db.list("SELECT * FROM seats WHERE room_id=? ORDER BY row_no,col_no",roomId);
-        var records=db.list("SELECT o.id,o.weekday,o.schedule_date,o.reason,w.start_minute,w.end_minute FROM opening_schedules o LEFT JOIN opening_windows w ON w.schedule_id=o.id WHERE o.room_id=? ORDER BY o.id,w.start_minute",roomId);
+        String scheduleSql="SELECT o.id,o.weekday,o.schedule_date,o.reason,w.start_minute,w.end_minute FROM opening_schedules o LEFT JOIN opening_windows w ON w.schedule_id=o.id WHERE o.room_id=?";
+        var records=date==null?db.list(scheduleSql+" ORDER BY o.id,w.start_minute",roomId):db.list(scheduleSql+" AND (o.weekday=? OR o.schedule_date=?) ORDER BY o.id,w.start_minute",roomId,date.getDayOfWeek().getValue(),java.sql.Date.valueOf(date));
         Map<Long,List<Window>> groups=new LinkedHashMap<>();Map<Long,Map<String,Object>> heads=new LinkedHashMap<>();
         for(var row:records) { long id=Store.id(row,"id");heads.put(id,row);groups.computeIfAbsent(id,k->new ArrayList<>());if(row.get("start_minute")!=null) groups.get(id).add(new Window(((Number)row.get("start_minute")).intValue(),((Number)row.get("end_minute")).intValue())); }
         List<Schedule> schedules=new ArrayList<>();
         for(var entry:heads.entrySet()) { var row=entry.getValue();schedules.add(new Schedule(row.get("weekday")==null?null:((Number)row.get("weekday")).intValue(),row.get("schedule_date")==null?null:LocalDate.parse(Store.text(row,"schedule_date")),Store.text(row,"reason"),List.copyOf(groups.get(entry.getKey())))); }
-        return new Calendar(room,seats,schedules,db.list("SELECT seat_id,start_at,end_at,reason FROM resource_unavailability WHERE room_id=? AND NOT cancelled ORDER BY id",roomId));
+        String blockSql="SELECT seat_id,start_at,end_at,reason FROM resource_unavailability WHERE room_id=? AND NOT cancelled";
+        var blocks=date==null?db.list(blockSql+" ORDER BY id",roomId):db.list(blockSql+" AND start_at<? AND end_at>? ORDER BY id",roomId,Timestamp.valueOf(date.plusDays(1).atStartOfDay()),Timestamp.valueOf(date.atStartOfDay()));
+        return new Calendar(room,seats,schedules,blocks);
     }
     @Transactional public void initializeDefaults(long roomId) {
         for(int weekday=1;weekday<=7;weekday++) {

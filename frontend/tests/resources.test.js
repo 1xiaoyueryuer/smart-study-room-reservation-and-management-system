@@ -2,7 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { readFile } from 'node:fs/promises'
-import { initialSlot, validateSlot, minuteValue, serverStartMinute } from '../src/composables/bookingPolicy.js'
+import {  validateSlot, minuteValue, minuteText, serverStartMinute } from '../src/composables/bookingPolicy.js'
+import { windowKey, validateWindowSlot } from '../src/composables/availabilitySelection.js'
 import { operationReason } from '../src/components/admin/userForm.js'
 import { ref, computed } from 'vue'
 
@@ -97,12 +98,14 @@ test('historical resource deletion failure keeps operation reason in dialog', as
 async function booking() {
   const calls = []
   const page = await script('../src/views/BookingView.vue', {
-    vue: { ref, computed, watch() {}, onMounted() {} },
+    vue: { ref, computed, watch() {}, onMounted() {}, onBeforeUnmount() {} },
     '../components/seat3d/seatPresentation': { seatType: () => '普通桌', zoneName: { regular: '普通区' }, getWindowSides: () => ({}) },
     '../components/ui/feedback': { message: { info() {}, warning() {}, success() {} }, confirmDialog: async () => {} },
     '../api/room': { getRooms: async () => ({ data: [] }), getSeatMap: async () => ({ data: { room: room(), seats: [seat()] } }) },
+    '../api/availability': {getAvailability:async()=>({data:{}})},
+    '../composables/availabilitySelection.js':{windowKey,validateWindowSlot},
     '../api/reservation': { createReservation: async () => { calls.push('create') }, getBookingPolicy: async () => ({data:{}}) },
-    '../composables/bookingPolicy.js': {initialSlot,validateSlot,minuteValue,serverStartMinute}
+    '../composables/bookingPolicy.js': {validateSlot,minuteValue,minuteText,serverStartMinute}
   }, 'room, rooms, seats, policy, date, start, end, locationFilter, filteredRooms, selected, onSeatClick, confirmBooking, seatStats')
   page.policy.value = {server_now:'2026-11-01T08:00:00+08:00',campus_today:'2026-11-01',dates:['2026-11-01','2026-11-02','2026-11-03'],campus_zone:'Asia/Shanghai',min_duration_minutes:30}
   page.date.value='2026-11-01';page.start.value='09:00';page.end.value='12:00'
@@ -142,7 +145,7 @@ test('resource DELETE API retains version and reason in JSON body', async () => 
 test('available seat outside authoritative opening window cannot bypass manual submission', async () => {
   const page = await booking()
   page.room.value = room()
-  const closed = { ...seat(), bookable_for_slot: false, closed_reasons: ['临时停用'] }
+  const closed = { ...seat(), available_windows: [], closed_reasons: ['临时停用'] }
   page.seats.value = [closed]
   page.onSeatClick(closed)
   assert.equal(page.selected.value, null)

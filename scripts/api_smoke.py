@@ -51,6 +51,9 @@ def main():
     status, policy = call('GET', '/booking-policy', token=student)
     check('校园日期政策与分钟规则', status == 200 and policy['data']['campus_zone'] == 'Asia/Shanghai' and policy['data']['min_duration_minutes'] == 30 and len(policy['data']['dates']) == 3)
     date = policy['data']['dates'][1]
+    status, available = call('GET',f'/availability?room_id={room}&date={date}&strategy=earliest',token=student)
+    check('最早连续空档与图列表共享结果',status == 200 and available['data']['strategy'] == 'earliest' and isinstance(available['data']['results'],list) and all('available_windows' in seat for seat in available['data']['seats']))
+    check('空档最短30分钟且无他人私密记录',all(row['duration_minutes'] >= 30 and not any(key in row for key in ('user_id','username','real_name','code_value')) for row in available['data']['results']))
     status, body = call('GET',f'/rooms/{room}/seats?date={date}&start=10:00&end=11:00',token=student)
     check('座位图字段与布尔类型',status == 200 and isinstance(body['data']['seats'][0]['occupied'],bool))
     seats = [s for s in body['data']['seats'] if s['status']=='available' and s['bookable_for_slot'] and not s['occupied']]

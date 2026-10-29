@@ -12,13 +12,6 @@ export function serverStartMinute(policy) {
   if (!match || policy.campus_zone !== 'Asia/Shanghai') throw new Error('服务端校园时间格式无效，请重新读取预约政策')
   return Number(match[1]) * 60 + Number(match[2]) + ((Number(match[3] || 0) > 0 || /[1-9]/.test(match[4] || '')) ? 1 : 0)
 }
-export function initialSlot(policy) {
-  const start = serverStartMinute(policy)
-  if (start + policy.min_duration_minutes <= 1440) return { date:policy.campus_today,start:minuteText(start),end:minuteText(start + policy.min_duration_minutes) }
-  const next = policy.dates.find(date => date > policy.campus_today)
-  if (!next) throw new Error('服务端未提供可初始化的预约日期，请刷新政策')
-  return {date:next,start:'00:00',end:minuteText(policy.min_duration_minutes)}
-}
 export function validateSlot(policy, date, start, end) {
   if (!policy || !policy.dates.includes(date)) throw new Error(`预约日期${date || '未选择'}已无效，请刷新政策并从服务端日期中选择`)
   const begin = minuteValue(start), finish = minuteValue(end,true)

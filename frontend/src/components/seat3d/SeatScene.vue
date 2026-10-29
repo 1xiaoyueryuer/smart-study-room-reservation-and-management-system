@@ -79,7 +79,7 @@ function fadeSwitch(change, animate = true) {
     .to(renderer.domElement, { opacity: 1, duration })
 }
 function enterSeat(animate = true) {
-  const seat = props.seats.find(s => s.id === props.selectedId && s.status === 'available' && !s.occupied)
+  const seat = props.seats.find(s => s.id === props.selectedId && s.status === 'available' && s.available_windows?.length > 0)
   if (!seat) { emit('exit-first-person'); return }
   fadeSwitch(() => {
     seated = true

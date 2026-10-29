@@ -139,6 +139,10 @@ public class BookingService {
         db.lockBookings();db.one("SELECT id FROM rooms WHERE id=?",roomId);
         reconcileRows(db.list("SELECT rv.* FROM reservations rv JOIN seats s ON s.id=rv.seat_id WHERE s.room_id=? AND rv.res_date=? AND rv.status IN "+ACTIVE+" ORDER BY rv.id",roomId,Date.valueOf(date)),now());
     }
+    public void reconcileAvailability(long uid,long roomId,LocalDate date,LocalDateTime snapshot) {
+        db.lockBookings();requireOrdinary(uid);
+        reconcileRows(db.list("SELECT rv.* FROM reservations rv JOIN seats s ON s.id=rv.seat_id WHERE rv.res_date=? AND rv.status IN "+ACTIVE+" AND (s.room_id=? OR rv.user_id=?) ORDER BY rv.id",Date.valueOf(date),roomId,uid),snapshot);
+    }
     private void reconcileRows(List<Map<String,Object>> rows,LocalDateTime now) {
         for(var row:rows) {
             if(ReservationDeadline.expiredPending(row,now)) endUnused(row,"no_show",now);

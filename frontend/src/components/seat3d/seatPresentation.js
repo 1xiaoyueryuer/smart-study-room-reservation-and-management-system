@@ -7,12 +7,13 @@ export function seatType(s) {
 }
 export function seatState(s, selectedId) {
   if (s.status !== 'available') return s.status === 'maintenance' ? 'maintenance' : 'disabled'
+  if (Array.isArray(s.available_windows)) return s.available_windows.length ? (s.id === selectedId ? 'selected' : 'available') : 'no_window'
   if (s.bookable_for_slot === false) return 'disabled'
   if (s.occupied) return 'occupied'
   return s.id === selectedId ? 'selected' : 'available'
 }
-export const stateLabels = { available: '可预约', selected: '已选中', occupied: '已占用', maintenance: '维护中', disabled: '已停用' }
-export const stateColors = { available: '#69bca8', selected: '#5578ee', occupied: '#e3a363', maintenance: '#b19bbd', disabled: '#89929e' }
+export const stateLabels = { available: '有连续可约空档', selected: '已选座位', no_window: '无满足条件空档', occupied: '已占用', maintenance: '维护中', disabled: '已停用' }
+export const stateColors = { available: '#69bca8', no_window: '#e3a363', selected: '#5578ee', occupied: '#e3a363', maintenance: '#b19bbd', disabled: '#89929e' }
 export function getWindowSides(room, seats) {
   const sides = { top: false, bottom: false, left: false, right: false }
   if (!room || !seats.length) return sides

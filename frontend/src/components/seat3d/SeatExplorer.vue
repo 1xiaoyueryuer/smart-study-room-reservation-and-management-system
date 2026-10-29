@@ -2,16 +2,17 @@
 import { ref, shallowRef, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { gsap } from 'gsap'
 import SButton from '../ui/SButton.vue'
+import { windowKey } from '../../composables/availabilitySelection.js'
 import { feedbackState } from '../ui/feedback'
 import { seatType, seatState, stateLabels, stateColors, zoneName } from './seatPresentation'
 
-const props = defineProps({ origin: Object, room: Object, seats: Array, selectedId: Number, date: String, start: String, end: String, loading: Boolean, submitting: Boolean, submitError: String, policyReady: Boolean })
-const emit = defineEmits(['select', 'submit', 'closed'])
+const props = defineProps({ origin: Object, room: Object, seats: Array, selectedId: Number, selectedWindow: Object, date: String, start: String, end: String, loading: Boolean, submitting: Boolean, submitError: String, policyReady: Boolean })
+const emit = defineEmits(['select', 'select-window', 'update:start', 'update:end', 'submit', 'closed'])
 const panel = ref(null), backdrop = ref(null), content = ref(null), snapshot = ref(null)
 const Scene = shallowRef(null), error = ref(''), ready = ref(false), closing = ref(false), opening = ref(true), view = ref('overview')
 const selected = computed(() => props.seats.find(s => s.id === props.selectedId))
 const sceneRef = ref(null)
-const canExperience = computed(() => ready.value && props.room?.enabled && !error.value && selected.value?.status === 'available' && selected.value?.bookable_for_slot === true && !selected.value?.occupied)
+const canExperience = computed(() => ready.value && props.room?.enabled && !error.value && selected.value?.status === 'available' && selected.value?.available_windows?.length > 0)
 watch(canExperience, valid => { if (!valid && view.value === 'firstPerson') view.value = 'overview' })
 const busy = computed(() => props.loading || props.submitting || opening.value || closing.value || !!feedbackState.box)
 let sceneLoadFrame = 0
@@ -99,6 +100,7 @@ function resized() {
   panel.value.style.width = ''
   panel.value.style.height = ''
 }
+function chooseSegment(e) { const window = selected.value?.available_windows?.find(item => windowKey(item) === e.target.value); if (window) emit('select-window', window) }
 function chooseFromList(e) { const s = props.seats.find(s => String(s.id) === e.target.value); if (s) emit('select', s) }
 onMounted(() => {
   restoreFocus = document.activeElement
@@ -150,28 +152,29 @@ onBeforeUnmount(() => {
         <div ref="snapshot" class="explorer-snapshot" aria-hidden="true" />
         <div ref="content" class="explorer-content">
           <header class="explorer-head">
-            <div><div class="explorer-eyebrow">SPACE / 3D SEATING</div><h3 id="explorer-title">{{ room.name }} <span>3D 选座</span></h3><p>{{ date }} · {{ start }} – {{ end }} <span class="layout-note">· 座位布局示意</span></p></div>
+            <div><div class="explorer-eyebrow">SPACE / 3D SEATING</div><h3 id="explorer-title">{{ room?.name || '自习室' }} <span>3D 选座</span></h3><p>{{ date }} · {{ selectedWindow ? start + ' – ' + end + '（本次预约）' : '请选择连续空档' }} <span class="layout-note">· 座位布局示意</span></p></div>
             <button class="explorer-close" aria-label="关闭 3D 选座" :disabled="submitting" @click="close()">×</button>
           </header>
           <div class="explorer-toolbar">
             <div class="view-switch" aria-label="切换视角">
               <button :class="{ active: view === 'overview' }" :disabled="busy" @click="view = 'overview'">◈ 总览</button>
               <button :class="{ active: view === 'top' }" :disabled="busy" @click="view = 'top'">▦ 俯视</button>
-              <button :class="{ active: view === 'firstPerson' }" :disabled="busy || !canExperience" :title="canExperience ? '从所选座位环视室内' : '请先选择可预约的座位'" @click="view = 'firstPerson'">坐席体验</button>
+              <button :class="{ active: view === 'firstPerson' }" :disabled="busy || !canExperience" :title="canExperience ? '从所选座位环视室内' : '请先选择有连续空档的座位'" @click="view = 'firstPerson'">坐席体验</button>
             </div>
-            <div class="explorer-legend"><span v-for="(label, state) in stateLabels" :key="state"><i :style="{ background: stateColors[state] }" />{{ label }}</span></div>
+            <div class="explorer-legend"><span v-for="(label, state) in Object.fromEntries(Object.entries(stateLabels).filter(([state]) => state !== 'occupied'))" :key="state"><i :style="{ background: stateColors[state] }" />{{ label }}</span></div>
           </div>
           <div class="explorer-stage" :aria-busy="!ready || loading">
-            <component :is="Scene" v-if="Scene && !error" ref="sceneRef" :room="room" :seats="seats" :selected-id="selectedId" :view="view" :blocked="busy || !room?.enabled" @select="emit('select', $event)" @ready="ready = true" @error="error = $event" @manual-view="view = ''" @exit-first-person="view = 'overview'" />
+            <component :is="Scene" v-if="Scene && !error && room" ref="sceneRef" :room="room" :seats="seats" :selected-id="selectedId" :view="view" :blocked="busy || !room?.enabled" @select="emit('select', $event)" @ready="ready = true" @error="error = $event" @manual-view="view = ''" @exit-first-person="view = 'overview'" />
             <div v-if="error || !ready || loading" class="scene-message" role="status"><strong>{{ error ? '暂时无法显示 3D' : loading ? '正在更新座位' : '正在搭建你的自习空间' }}</strong><p>{{ error || '窗户、桌椅和座位正在就位…' }}</p><SButton v-if="error" @click="close()">返回座位平面图</SButton></div>
             <div v-if="ready && !error && view === 'firstPerson'" class="seated-tools"><span aria-live="polite">正在体验 {{ selected?.seat_no }}</span><button :disabled="busy" @click="sceneRef?.resetLook()">回正视线</button></div>
             <div v-if="ready && !error" class="scene-hint">{{ view === 'firstPerson' ? '拖动 / 方向键环视 · 点击总览退出体验' : '拖动旋转 · 滚轮 / 双指缩放 · 点击桌椅选座' }}</div>
           </div>
           <p v-if="submitError" role="alert" class="explorer-submit-error">{{ submitError }}</p>
+          <div v-if="selected" class="explorer-slot"><label>完整空档<select :value="windowKey(selectedWindow)" :disabled="busy" @change="chooseSegment"><option value="" disabled>选择该座位的片段</option><option v-for="window in selected.available_windows" :key="windowKey(window)" :value="windowKey(window)">{{ window.available_start }}–{{ window.available_end }} · {{ window.duration_minutes }}分钟 · 等待{{ window.wait_minutes }}分钟</option></select></label><template v-if="selectedWindow"><label>本次开始<input :value="start" type="time" step="60" :disabled="busy" @input="emit('update:start',$event.target.value)" /></label><label>本次结束<input :value="end" maxlength="5" placeholder="HH:mm，可24:00" :disabled="busy" @input="emit('update:end',$event.target.value)" /></label></template></div>
           <footer class="explorer-footer">
-            <div class="explorer-selection" aria-live="polite"><strong>{{ selected ? `已选择 ${selected.seat_no}` : '找一个喜欢的位置' }}</strong><span>{{ selected ? `${seatType(selected)} · ${zoneName[selected.zone]}${selected.near_window ? ' · 靠窗' : ''}` : '选择可预约的桌椅，或使用座位列表' }}</span></div>
-            <label class="seat-list"><span class="sr-only">按编号选择座位</span><select :value="selectedId ?? ''" :disabled="busy || !!error" @change="chooseFromList"><option value="" disabled>按编号选座</option><option v-for="s in seats" :key="s.id" :value="s.id" :disabled="s.status !== 'available' || s.bookable_for_slot !== true || s.occupied">{{ s.seat_no }} · {{ stateLabels[seatState(s, selectedId)] }}</option></select></label>
-            <SButton variant="primary" size="lg" :disabled="!policyReady || !room?.enabled || !selected || selected.bookable_for_slot !== true || busy || !!error" :loading="submitting" @click="emit('submit')">提交预约</SButton>
+            <div class="explorer-selection" aria-live="polite"><strong>{{ selected ? `已选择 ${selected.seat_no}` : '找一个喜欢的位置' }}</strong><span>{{ selected ? `${seatType(selected)} · ${zoneName[selected.zone]}${selected.near_window ? ' · 靠窗' : ''}` : '选择有连续空档的桌椅，再选择片段' }}</span></div>
+            <label class="seat-list"><span class="sr-only">按编号选择座位</span><select :value="selectedId ?? ''" :disabled="busy || !!error" @change="chooseFromList"><option value="" disabled>按编号选座</option><option v-for="s in seats" :key="s.id" :value="s.id" :disabled="s.status !== 'available' || !s.available_windows?.length">{{ s.seat_no }} · {{ stateLabels[seatState(s, selectedId)] }}</option></select></label>
+            <SButton variant="primary" size="lg" :disabled="!policyReady || !room?.enabled || !selected || !selectedWindow || busy || !!error" :loading="submitting" @click="emit('submit')">提交预约</SButton>
           </footer>
         </div>
       </section>
@@ -180,6 +183,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.explorer-slot{display:flex;gap:12px;padding:10px 20px;flex-wrap:wrap;max-height:170px;overflow:auto}.explorer-slot label{display:grid;gap:4px;min-width:0;max-width:100%;font-size:var(--fs-caption)}.explorer-slot input,.explorer-slot select{max-width:100%;min-width:0;padding:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-1);border-radius:var(--r-sm)}
 .explorer-submit-error { color:var(--red-strong); padding:10px 20px; font-size:var(--fs-caption); }
 .seat-explorer { position: fixed; inset: 0; z-index: var(--z-dialog); display: grid; place-items: center; }
 .explorer-backdrop { position: absolute; inset: 0; background: rgb(20 29 43 / 35%); }
