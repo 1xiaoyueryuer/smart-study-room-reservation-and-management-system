@@ -41,6 +41,8 @@ class MinuteBookingIntegrationTest {
     @Autowired ResourceService resources;
     @Autowired OpeningScheduleService opening;
     @Autowired StatsService stats;
+    @Autowired UsageService usage;
+    @Autowired org.springframework.transaction.support.TransactionTemplate transactions;
     @Autowired TestClock clock;
     long admin,student,staff,room,seat1,seat2;
     LocalDate base;
@@ -52,7 +54,7 @@ class MinuteBookingIntegrationTest {
     }
     @BeforeEach void fixture() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"));
-        for(String table:List.of("seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("usage_records","seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         base=LocalDate.now(BookingPolicy.CAMPUS_ZONE).minusDays(1);clock.set(base.atTime(9,0));remote="s07-test-"+UUID.randomUUID();
         String hash=new BCryptPasswordEncoder().encode(PASSWORD);
         admin=db.insert("INSERT INTO users(username,password_hash,role) VALUES('s07_admin',?,'admin')",hash);
@@ -107,7 +109,7 @@ class MinuteBookingIntegrationTest {
         clock.set(base.atTime(23,30));bookings.checkin(student,id,seatCode(seat1));
         clock.set(base.plusDays(1).atStartOfDay());bookings.tick();bookings.tick();
         var row=db.one("SELECT status,checkout_at,end_time FROM reservations WHERE id=?",id);
-        assertEquals("completed",row.get("status"));assertEquals(base.plusDays(1).atStartOfDay(),LocalDateTime.parse(row.get("checkout_at").toString()));assertEquals("24:00:00",row.get("end_time"));
+        assertEquals("completed",row.get("status"));assertEquals(base.plusDays(1).atStartOfDay(),LocalDateTime.parse(db.one("SELECT ended_at FROM usage_records WHERE reservation_id=?",id).get("ended_at").toString()));assertEquals("24:00:00",row.get("end_time"));
         assertEquals(0,db.count("SELECT count(*) FROM credit_logs WHERE reservation_id=?",id));
         assertEquals(0.5,((Number)stats.top(14,10).get(0).get("hours")).doubleValue(),0.00001);
         assertNotNull(stats.heatmap(room,d(0)));
@@ -117,6 +119,7 @@ class MinuteBookingIntegrationTest {
     }
     @Test void genuineHistoricalSecondsRemainReadableProtectableAndFinishable() {
         long id=db.insert("INSERT INTO reservations(user_id,seat_id,res_date,start_time,end_time,status,source,checkin_at) VALUES(?,?,?,TIME '08:59:59.500000',TIME '09:10:00.123456','checked_in','auto',?)",student,seat1,java.sql.Date.valueOf(base),java.sql.Timestamp.valueOf(base.atTime(8,59,59,500000000)));
+        transactions.executeWithoutResult(tx->usage.start(id,base.atTime(8,59,59,500000000),"legacy"));
         var raw=db.one("SELECT start_time,end_time FROM reservations WHERE id=?",id);
         assertEquals(base.atTime(8,59,59,500000000),Slot.endpoint(base,raw.get("start_time").toString()));
         assertEquals(base.atTime(9,10,0,123456000),Slot.endpoint(base,raw.get("end_time").toString()));

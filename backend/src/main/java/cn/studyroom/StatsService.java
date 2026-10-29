@@ -16,15 +16,16 @@ public class StatsService {
     private final OpeningScheduleService opening;
     public StatsService(Store db,Clock clock,OpeningScheduleService opening) { this.db=db;this.clock=clock;this.opening=opening; }
     private List<Map<String,Object>> used(LocalDate from,LocalDate until) {
-        return db.list("SELECT rv.*,s.room_id,s.seat_no,r.name AS room_name FROM reservations rv JOIN seats s ON s.id=rv.seat_id JOIN rooms r ON r.id=s.room_id WHERE rv.res_date>=? AND rv.res_date<=? AND rv.status IN ('completed','checked_in','temp_leave') AND rv.checkin_at IS NOT NULL",Date.valueOf(from),Date.valueOf(until));
+        return db.list("SELECT rv.*,ur.checkin_at AS usage_checkin_at,ur.ended_at AS usage_ended_at,s.room_id,s.seat_no,r.name AS room_name FROM usage_records ur JOIN reservations rv ON rv.id=ur.reservation_id JOIN seats s ON s.id=rv.seat_id JOIN rooms r ON r.id=s.room_id WHERE rv.res_date>=? AND rv.res_date<=?",Date.valueOf(from),Date.valueOf(until));
     }
-    private LocalDateTime from(Map<String,Object> row) { return LocalDateTime.parse(text(row,"checkin_at")); }
+    private LocalDateTime from(Map<String,Object> row) { return LocalDateTime.parse(text(row,"usage_checkin_at")); }
     private LocalDateTime to(Map<String,Object> row) {
         LocalDateTime scheduled=Slot.endpoint(LocalDate.parse(text(row,"res_date")),text(row,"end_time"));
-        LocalDateTime actual=row.get("checkout_at")==null?LocalDateTime.now(clock):LocalDateTime.parse(text(row,"checkout_at"));
+        LocalDateTime actual=row.get("usage_ended_at")==null?LocalDateTime.now(clock):LocalDateTime.parse(text(row,"usage_ended_at"));
         return actual.isBefore(scheduled)?actual:scheduled;
     }
-    private double hours(Map<String,Object> row) { return Math.max(0,Duration.between(from(row),to(row)).toSeconds()/3600.0); }
+    private double hours(Map<String,Object> row) { return seconds(Duration.between(from(row),to(row)))/3600.0; }
+    private double seconds(Duration duration) { if(duration.isNegative()) throw new IllegalStateException("使用统计存在反向时长");return duration.getSeconds()+duration.getNano()/1_000_000_000.0; }
     private List<OpeningScheduleService.Calendar> calendars() { return db.list("SELECT id FROM rooms ORDER BY id").stream().map(row->opening.calendar(id(row,"id"))).toList(); }
     private double capacity(LocalDate day,List<OpeningScheduleService.Calendar> calendars) {
         double minutes=0;
@@ -57,7 +58,7 @@ public class StatsService {
         LocalDate today=LocalDate.now(clock);double cap=capacity(today,calendars()),hours=used(today,today).stream().mapToDouble(this::hours).sum();
         return Map.of("total_seats",db.count("SELECT count(*) FROM seats s JOIN rooms r ON r.id=s.room_id WHERE s.status='available' AND r.enabled"),
                 "active_today",db.count("SELECT count(*) FROM reservations WHERE res_date=? AND status<>'cancelled'",Date.valueOf(today)),
-                "in_use_now",db.count("SELECT count(*) FROM reservations WHERE res_date=? AND status IN ('checked_in','temp_leave')",Date.valueOf(today)),
+                "in_use_now",db.count("SELECT count(*) FROM usage_records ur JOIN reservations rv ON rv.id=ur.reservation_id WHERE rv.res_date=? AND rv.status='checked_in' AND ur.ended_at IS NULL AND ur.checkin_at<=? AND rv.res_date+rv.end_time>?",Date.valueOf(today),java.sql.Timestamp.valueOf(LocalDateTime.now(clock)),java.sql.Timestamp.valueOf(LocalDateTime.now(clock))),
                 "today_utilization",cap==0?0:hours/cap,"trend_14",trend(14),"peak",peak(14),"top_seats",top(14,10));
     }
     public Map<String,Object> heatmap(long roomId,String date) {

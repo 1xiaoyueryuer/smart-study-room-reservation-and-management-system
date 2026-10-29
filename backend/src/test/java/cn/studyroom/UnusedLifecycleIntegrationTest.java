@@ -46,7 +46,7 @@ class UnusedLifecycleIntegrationTest {
     }
     @BeforeEach void setup() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"));
-        for(String table:List.of("seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("usage_records","seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         base=LocalDate.now(BookingPolicy.CAMPUS_ZONE).minusDays(1);clock.set(base.atTime(9,0));remote="s08-test-"+UUID.randomUUID();
         String hash=new BCryptPasswordEncoder().encode(PASSWORD);
         student=db.insert("INSERT INTO users(username,password_hash,campus_id,role) VALUES('s08_student',?,'S08-student','student')",hash);
@@ -187,15 +187,15 @@ class UnusedLifecycleIntegrationTest {
         bookings.mine(student);bookings.mine(staff);bookings.tick();assertEquals(2,db.count("SELECT count(*) FROM violations"));
         assertEquals("no_show",row(first).get("termination_reason"));assertEquals("no_show",row(second).get("termination_reason"));assertEquals(0,db.count("SELECT count(*) FROM credit_logs"));
     }
-    @Test void allowedActionsAndRealReturnStateFollowServerWindowWithoutEarlyCheckin() throws Exception {
+    @Test void allowedActionsAndRetiredTempActionsFollowServerWindowWithoutEarlyCheckin() throws Exception {
         long id=create(student,seat1,"10:00","11:00");String token=token("student");at(9,59,59);
         http.perform(action(id,"checkin",token)).andExpect(status().isConflict());http.perform(action(id,"abandon",token)).andExpect(status().isConflict());
         assertEquals(List.of("cancel"),bookings.mine(student).get(0).get("allowed_actions"));
         at(10,0,0);http.perform(action(id,"checkin",token)).andExpect(status().isOk()).andExpect(jsonPath("$.data.action").value("checked_in"));
-        assertEquals(List.of("leave","checkout"),bookings.mine(student).get(0).get("allowed_actions"));
-        http.perform(action(id,"leave",token)).andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("temp_leave"));
-        http.perform(action(id,"return",token)).andExpect(status().isOk()).andExpect(jsonPath("$.data.action").value("checked_in"));
-        http.perform(action(id,"return",token)).andExpect(status().isConflict());assertEquals("checked_in",row(id).get("status"));
+        assertEquals(List.of("checkout"),bookings.mine(student).get(0).get("allowed_actions"));
+        http.perform(action(id,"leave",token)).andExpect(status().isGone());http.perform(action(id,"return",token)).andExpect(status().isGone());
+        assertEquals(410,assertThrows(Api.Failure.class,()->bookings.action(student,id,"leave")).status);assertEquals(410,assertThrows(Api.Failure.class,()->bookings.action(student,id,"return")).status);
+        assertEquals("checked_in",row(id).get("status"));assertNull(row(id).get("leave_at"));
         http.perform(action(id,"abandon",token)).andExpect(status().isConflict());assertEquals(0,db.count("SELECT count(*) FROM violations"));
     }
 }

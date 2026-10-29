@@ -42,7 +42,7 @@ class SeatCodeIntegrationTest {
     String remote;
     @BeforeEach void fixture() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"));
-        for(String table:List.of("seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("usage_records","seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         base=LocalDate.now(BookingPolicy.CAMPUS_ZONE).minusDays(1);clock.set(base.atTime(9,0));remote="s09-test-"+UUID.randomUUID();
         String hash=new BCryptPasswordEncoder().encode("S02-test-only-password");
         admin=db.insert("INSERT INTO users(username,password_hash,role,campus_id) VALUES('s09_admin',?,'admin','S09-admin')",hash);
@@ -116,14 +116,14 @@ class SeatCodeIntegrationTest {
         http.perform(auth(post("/api/reservations/"+id+"/checkin"),token)).andExpect(status().isBadRequest());
         for(String body:List.of("{}","{\"seat_id\":1}","{\"seat_code\":123}","{\"seat_code\":\"x\",\"seat_id\":1}","{\"seat_code\":null}")) http.perform(auth(post("/api/reservations/"+id+"/checkin"),token).contentType("application/json").content(body)).andExpect(status().isBadRequest());
         http.perform(checkin(id,"x".repeat(200),token)).andExpect(status().isBadRequest());http.perform(checkin(id,wrong,token)).andExpect(status().isConflict());assertEquals("pending",row(id).get("status"));
-        http.perform(checkin(id,expected,token)).andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("checked_in"));Object original=row(id).get("checkin_at");long audits=db.count("SELECT count(*) FROM audit_events WHERE action='reservation.checkin'");
-        at(10,1,0);http.perform(checkin(id,expected,token)).andExpect(status().isConflict());assertEquals(original,row(id).get("checkin_at"));assertEquals(audits,db.count("SELECT count(*) FROM audit_events WHERE action='reservation.checkin'"));assertEquals(1,db.count("SELECT count(*) FROM notifications WHERE type='reservation_checkin'"));
+        http.perform(checkin(id,expected,token)).andExpect(status().isOk()).andExpect(jsonPath("$.data.status").value("checked_in"));Object original=db.one("SELECT checkin_at FROM usage_records WHERE reservation_id=?",id).get("checkin_at");long audits=db.count("SELECT count(*) FROM audit_events WHERE action='reservation.checkin'");
+        at(10,1,0);http.perform(checkin(id,expected,token)).andExpect(status().isConflict());assertEquals(original,db.one("SELECT checkin_at FROM usage_records WHERE reservation_id=?",id).get("checkin_at"));assertEquals(audits,db.count("SELECT count(*) FROM audit_events WHERE action='reservation.checkin'"));assertEquals(1,db.count("SELECT count(*) FROM notifications WHERE type='reservation_checkin'"));
     }
     @Test void startAndFourteenFiftyNineAreAllowedButBeforeStartIsConflict() throws Exception {
         long id=reservation(student,seat1),second=reservation(staff,seat2);String token=token("student"),staffToken=token("staff"),firstCode=code(seat1),secondCode=code(seat2);
         at(9,59,59);http.perform(checkin(id,firstCode,token)).andExpect(status().isConflict());assertEquals("pending",row(id).get("status"));
         at(10,0,0);http.perform(checkin(id,firstCode,token)).andExpect(status().isOk());
-        at(10,14,59);http.perform(checkin(second,secondCode,staffToken)).andExpect(status().isOk());assertEquals(base.atTime(10,14,59),LocalDateTime.parse(row(second).get("checkin_at").toString()));
+        at(10,14,59);http.perform(checkin(second,secondCode,staffToken)).andExpect(status().isOk());assertEquals(base.atTime(10,14,59),LocalDateTime.parse(db.one("SELECT checkin_at FROM usage_records WHERE reservation_id=?",second).get("checkin_at").toString()));
     }
     @Test void deadlineAndDetailCommitTruthAndForeignDetailCannotSettle() throws Exception {
         long id=reservation(student,seat1),second=reservation(staff,seat2);String token=token("student"),staffToken=token("staff"),payload=code(seat1);at(10,15,0);
@@ -145,7 +145,7 @@ class SeatCodeIntegrationTest {
         for(boolean auditFault:List.of(true,false)) {
             String table=auditFault?"audit_events":"notifications",expression=auditFault?"action<>'reservation.checkin'":"type<>'reservation_checkin'";
             db.update("ALTER TABLE "+table+" ADD CONSTRAINT s09_fail CHECK("+expression+") NOT VALID");
-            try { http.perform(checkin(id,payload,token)).andExpect(status().isInternalServerError());assertEquals("pending",row(id).get("status"));assertNull(row(id).get("checkin_at"));assertEquals(0,db.count("SELECT count(*) FROM audit_events WHERE action='reservation.checkin'"));assertEquals(0,db.count("SELECT count(*) FROM notifications WHERE type='reservation_checkin'")); }
+            try { http.perform(checkin(id,payload,token)).andExpect(status().isInternalServerError());assertEquals("pending",row(id).get("status"));assertNull(row(id).get("checkin_at"));assertEquals(0,db.count("SELECT count(*) FROM usage_records"));assertEquals(0,db.count("SELECT count(*) FROM audit_events WHERE action='reservation.checkin'"));assertEquals(0,db.count("SELECT count(*) FROM notifications WHERE type='reservation_checkin'")); }
             finally { db.update("ALTER TABLE "+table+" DROP CONSTRAINT s09_fail"); }
         }
         at(10,15,0);db.update("ALTER TABLE audit_events ADD CONSTRAINT s09_fail CHECK(action<>'reservation.unused_end') NOT VALID");

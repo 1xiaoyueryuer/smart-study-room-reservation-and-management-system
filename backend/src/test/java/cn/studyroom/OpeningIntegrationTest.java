@@ -33,11 +33,12 @@ class OpeningIntegrationTest {
     @Autowired OpeningScheduleService opening;
     @Autowired ResourceService resources;
     @Autowired BookingService bookings;
+    @Autowired UsageService usage;
     @Autowired TransactionTemplate transactions;
     @Autowired Clock clock;
     long room,seat1,seat2,student,admin;
     String remote;
-    static final List<String> TABLES=List.of("seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users");
+    static final List<String> TABLES=List.of("usage_records","seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users");
     @BeforeEach void setup() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"));
         TABLES.forEach(t->db.update("DELETE FROM "+t));remote="s06-test-"+UUID.randomUUID();
@@ -109,6 +110,7 @@ class OpeningIntegrationTest {
     }
     @Test void inUseProtectsOnlyRemainingTimeAndExpiredPendingDoesNotBlockChanges() {
         long id=db.insert("INSERT INTO reservations(user_id,seat_id,res_date,start_time,end_time,status,checkin_at) VALUES(?,?,?,'08:00','10:00','checked_in',?)",student,seat1,java.sql.Date.valueOf(d(0)),java.sql.Timestamp.valueOf(LocalDate.now(clock).atTime(8,0)));
+        transactions.executeWithoutResult(tx->usage.start(id,LocalDate.now(clock).atTime(8,0),"legacy"));
         db.update("INSERT INTO reservations(user_id,seat_id,res_date,start_time,end_time,status) VALUES(?,?,?,'07:00','08:00','pending')",student,seat2,java.sql.Date.valueOf(d(0)));
         day(d(0),List.of(w("09:00","22:00"))); // 删除过去开放片段不终止正在使用。
         assertEquals(409,assertThrows(Api.Failure.class,()->day(d(0),List.of(w("09:30","22:00")))).status);
@@ -163,7 +165,7 @@ class OpeningIntegrationTest {
         long id=Store.id(created,"id");assertEquals(7,db.count("SELECT count(*) FROM opening_schedules WHERE room_id=?",id));
         assertEquals(List.of(new OpeningScheduleService.Window(480,1320)),opening.calendar(id).day(LocalDate.now(clock).plusDays(1),null).windows());
         TABLES.forEach(t->db.update("DELETE FROM "+t));
-        transactions.executeWithoutResult(tx->new SeedData(db,clock,true,opening).run(null));
-        assertEquals(3,db.count("SELECT count(*) FROM rooms"));assertEquals(21,db.count("SELECT count(*) FROM opening_schedules"));assertEquals(21,db.count("SELECT count(*) FROM opening_windows WHERE start_minute=480 AND end_minute=1320"));assertTrue(db.count("SELECT count(*) FROM reservations")>0);
+        transactions.executeWithoutResult(tx->new SeedData(db,clock,true,opening,usage).run(null));
+        assertEquals(3,db.count("SELECT count(*) FROM rooms"));assertEquals(21,db.count("SELECT count(*) FROM opening_schedules"));assertEquals(21,db.count("SELECT count(*) FROM opening_windows WHERE start_minute=480 AND end_minute=1320"));assertEquals(546,db.count("SELECT count(*) FROM reservations"));assertEquals(546,db.count("SELECT count(*) FROM usage_records WHERE origin='demo_seed' AND end_reason='demo_completed'"));assertEquals(0,db.count("SELECT count(*) FROM reservations WHERE checkin_at IS NOT NULL OR checkout_at IS NOT NULL"));
     }
 }

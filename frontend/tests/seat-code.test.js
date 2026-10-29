@@ -7,6 +7,7 @@ import { BrowserQRCodeReader } from '@zxing/browser'
 import { QRCodeWriter, BarcodeFormat } from '@zxing/library'
 import { createSeatScanner, scanFailure } from '../src/composables/seatScanner.js'
 const code='studyroom-seat:v1:'+'a'.repeat(43)
+const usage={id:12,checkin_at:'2026-10-30T08:00:00.125+08:00',ended_at:null,end_reason:null,settled_at:null,duration_seconds:0.125,observed_at:'2026-10-30T08:00:00.250+08:00',origin:'seat_code'}
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r});return{resolve,promise}}
 const tick=()=>new Promise(resolve=>setImmediate(resolve))
 function scanner(options={}) {
@@ -79,10 +80,10 @@ async function checkin(overrides={}) {
 }
 test('independent scan page loads own detail, submits original decoded code once and re-reads true state',async()=>{
   const pending=deferred();let submits=0
-  const page=await checkin({checkinReservation:async(id,text)=>{assert.equal(id,'7');assert.equal(text,code);submits++;await pending.promise}})
-  assert.ok(page.calls.some(call=>call[0]==='detail'))
+  const page=await checkin({getReservation:async id=>({data:{id,status:submits?'checked_in':'pending',allowed_actions:submits?[]:['checkin'],usage_record:submits?usage:null}}),checkinReservation:async(id,text)=>{assert.equal(id,'7');assert.equal(text,code);submits++;await pending.promise}})
+  assert.equal(page.reservation.value.status,'pending')
   const first=page.submitCode(code);await page.submitCode(code);assert.equal(submits,1)
-  pending.resolve();await first;assert.equal(page.success.value,true);assert.equal(page.calls.filter(call=>call[0]==='detail').length,2)
+  pending.resolve();await first;assert.equal(page.success.value,true);assert.equal(page.reservation.value.usage_record.checkin_at,usage.checkin_at)
   page.cleanup[0]();assert.equal(page.calls.at(-1)[0],'stop')
 })
 test('deadline conflict refreshes true no_show and network uncertainty requires deliberate retry',async()=>{
@@ -143,7 +144,20 @@ test('a prior reservation submission cannot mark another route as successful or 
 })
 test('network result uncertainty is resolved only by true checked-in detail, including a later explicit retry',async()=>{
   let reads=0
-  const page=await checkin({getReservation:async()=>{reads++;if(reads===2)throw new Error('查询断网');return{data:{status:reads===1?'pending':'checked_in',allowed_actions:reads===1?['checkin']:[]}}},checkinReservation:async()=>{throw{status:null}}})
+  const page=await checkin({getReservation:async()=>{reads++;if(reads===2)throw new Error('查询断网');return{data:{status:reads===1?'pending':'checked_in',usage_record:reads===1?null:usage,allowed_actions:reads===1?['checkin']:[]}}},checkinReservation:async()=>{throw{status:null}}})
   await page.submitCode(code);assert.match(page.scanError.value,/结果尚未确认/);assert.match(page.detailError.value,/查询断网/);assert.equal(page.success.value,false)
   await page.load();assert.equal(page.scanError.value,'');assert.match(page.scanNotice.value,/查询确认当前已签到，无需重试/);assert.equal(page.canCheckin.value,false);assert.equal(page.success.value,false)
+})
+
+test('successful checkin HTTP response alone cannot claim usage until true detail record is available',async()=>{
+  let reads=0
+  const page=await checkin({getReservation:async()=>{reads++;if(reads===2)throw new Error('详情查询失败');return{data:{status:reads===1?'pending':'checked_in',usage_record:reads>=4?usage:null,allowed_actions:reads===1?['checkin']:[]}}}})
+  await page.submitCode(code);assert.equal(page.success.value,false);assert.match(page.scanNotice.value,/使用记录尚未核对/)
+  await page.load();assert.equal(page.success.value,false);assert.match(page.scanNotice.value,/尚未查得可核对的使用记录/)
+  await page.load();assert.equal(page.success.value,true);assert.equal(page.reservation.value.usage_record.origin,'seat_code')
+})
+test('network unknown is not resolved from legacy top-level checkin timestamp without a usage record',async()=>{
+  let reads=0
+  const page=await checkin({getReservation:async()=>({data:{status:++reads===1?'pending':'checked_in',checkin_at:'2026-10-30T08:00:00',checkout_at:null,usage_record:null,allowed_actions:reads===1?['checkin']:[]}}),checkinReservation:async()=>{throw{status:null}}})
+  await page.submitCode(code);assert.equal(page.success.value,false);assert.match(page.scanError.value,/结果尚未确认/)
 })

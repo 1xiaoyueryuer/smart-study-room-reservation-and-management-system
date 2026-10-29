@@ -16,7 +16,8 @@ public class SeedData implements ApplicationRunner {
     private final Clock clock;
     private final boolean enabled;
     private final OpeningScheduleService opening;
-    public SeedData(Store db,Clock clock,@Value("${studyroom.seed:true}") boolean enabled,OpeningScheduleService opening) { this.db=db;this.clock=clock;this.enabled=enabled;this.opening=opening; }
+    private final UsageService usage;
+    public SeedData(Store db,Clock clock,@Value("${studyroom.seed:true}") boolean enabled,OpeningScheduleService opening,UsageService usage) { this.db=db;this.clock=clock;this.enabled=enabled;this.opening=opening;this.usage=usage; }
     @Override @Transactional public void run(ApplicationArguments args) {
         if(!enabled) return;db.lockBookings();if(db.count("SELECT count(*) FROM users")>0) return;
         var bcrypt=new BCryptPasswordEncoder();String studentHash=bcrypt.encode("123456");
@@ -33,8 +34,9 @@ public class SeedData implements ApplicationRunner {
                 if((row+col)%4==0) for(int d=1;d<=14;d++) {
                     LocalDate day=LocalDate.now(clock).minusDays(d);int hour=9+(row+col+d)%8;
                     long user=studentIds.get((row*col+d)%40);
-                    db.update("INSERT INTO reservations(user_id,seat_id,res_date,start_time,end_time,status,checkin_at,checkout_at) VALUES(?,?,?,CAST(? AS TIME),CAST(? AS TIME),'completed',?,?)",
-                            user,seat,Date.valueOf(day),Slot.format(hour*60),Slot.format((hour+1)*60),Timestamp.valueOf(day.atTime(hour,0)),Timestamp.valueOf(day.atTime(hour+1,0)));
+                    long reservation=db.insert("INSERT INTO reservations(user_id,seat_id,res_date,start_time,end_time,status,ended_at,termination_reason) VALUES(?,?,?,CAST(? AS TIME),CAST(? AS TIME),'completed',?,'demo_completed')",
+                            user,seat,Date.valueOf(day),Slot.format(hour*60),Slot.format((hour+1)*60),Timestamp.valueOf(day.atTime(hour+1,0)));
+                    usage.start(reservation,day.atTime(hour,0),"demo_seed");usage.finish(reservation,day.atTime(hour+1,0),day.atTime(hour+1,0),"demo_completed",LocalDateTime.now(clock));
                 }
             }
         }

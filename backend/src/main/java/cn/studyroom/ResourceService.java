@@ -9,7 +9,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ResourceService {
-    private static final String ACTIVE="('pending','checked_in','temp_leave')";
+    private static final String ACTIVE="('pending','checked_in')";
     private static final String ROOMS="SELECT r.*,(SELECT count(*) FROM seats s WHERE s.room_id=r.id) AS seat_count,(SELECT count(*) FROM seats s WHERE s.room_id=r.id AND s.status='available') AS capacity,CASE WHEN r.enabled THEN (SELECT count(*) FROM seats s WHERE s.room_id=r.id AND s.status='available') ELSE 0 END AS bookable_capacity FROM rooms r";
     private static final List<String> ROOM_FIELDS=List.of("name","building","floor","location","enabled","seat_rows","seat_cols","description","version","resource_reason");
     private static final List<String> SEAT_FIELDS=List.of("room_id","seat_no","row_no","col_no","zone","has_power","near_window","status","version","resource_reason");

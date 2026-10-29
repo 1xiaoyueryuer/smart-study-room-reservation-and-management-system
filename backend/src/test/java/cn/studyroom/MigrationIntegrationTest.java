@@ -55,7 +55,7 @@ class MigrationIntegrationTest {
     }
     @Test void emptyInstallationAndRepeatedStartup() throws Exception {
         var f=flyway(); DatabaseMigrations.migrate(f,false); DatabaseMigrations.migrate(f,false);
-        assertEquals(8,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(9,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".booking_mutex WHERE id=1"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".audit_events"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"));
@@ -73,7 +73,7 @@ class MigrationIntegrationTest {
         assertEquals(1,count("SELECT count(*) FROM "+schema+".seats WHERE version=1 AND resource_reason IS NULL"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".reservations WHERE user_id=1 AND seat_id=1 AND status='pending'"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"),"历史座位不能被伪造成已经配置真实贴码");
-        assertEquals(8,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(9,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE username='known-campus' AND campus_id='OLD-01' AND student_no='OLD-01'"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE type='BASELINE'"));
     }
@@ -100,6 +100,47 @@ class MigrationIntegrationTest {
         assertEquals(0,count("SELECT count(*) FROM information_schema.tables WHERE table_schema='"+schema+"' AND table_name='flyway_schema_history'"));
         assertEquals(0,count("SELECT count(*) FROM information_schema.schemata WHERE schema_name LIKE 'baseline_check_%'"));
     }
+    void usageBaseline() throws Exception {
+        legacy();var before=Flyway.configure().dataSource(source).defaultSchema(schema).schemas(schema).cleanDisabled(true).baselineOnMigrate(false).baselineVersion("1").target("8").locations("classpath:db/migration").load();DatabaseMigrations.migrate(before,true);
+    }
+    @Test void usageMigrationPreserves546HistoriesFractionalEarlyCheckinsReasonsAndTempCutover() throws Exception {
+        usageBaseline();execute("DELETE FROM "+schema+".reservations");
+        execute("INSERT INTO "+schema+".reservations(user_id,seat_id,res_date,start_time,end_time,status,checkin_at,checkout_at) SELECT 1,1,CURRENT_DATE-1-(i%14),TIME '10:00',TIME '11:00','completed',(CURRENT_DATE-1-(i%14))+TIME '09:59:59.5',(CURRENT_DATE-1-(i%14))+TIME '11:00:03.123456' FROM generate_series(1,546) i");
+        java.math.BigDecimal oldSeconds;try(var c=source.getConnection();var q=c.createStatement();var result=q.executeQuery("SELECT SUM(EXTRACT(epoch FROM LEAST(checkout_at,res_date+end_time)-checkin_at)) FROM "+schema+".reservations")) { result.next();oldSeconds=result.getBigDecimal(1); }
+        execute("INSERT INTO "+schema+".reservations(user_id,seat_id,res_date,start_time,end_time,status,checkin_at,leave_at) VALUES(1,1,(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')::date,'00:00','24:00','temp_leave',(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')-INTERVAL '1 hour',(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Shanghai')-INTERVAL '40 minutes'),(1,1,CURRENT_DATE-1,'23:00','24:00','temp_leave',(CURRENT_DATE-1)+TIME '23:00:00.123456',(CURRENT_DATE-1)+TIME '23:10')");
+        execute("UPDATE "+schema+".reservations SET termination_reason='temp_leave_timeout',ended_at=res_date+end_time WHERE id=(SELECT min(id) FROM "+schema+".reservations WHERE status='completed'); UPDATE "+schema+".reservations SET checkout_at=res_date+end_time WHERE termination_reason='temp_leave_timeout'");
+        DatabaseMigrations.migrate(flyway(),false);
+        assertEquals(548,count("SELECT count(*) FROM "+schema+".usage_records WHERE origin='legacy'"));
+        try(var c=source.getConnection();var q=c.createStatement();var result=q.executeQuery("SELECT SUM(EXTRACT(epoch FROM u.ended_at-u.checkin_at)) FROM "+schema+".usage_records u JOIN "+schema+".reservations r ON r.id=u.reservation_id WHERE r.legacy_status IS NULL")) { result.next();assertEquals(0,oldSeconds.compareTo(result.getBigDecimal(1))); }
+        assertEquals(545,count("SELECT count(*) FROM "+schema+".usage_records WHERE end_reason='legacy_unclassified'"));assertEquals(1,count("SELECT count(*) FROM "+schema+".usage_records WHERE end_reason='temp_leave_timeout' AND legacy_termination_reason='temp_leave_timeout'"));
+        assertEquals(1,count("SELECT count(*) FROM "+schema+".reservations r JOIN "+schema+".usage_records u ON u.reservation_id=r.id WHERE r.legacy_status='temp_leave' AND r.status='checked_in' AND u.ended_at IS NULL AND r.leave_at IS NOT NULL"));
+        assertEquals(1,count("SELECT count(*) FROM "+schema+".reservations r JOIN "+schema+".usage_records u ON u.reservation_id=r.id WHERE r.legacy_status='temp_leave' AND r.status='completed' AND u.ended_at=r.res_date+r.end_time AND u.end_reason='auto_end' AND u.checkin_at=r.checkin_at AND r.checkout_at IS NULL"));
+        assertEquals(0,count("SELECT count(*) FROM "+schema+".violations"));assertEquals(0,count("SELECT count(*) FROM "+schema+".credit_logs"));
+    }
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.ValueSource(strings={"completed_missing_time","active_missing_checkin","active_has_checkout","checkout_without_checkin","state_time_conflict","checkout_before_checkin","checkin_not_before_scheduled_end","active_future_checkin","active_has_termination","ended_checkout_conflict","unknown_termination_reason"})
+    void inconsistentHistoricalUsageRejectsMigrationWithoutChangingFacts(String problem) throws Exception {
+        usageBaseline();execute("UPDATE "+schema+".reservations SET res_date=CURRENT_DATE-1,start_time='10:00',end_time='11:00',status='completed',checkin_at=(CURRENT_DATE-1)+TIME '10:00',checkout_at=(CURRENT_DATE-1)+TIME '11:00'");
+        String change=switch(problem) {
+            case "completed_missing_time" -> "checkin_at=NULL,checkout_at=NULL";
+            case "active_missing_checkin" -> "status='checked_in',checkin_at=NULL,checkout_at=NULL";
+            case "active_has_checkout" -> "status='checked_in'";
+            case "checkout_without_checkin" -> "status='pending',checkin_at=NULL";
+            case "state_time_conflict" -> "status='cancelled'";
+            case "checkout_before_checkin" -> "checkout_at=(CURRENT_DATE-1)+TIME '09:59'";
+            case "checkin_not_before_scheduled_end" -> "checkin_at=(CURRENT_DATE-1)+TIME '11:00',checkout_at=(CURRENT_DATE-1)+TIME '12:00'";
+            case "active_future_checkin" -> "status='checked_in',res_date=CURRENT_DATE+1,checkin_at=(CURRENT_DATE+1)+TIME '10:00',checkout_at=NULL";
+            case "active_has_termination" -> "status='checked_in',checkout_at=NULL,ended_at=(CURRENT_DATE-1)+TIME '11:00'";
+            case "ended_checkout_conflict" -> "ended_at=(CURRENT_DATE-1)+TIME '10:59'";
+            case "unknown_termination_reason" -> "termination_reason='unconfirmed_reason'";
+            default -> throw new AssertionError(problem);
+        };
+        execute("UPDATE "+schema+".reservations SET "+change);
+        String raw;try(var c=source.getConnection();var q=c.createStatement();var result=q.executeQuery("SELECT row_to_json(r)::text FROM "+schema+".reservations r")) { result.next();raw=result.getString(1); }
+        var failure=assertThrows(FlywayException.class,()->DatabaseMigrations.migrate(flyway(),false));assertTrue(failure.getMessage().contains(problem));
+        assertEquals(0,count("SELECT count(*) FROM information_schema.tables WHERE table_schema='"+schema+"' AND table_name='usage_records'"));assertEquals(8,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        try(var c=source.getConnection();var q=c.createStatement();var result=q.executeQuery("SELECT row_to_json(r)::text FROM "+schema+".reservations r")) { result.next();assertEquals(raw,result.getString(1)); }
+    }
     @Test void failedMigrationIsDiagnosticAndTransactional() throws Exception {
         var f=flyway(); DatabaseMigrations.migrate(f,false);
         Files.writeString(scripts.resolve("V9999__broken.sql"),"CREATE TABLE rollback_probe(id bigint); INSERT INTO missing_table VALUES(1);");
@@ -107,6 +148,6 @@ class MigrationIntegrationTest {
         var error=assertThrows(FlywayException.class,()->DatabaseMigrations.migrate(broken,false));
         assertTrue(error.getMessage().contains("V9999__broken.sql"));
         assertEquals(0,count("SELECT count(*) FROM information_schema.tables WHERE table_schema='"+schema+"' AND table_name='rollback_probe'"));
-        assertEquals(8,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(9,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
     }
 }

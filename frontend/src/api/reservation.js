@@ -21,14 +21,6 @@ export function checkinReservation(id, seatCode) {
   return request.post(`/reservations/${id}/checkin`, { seat_code: seatCode }, { silent: true })
 }
 
-export function leaveReservation(id) {
-  return request.post(`/reservations/${id}/leave`)
-}
-
-export function returnReservation(id) {
-  return request.post(`/reservations/${id}/return`)
-}
-
 export function checkoutReservation(id) {
   return request.post(`/reservations/${id}/checkout`)
 }

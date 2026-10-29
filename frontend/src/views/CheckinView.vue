@@ -4,8 +4,9 @@ import { getReservation, checkinReservation } from '../api/reservation'
 import { createSeatScanner } from '../composables/seatScanner.js'
 import SButton from '../components/ui/SButton.vue'
 import SBanner from '../components/ui/SBanner.vue'
+import UsageRecordSummary from '../components/UsageRecordSummary.vue'
 const props = defineProps({ id: { type: [String, Number], required: true } })
-const reservation = ref(null), loading = ref(false), detailError = ref(''), scanError = ref(''), scanNotice = ref(''), uncertainResult = ref(false), success = ref(false), submitting = ref(false), decoding = ref(false), cameraActive = ref(false), video = ref(null)
+const reservation = ref(null), loading = ref(false), detailError = ref(''), scanError = ref(''), scanNotice = ref(''), uncertainResult = ref(false), accepted = ref(false), success = ref(false), submitting = ref(false), decoding = ref(false), cameraActive = ref(false), video = ref(null)
 const canCheckin = computed(() => !loading.value && !detailError.value && reservation.value?.allowed_actions?.includes('checkin'))
 let loadSequence = 0, reservationScope = 0, disposed = false
 const scanner = createSeatScanner({ onCode: submitCode, onError: text => { scanError.value = text }, onCamera: active => { cameraActive.value = active } })
@@ -17,12 +18,22 @@ async function load() {
     const result = await getReservation(reservationId)
     if (ticket === loadSequence && scope === reservationScope && !disposed) {
       reservation.value = result.data
-      if (uncertainResult.value && reservation.value?.status === 'checked_in') {
-        scanError.value = ''; scanNotice.value = '原签到请求未收到确认；查询确认当前已签到，无需重试。'; uncertainResult.value = false
+      const usageConfirmed = ['checked_in', 'completed'].includes(reservation.value?.status) && !!reservation.value?.usage_record?.checkin_at
+      if (uncertainResult.value && usageConfirmed) {
+        scanError.value = ''; scanNotice.value = reservation.value.status === 'completed' ? '原签到请求未收到确认；查询确认已登记签到并结束使用，无需重试。' : '原签到请求未收到确认；查询确认当前已签到，无需重试。'; uncertainResult.value = false
+      }
+      if (accepted.value) {
+        success.value = usageConfirmed
+        scanNotice.value = usageConfirmed ? '' : '签到请求已接收，尚未查得可核对的使用记录，请刷新核对。'
       }
     }
   }
-  catch (error) { if (ticket === loadSequence && scope === reservationScope && !disposed) detailError.value = error.message }
+  catch (error) {
+    if (ticket === loadSequence && scope === reservationScope && !disposed) {
+      detailError.value = error.message
+      if (accepted.value && !success.value) scanNotice.value = '签到请求已接收，最新状态和使用记录尚未核对，请重试查询。'
+    }
+  }
   finally { if (ticket === loadSequence && scope === reservationScope && !disposed) loading.value = false }
 }
 async function submitCode(code) {
@@ -30,10 +41,10 @@ async function submitCode(code) {
   const reservationId = props.id, scope = reservationScope
   const current = () => !disposed && scope === reservationScope && reservationId === props.id
   let uncertain = false
-  submitting.value = true; scanError.value = ''; scanNotice.value = ''; uncertainResult.value = false
+  submitting.value = true; success.value = false; accepted.value = false; scanError.value = ''; scanNotice.value = ''; uncertainResult.value = false
   try {
     await checkinReservation(reservationId, code)
-    if (current()) success.value = true
+    if (current()) accepted.value = true
   } catch (error) {
     if (!current()) return
     uncertain = error.status == null; uncertainResult.value = uncertain
@@ -62,7 +73,7 @@ async function startCamera() {
   await scanner.camera(video.value)
 }
 function refresh() { scanner.stop(); return load() }
-watch(() => props.id, () => { reservationScope++; uncertainResult.value = false; scanner.stop(); submitting.value = false; decoding.value = false; reservation.value = null; scanError.value = ''; scanNotice.value = ''; success.value = false; void load() }, { immediate: true })
+watch(() => props.id, () => { reservationScope++; uncertainResult.value = false; accepted.value = false; scanner.stop(); submitting.value = false; decoding.value = false; reservation.value = null; scanError.value = ''; scanNotice.value = ''; success.value = false; void load() }, { immediate: true })
 onBeforeUnmount(() => { disposed = true; loadSequence++; scanner.stop() })
 </script>
 <template>
@@ -72,9 +83,9 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; scanner.stop() })
       <div class="card-title-row"><h3>预约信息</h3><SButton :disabled="submitting || decoding" :loading="loading" @click="refresh">刷新预约</SButton></div>
       <p v-if="loading" role="status">正在核对本人预约及签到权限…</p>
       <SBanner v-if="detailError" type="error" :title="detailError"><SButton :disabled="submitting || decoding" @click="refresh">重试查询</SButton></SBanner>
-      <template v-if="reservation && !loading && !detailError"><p>{{ reservation.room_name }} · {{ reservation.seat_no }} · {{ reservation.res_date }} {{ reservation.start_time }}—{{ reservation.end_time }}</p><p v-if="!canCheckin && !success" role="status">当前预约不可签到（{{ reservation.status === 'unused_ended' ? '未使用结束' : reservation.status === 'checked_in' ? '已签到' : '请以我的预约当前操作为准' }}）。<RouterLink to="/mine">返回我的预约</RouterLink></p></template>
-      <SBanner v-if="success" type="success" title="签到已成功，请查看刷新后的预约状态。"><RouterLink to="/mine">返回我的预约</RouterLink></SBanner>
-      <SBanner v-if="scanNotice" type="success" :title="scanNotice" />
+      <template v-if="reservation && !loading && !detailError"><p>{{ reservation.room_name }} · {{ reservation.seat_no }} · {{ reservation.res_date }} {{ reservation.start_time }}—{{ reservation.end_time }}</p><p v-if="!canCheckin && !success" role="status">当前预约不可签到（{{ reservation.status === 'unused_ended' ? '未使用结束' : reservation.status === 'checked_in' ? '使用中' : reservation.status === 'completed' ? '已结束' : '请以我的预约当前操作为准' }}）。<RouterLink to="/mine">返回我的预约</RouterLink></p><UsageRecordSummary :record="reservation.usage_record" /></template>
+      <SBanner v-if="success" type="success" title="签到及使用记录已确认，请查看当前预约状态。"><RouterLink to="/mine">返回我的预约</RouterLink></SBanner>
+      <SBanner v-if="scanNotice" type="info" :title="scanNotice" />
       <SBanner v-if="scanError" type="error" :title="scanError" />
       <div class="scan-controls">
         <label class="upload-label">上传座位码图片<input type="file" accept="image/png,image/jpeg,image/webp" :disabled="!canCheckin || submitting || decoding || cameraActive" @change="upload" /></label>

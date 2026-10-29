@@ -147,3 +147,38 @@ test('deferred violation panel stays uninitialized rather than claiming zero bef
   assert.equal(page.loading.value,false)
   assert.equal(page.items.value.length,0)
 })
+
+test('only current checkout action is available and confirmation prevents duplicate early checkout before real refresh',async()=>{
+  let release
+  const page=await mine({confirmDialog:text=>{assert.match(text,/释放剩余时段/);assert.match(text,/不新增信用奖惩/);return new Promise(resolve=>{release=resolve})},listMyReservations:async()=>({data:[{id:10,status:'completed',termination_reason:'early_checkout',allowed_actions:[],usage_record:{id:1,checkin_at:'2026-10-30T08:00:00',ended_at:'2026-10-30T08:01:00.5',duration_seconds:60.5,origin:'seat_code'}}]})})
+  assert.deepEqual(Array.from(page.actionsOf({allowed_actions:['leave','return','checkout']}),action=>action.key),['checkout'])
+  const attempt=page.doAction({id:10,status:'checked_in',allowed_actions:['checkout']},'checkout')
+  await page.doAction({id:10,status:'checked_in',allowed_actions:['checkout']},'checkout')
+  release();await attempt
+  assert.equal(page.calls.filter(item=>item==='checkout').length,1)
+  assert.equal(page.list.value[0].usage_record.duration_seconds,60.5)
+  assert.equal(page.actionsOf(page.list.value[0]).length,0)
+})
+test('auto-end conflict explains committed end and displays re-read usage; failed reload never claims fresh usage',async()=>{
+  const page=await mine({checkoutReservation:async()=>{throw{status:409,details:{status:'completed'},message:'已到期'}},listMyReservations:async()=>({data:[{id:10,status:'completed',allowed_actions:[],usage_record:{duration_seconds:3600.125,end_reason:'auto_end'}}]})})
+  await page.doAction({id:10,allowed_actions:['checkout']},'checkout')
+  assert.match(page.actionError.value,/预约已结束/);assert.equal(page.list.value[0].usage_record.end_reason,'auto_end')
+  const failed=await mine({listMyReservations:async()=>{throw new Error('使用记录刷新失败')}})
+  await failed.doAction({id:10,allowed_actions:['checkout']},'checkout');assert.equal(failed.error.value,'使用记录刷新失败')
+})
+test('late usage list response cannot restore earlier running duration after final settlement',async()=>{
+  const pending=[]
+  const page=await mine({listMyReservations:()=>new Promise(resolve=>pending.push(resolve))})
+  const old=page.refreshAll(),latest=page.refreshAll()
+  pending[1]({data:[{id:10,status:'completed',allowed_actions:[],usage_record:{duration_seconds:3600.125,end_reason:'auto_end'}}]});await latest
+  pending[0]({data:[{id:10,status:'checked_in',allowed_actions:['checkout'],usage_record:{duration_seconds:120.25,ended_at:null}}]});await old
+  assert.equal(page.list.value[0].usage_record.duration_seconds,3600.125);assert.equal(page.list.value[0].status,'completed')
+})
+test('current UI removes temporary leave navigation and adapters while retaining explicit historical explanation',async()=>{
+  const mineSource=await readFile(new URL('../src/views/MyReservationsView.vue',import.meta.url),'utf8')
+  assert.doesNotMatch(mineSource,/key: 'temp_leave'|leave:\{key|return:\{key|leaveReservation|returnReservation|临离开/)
+  assert.match(mineSource,/UsageRecordSummary :record="row.usage_record"/)
+  assert.match(mineSource,/历史暂离登记/);assert.match(mineSource,/已结束/)
+  const api=await readFile(new URL('../src/api/reservation.js',import.meta.url),'utf8');assert.doesNotMatch(api,/leaveReservation|returnReservation/)
+  const home=await readFile(new URL('../src/views/HomeView.vue',import.meta.url),'utf8');assert.doesNotMatch(home,/临时离开/)
+})
