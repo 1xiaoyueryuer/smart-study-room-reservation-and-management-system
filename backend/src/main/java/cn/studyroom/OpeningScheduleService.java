@@ -30,6 +30,27 @@ public class OpeningScheduleService {
         Calendar(Map<String,Object> room,List<Map<String,Object>> seats,List<Schedule> schedules,List<Map<String,Object>> blocks) { this.room=room;this.seats=seats;this.schedules=schedules;this.blocks=blocks; }
         Calendar withRoom(Map<String,Object> candidate) { return new Calendar(candidate,seats,schedules,blocks); }
         Calendar withSeat(Map<String,Object> candidate) { return new Calendar(room,seats.stream().map(seat->Store.id(seat,"id")==Store.id(candidate,"id")?candidate:seat).toList(),schedules,blocks); }
+        /** 仅空间级开放；候选来自同day语义，整段临停跳至并集终点，不设预约日期/天数上限。 */
+        public LocalDateTime nextOpening(LocalDateTime from) {
+            if(!Boolean.TRUE.equals(room.get("enabled")))return null;var base=new Calendar(room,seats,schedules,List.of());var roomBlocks=blocks.stream().filter(block->block.get("seat_id")==null).sorted(Comparator.comparing(block->LocalDateTime.parse(Store.text(block,"start_at")))).toList();var cursor=from;
+            while(true) {
+                LocalDate date=cursor.toLocalDate(),candidateDate=null;
+                for(var schedule:schedules) {
+                    if(schedule.windows().isEmpty())continue;LocalDate next;
+                    if(schedule.date()!=null) {next=schedule.date();if(next.isBefore(date))continue;}
+                    else {int delta=Math.floorMod(schedule.weekday()-date.getDayOfWeek().getValue(),7);next=date.plusDays(delta);}
+                    if(candidateDate==null||next.isBefore(candidateDate))candidateDate=next;
+                }
+                if(candidateDate==null)return null;LocalDateTime candidate=null;
+                for(var window:base.day(candidateDate,null).windows()) {var start=candidateDate.atStartOfDay().plusMinutes(window.startMinute());var end=candidateDate.atStartOfDay().plusMinutes(window.endMinute());if(!end.isAfter(cursor))continue;candidate=start.isBefore(cursor)?cursor:start;break;}
+                if(candidate==null) {if(candidateDate.equals(LocalDate.MAX))return null;cursor=candidateDate.plusDays(1).atStartOfDay();continue;}
+                LocalDateTime jump=null;
+                for(var block:roomBlocks) {var start=LocalDateTime.parse(Store.text(block,"start_at"));var end=LocalDateTime.parse(Store.text(block,"end_at"));if(jump==null) {if(!start.isAfter(candidate)&&end.isAfter(candidate))jump=end;}else {if(start.isAfter(jump))break;if(end.isAfter(jump))jump=end;}}
+                if(jump!=null){cursor=jump;continue;}
+                boolean legal=false;for(var window:day(candidate.toLocalDate(),null).windows())if(!candidate.isBefore(candidate.toLocalDate().atStartOfDay().plusMinutes(window.startMinute()))&&candidate.isBefore(candidate.toLocalDate().atStartOfDay().plusMinutes(window.endMinute())))legal=true;
+                if(!legal)throw new IllegalStateException("下次开放候选与唯一开放日历不一致，请核查安排");return candidate;
+            }
+        }
         public Day day(LocalDate date,Long seatId) {
             var reasons=new LinkedHashSet<String>();
             if(!Boolean.TRUE.equals(room.get("enabled"))) return new Day(List.of(),List.of(nonblank(room.get("resource_reason"),"空间已停用")));

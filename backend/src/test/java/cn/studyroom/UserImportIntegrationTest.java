@@ -33,7 +33,7 @@ class UserImportIntegrationTest {
     static final String VALID=HEADER+"I-01,import_student,导入模拟学生,student,,student@example.edu\r\nI-02,import_staff,导入模拟教职工,staff,+86 123,staff@example.edu\r\n";
     @BeforeEach void fixture() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"));
-        for(String table:List.of("notifications","reminders","complaint_attachments","complaint_events","complaints","resource_change_operations","usage_records","seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("notifications","complaint_target_events","complaint_targets","reminders","complaint_attachments","complaint_events","complaints","resource_change_operations","usage_records","seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         ids=new LinkedHashMap<>();remote="s04-test-"+UUID.randomUUID();
         String hash=new BCryptPasswordEncoder().encode(PASSWORD);
         for(String role:List.of("student","staff","admin")) ids.put(role,db.insert("INSERT INTO users(username,password_hash,real_name,campus_id,role) VALUES(?,?,?,?,?)","s04_"+role,hash,"S04模拟"+role,"S04-"+role,role));

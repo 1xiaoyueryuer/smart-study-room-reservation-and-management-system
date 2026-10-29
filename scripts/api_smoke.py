@@ -105,6 +105,8 @@ def main():
     service_req = {'type':'service','description':'API工程模拟：无预约的一般服务投诉','attachment_ids':[],'operation_id':str(uuid.uuid4())}
     status, service = call('POST','/complaints',service_req,student)
     check('一般服务投诉可无预约或图片',status == 200 and service['data']['reservation_id'] is None and service['data']['attachment_count'] == 0)
+    service_target = service['data']['service_target']
+    check('一般服务首次反馈目标从提交起算24小时',service_target['kind'] == 'first_feedback' and service_target['basis'] == 'service_24h' and service_target['status'] == 'running' and datetime.fromisoformat(service_target['due_at']) - datetime.fromisoformat(service['data']['submitted_at']) == timedelta(hours=24))
     service_id = service['data']['id']
     check('普通用户不能读管理投诉',call('GET',f'/admin/complaints/{service_id}',token=student)[0] == 403)
     status, managed = call('GET',f'/admin/complaints/{service_id}',token=admin)
@@ -112,6 +114,7 @@ def main():
     acceptance = {'version':managed['data']['version'],'operation_id':str(uuid.uuid4())}
     status, accepted = call('POST',f'/admin/complaints/{service_id}/accept',acceptance,admin)
     check('受理只转处理中并保留处理人',status == 200 and accepted['data']['complaint']['status'] == 'processing' and accepted['data']['complaint']['handler'] is not None)
+    check('受理不能冒充一般服务首次正式反馈',accepted['data']['complaint']['service_target']['status'] == 'running' and accepted['data']['complaint']['service_target']['due_at'] == service_target['due_at'])
     status, accepted_again = call('POST',f'/admin/complaints/{service_id}/accept',acceptance,admin)
     check('受理原操作重试不重复',status == 200 and accepted_again['data']['replayed'] is True)
     verification = {'version':accepted['data']['complaint']['version'],'operation_id':str(uuid.uuid4()),'outcome':'service_verified','occurred_at':datetime.now(timezone(timedelta(hours=8))).isoformat(timespec='microseconds'),'public_note':'API工程模拟：服务情况已核实，尚待后续反馈','private_note':'API_PRIVATE_VERIFICATION_TEST_ONLY','facts_confirmed':True}
@@ -129,6 +132,8 @@ def main():
     status, feedback = call('POST',f'/admin/complaints/{service_id}/feedback',feedback_req,admin)
     check('正式反馈转待确认并给出七天',status == 200 and feedback['data']['complaint']['status'] == 'awaiting_confirmation')
     first_feedback = feedback['data']['complaint']['current_feedback']
+    first_target = feedback['data']['complaint']['service_target']
+    check('首个正式反馈停止服务目标且保留原截止',first_target['status'] == 'completed' and first_target['completed_at'] == first_feedback['feedback_at'] and first_target['due_at'] == service_target['due_at'] and first_target['remaining_seconds'] is None)
     check('确认期从本次反馈精确起算7乘24小时',datetime.fromisoformat(first_feedback['deadline']) - datetime.fromisoformat(first_feedback['feedback_at']) == timedelta(days=7))
     objection = {'version':feedback['data']['complaint']['version'],'operation_id':str(uuid.uuid4()),'description':'API工程模拟：补充异议，要求继续核查'}
     check('他人不能替本人提交异议',call('POST',f'/complaints/{service_id}/object',objection,other)[0] == 403)
@@ -137,6 +142,7 @@ def main():
     status, feedback_again = call('POST',f'/admin/complaints/{service_id}/feedback',{**feedback_req,'version':objected['data']['complaint']['version'],'operation_id':str(uuid.uuid4()),'result':'API工程模拟：继续核查后的新反馈'},admin)
     check('再次反馈生成新一轮并保留旧反馈',status == 200 and feedback_again['data']['complaint']['current_feedback']['id'] != first_feedback['id'])
     latest_feedback = feedback_again['data']['complaint']['current_feedback']
+    check('异议后新反馈不重启首次反馈目标',feedback_again['data']['complaint']['service_target']['completed_at'] == first_target['completed_at'] and feedback_again['data']['complaint']['service_target']['due_at'] == first_target['due_at'])
     check('新一轮仍按本次反馈起算七天',datetime.fromisoformat(latest_feedback['deadline']) - datetime.fromisoformat(latest_feedback['feedback_at']) == timedelta(days=7))
     confirmation = {'version':feedback_again['data']['complaint']['version'],'operation_id':str(uuid.uuid4())}
     status, confirmed = call('POST',f'/complaints/{service_id}/confirm',confirmation,student)
@@ -148,6 +154,7 @@ def main():
     retract_id = retractable['data']['id']
     status, withdrawn = call('POST',f'/complaints/{retract_id}/withdraw',{'version':retractable['data']['version'],'operation_id':str(uuid.uuid4())},student)
     check('本人仅撤回尚未受理记录',status == 200 and withdrawn['data']['complaint']['status'] == 'withdrawn')
+    check('撤回停止目标但不伪造完成',withdrawn['data']['complaint']['service_target']['status'] == 'withdrawn' and withdrawn['data']['complaint']['service_target']['completed_at'] is None and withdrawn['data']['complaint']['service_target']['stopped_at'] is not None)
     status, body = call('GET','/credit',token=student)
     check('只读历史信用及流水',status == 200 and body['data']['history_only'] is True and 'score' in body['data'] and isinstance(body['data']['logs'],list))
     status, body = call('GET','/notifications',token=student)

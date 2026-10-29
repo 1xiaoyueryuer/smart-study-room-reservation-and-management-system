@@ -7,7 +7,7 @@ import { complaintPayload, validateEvidenceFile, positiveId, complaintTypes, com
 const tick=()=>new Promise(resolve=>setImmediate(resolve))
 async function script(file,mocks,exports,extra={}) {
   const context=vm.createContext({defineExpose(){},...extra}),source=(await readFile(new URL(file,import.meta.url),'utf8')).split('<script setup>')[1].split('</script>')[0],module=new vm.SourceTextModule(source+`\nexport {${exports}}`,{context})
-  await module.link(specifier=>{const values=mocks[specifier]||(specifier.endsWith('.vue')?{default:{}}:null);assert.ok(values,specifier);return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})});await module.evaluate();return module.namespace
+  await module.link(specifier=>{const values=mocks[specifier]||(specifier.endsWith('useServiceTargetClock.js')?{useServiceTargetClock:()=>({progress:()=>null})}:specifier.endsWith('.vue')?{default:{}}:null);assert.ok(values,specifier);return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})});await module.evaluate();return module.namespace
 }
 const meta={id:'00000000-0000-4000-8000-000000000001',display_name:'material-test.png',content_type:'image/png',size_bytes:100,width:10,height:10,sha256:'testhash',created_at:'2026-10-30T12:00+08:00',expires_at:'2026-10-31T12:00+08:00'}
 const detail=body=>({id:77,operation_id:body.operation_id,type:body.type,status:'submitted',description:body.description,reservation_id:body.reservation_id||null,room_id:body.room_id||null,context_snapshot:null,submitted_at:'2026-10-30T12:00+08:00',attachment_count:body.attachment_ids.length,attachments:body.attachment_ids.map(id=>({...meta,id,expires_at:null})),events:[{id:1,type:'submitted',created_at:'2026-10-30T12:00+08:00',source:'user_submit'}]})
@@ -98,7 +98,7 @@ test('successful receipt omitting a chosen photo stays unknown instead of claimi
 })
 test('own list distinguishes not-yet-read, failed and verified empty responses',async()=>{
   let fail=true
-  const page=await script('../src/views/ComplaintsView.vue',{vue:{ref,onMounted(){},onBeforeUnmount(){}},'vue-router':{useRoute:()=>({query:{}})},'../api/complaint':{listMyComplaints:async()=>{if(fail)throw new Error('本人列表失败');return{data:[]}}},'../composables/complaintForm.js':{complaintTypes,complaintStatuses}},'load,items,loaded,loading,error')
+  const page=await script('../src/views/ComplaintsView.vue',{vue:{ref,computed,onMounted(){},onBeforeUnmount(){}},'vue-router':{useRoute:()=>({query:{}})},'../api/complaint':{listMyComplaints:async()=>{if(fail)throw new Error('本人列表失败');return{data:[]}}},'../composables/complaintForm.js':{complaintTypes,complaintStatuses}},'load,items,loaded,loading,error')
   assert.equal(page.loaded.value,false);await page.load();assert.equal(page.loaded.value,false);assert.match(page.error.value,/列表失败/)
   fail=false;await page.load();assert.equal(page.loaded.value,true);assert.equal(page.items.value.length,0);assert.equal(page.error.value,'')
 })

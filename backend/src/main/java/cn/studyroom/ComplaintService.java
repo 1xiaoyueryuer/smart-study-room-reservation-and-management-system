@@ -15,8 +15,8 @@ import org.springframework.transaction.annotation.*;
 @Service
 public class ComplaintService {
     private static final String BASIC="SELECT c.id,c.operation_id,c.type,c.status,c.description,c.reservation_id,c.room_id,c.context_snapshot,c.submitted_at,c.version,c.accepted_at,(SELECT COALESCE(NULLIF(h.real_name,''),h.username) FROM users h WHERE h.id=c.handler_id) AS handler_name,count(a.id) AS attachment_count FROM complaints c LEFT JOIN complaint_attachments a ON a.complaint_id=c.id ";
-    private final Store db;private final AttachmentService attachments;private final AuditService audit;private final ObjectMapper json;private final Validator validator;private final Clock clock;private final ComplaintPhaseProjection phases;
-    public ComplaintService(Store db,AttachmentService attachments,AuditService audit,ObjectMapper json,Validator validator,Clock clock,ComplaintPhaseProjection phases) { this.db=db;this.attachments=attachments;this.audit=audit;this.json=json;this.validator=validator;this.clock=clock;this.phases=phases; }
+    private final Store db;private final AttachmentService attachments;private final AuditService audit;private final ObjectMapper json;private final Validator validator;private final Clock clock;private final ComplaintPhaseProjection phases;private final ComplaintTargetService targets;
+    public ComplaintService(Store db,AttachmentService attachments,AuditService audit,ObjectMapper json,Validator validator,Clock clock,ComplaintPhaseProjection phases,ComplaintTargetService targets) { this.db=db;this.attachments=attachments;this.audit=audit;this.json=json;this.validator=validator;this.clock=clock;this.phases=phases;this.targets=targets; }
     @Transactional
     public Map<String,Object> create(long actor,Requests.Complaint request) {
         db.lockBookings();attachments.requireOrdinary(actor);Api.require(request!=null,400,"投诉内容必填");String operation=AttachmentService.uuid(request.operationId(),"operation_id");var existing=db.list("SELECT id,user_id,request_hash FROM complaints WHERE operation_id=CAST(? AS UUID)",operation);
@@ -25,8 +25,9 @@ public class ComplaintService {
         if(!existing.isEmpty()) { var saved=existing.get(0);Api.require(Store.id(saved,"user_id")==actor&&intent.equals(saved.get("request_hash")),409,"操作标识已用于其他内容，不能修改原投诉请求");var result=detailInternal(Store.id(saved,"id"));result.put("replayed",true);return result; }
         Map<String,Object> context=context(actor,normalized);Long room=context==null?null:Store.id(context,"room_id");var now=LocalDateTime.ofInstant(clock.instant(),BookingPolicy.CAMPUS_ZONE).truncatedTo(ChronoUnit.MICROS);
         long id=db.insert("INSERT INTO complaints(user_id,operation_id,request_hash,type,status,description,reservation_id,room_id,context_snapshot,submitted_at) VALUES(?,CAST(? AS UUID),?,?,'submitted',?,?,?,CAST(? AS JSONB),?)",actor,operation,intent,normalized.type(),normalized.description(),normalized.reservationId(),room,context==null?null:write(context),java.sql.Timestamp.valueOf(now));
+        var targetSnapshot=targets.initialize(id,normalized.type(),room,now);
         db.update("INSERT INTO complaint_events(complaint_id,actor_id,event_type,source,created_at) VALUES(?,?,'submitted','user_submit',?)",id,actor,java.sql.Timestamp.valueOf(now));attachments.bind(actor,id,normalized.attachmentIds(),now);
-        var evidence=new LinkedHashMap<String,Object>();evidence.put("complaint_id",id);evidence.put("type",normalized.type());evidence.put("status","submitted");evidence.put("reservation_id",normalized.reservationId());evidence.put("room_id",room);evidence.put("attachment_count",normalized.attachmentIds().size());evidence.put("submitted_at",now.toString());
+        var evidence=new LinkedHashMap<String,Object>();evidence.put("complaint_id",id);evidence.put("type",normalized.type());evidence.put("status","submitted");evidence.put("reservation_id",normalized.reservationId());evidence.put("room_id",room);evidence.put("attachment_count",normalized.attachmentIds().size());evidence.put("submitted_at",now.toString());evidence.put("service_target",targetSnapshot);
         audit.record(actor,"complaint.submit","complaint",Long.toString(id),"用户提交求助投诉，当前待受理且内容尚未核实",Map.of(),evidence);var result=detailInternal(id);result.put("replayed",false);return result;
     }
     @Transactional(readOnly=true)

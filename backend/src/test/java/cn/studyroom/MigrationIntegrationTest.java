@@ -55,7 +55,7 @@ class MigrationIntegrationTest {
     }
     @Test void emptyInstallationAndRepeatedStartup() throws Exception {
         var f=flyway(); DatabaseMigrations.migrate(f,false); DatabaseMigrations.migrate(f,false);
-        assertEquals(13,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(14,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".booking_mutex WHERE id=1"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".audit_events"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"));
@@ -73,7 +73,7 @@ class MigrationIntegrationTest {
         assertEquals(1,count("SELECT count(*) FROM "+schema+".seats WHERE version=1 AND resource_reason IS NULL"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".reservations WHERE user_id=1 AND seat_id=1 AND status='pending'"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"),"历史座位不能被伪造成已经配置真实贴码");
-        assertEquals(13,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(14,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE username='known-campus' AND campus_id='OLD-01' AND student_no='OLD-01'"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE type='BASELINE'"));
     }
@@ -167,6 +167,22 @@ class MigrationIntegrationTest {
         else sql="INSERT INTO "+schema+".complaint_events(complaint_id,actor_id,event_type,source,created_at,operation_id,request_hash,feedback_result,feedback_basis,feedback_deadline) VALUES(1,"+(problem.equals("manual_actor_null")?"NULL":"1")+",'feedback','admin_self_report',TIMESTAMP '2026-10-29 10:00','99999999-9999-4999-8999-999999999999','intent',"+(problem.equals("result_null")?"NULL":"'result'")+","+(problem.equals("basis_null")?"NULL":"'basis'")+","+(problem.equals("deadline_null")?"NULL":"TIMESTAMP '2026-11-05 10:00'")+")";
         String statement=sql;assertThrows(SQLException.class,()->execute(statement));
     }
+    @Test void handlingTargetUpgradeDerivesOnlyKnownServiceDeadlineAndPreservesOldLifecycleFacts() throws Exception {
+        var previous=Flyway.configure().dataSource(source).defaultSchema(schema).schemas(schema).cleanDisabled(true).baselineOnMigrate(false).target("13").locations("classpath:db/migration").load();DatabaseMigrations.migrate(previous,false);
+        execute("INSERT INTO "+schema+".users(username,password_hash,role) VALUES('admin','hash','admin'),('owner','hash','student'); INSERT INTO "+schema+".rooms(name,seat_rows,seat_cols) VALUES('legacy room',1,1); INSERT INTO "+schema+".seats(room_id,seat_no,row_no,col_no) VALUES(1,'legacy',1,1); INSERT INTO "+schema+".reservations(user_id,seat_id,res_date,start_time,end_time,status) VALUES(2,1,'2026-10-01','10:00','11:00','cancelled')");
+        execute("INSERT INTO "+schema+".complaints(user_id,operation_id,request_hash,type,status,description,reservation_id,room_id,submitted_at,handler_id,accepted_at) VALUES(2,'a1111111-1111-4111-8111-111111111111','intent','service','processing','active legacy service',NULL,NULL,'2026-10-01 09:00',1,'2026-10-01 09:01'),(2,'a2222222-2222-4222-8222-222222222222','intent','service','closed','late completed legacy service',NULL,NULL,'2026-10-01 09:00',1,'2026-10-01 09:01'),(2,'a3333333-3333-4333-8333-333333333333','intent','occupation','submitted','unknown original opening',1,1,'2026-10-01 09:00',NULL,NULL),(2,'a4444444-4444-4444-8444-444444444444','intent','occupation','processing','accepted unknown opening',1,1,'2026-10-01 09:00',1,'2026-10-01 09:01'),(2,'a5555555-5555-4555-8555-555555555555','intent','service','withdrawn','withdrawn service',NULL,NULL,'2026-10-01 09:00',NULL,NULL)");
+        execute("INSERT INTO "+schema+".complaint_events(complaint_id,actor_id,event_type,source,created_at) SELECT id,2,'submitted','user_submit',submitted_at FROM "+schema+".complaints ORDER BY id; INSERT INTO "+schema+".complaint_events(complaint_id,actor_id,event_type,source,created_at,operation_id,request_hash,feedback_result,feedback_basis,feedback_deadline) VALUES(2,1,'feedback','admin_self_report','2026-10-03 09:00','b1111111-1111-4111-8111-111111111111','intent','old real result','old public basis','2026-10-10 09:00'); INSERT INTO "+schema+".complaint_events(complaint_id,actor_id,event_type,source,created_at,operation_id,request_hash,related_feedback_id) VALUES(2,2,'confirmed','user_submit','2026-10-03 09:01','b2222222-2222-4222-8222-222222222222','intent',6); INSERT INTO "+schema+".complaint_events(complaint_id,actor_id,event_type,source,created_at,operation_id,request_hash) VALUES(5,2,'withdrawn','user_submit','2026-10-02 09:00','b3333333-3333-4333-8333-333333333333','intent')");
+        String old;try(var c=source.getConnection();var q=c.createStatement();var r=q.executeQuery("SELECT jsonb_build_object('complaints',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM "+schema+".complaints c),'events',(SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM "+schema+".complaint_events e))::text")){r.next();old=r.getString(1);}
+        DatabaseMigrations.migrate(flyway(),false);assertEquals(3,count("SELECT count(*) FROM "+schema+".complaint_targets WHERE kind='first_feedback' AND anchor_at=TIMESTAMP '2026-10-01 09:00' AND due_at=TIMESTAMP '2026-10-02 09:00' AND basis='legacy_service_derived' AND source='legacy_derived' AND room_version IS NULL"));assertEquals(2,count("SELECT count(*) FROM "+schema+".complaint_targets WHERE kind='acceptance' AND calculation_status='legacy_unresolved' AND due_at IS NULL AND anchor_at IS NULL AND room_version IS NULL"));assertEquals(0,count("SELECT count(*) FROM "+schema+".complaint_target_events"));assertEquals(0,count("SELECT count(*) FROM "+schema+".audit_events"));
+        try(var c=source.getConnection();var q=c.createStatement();var r=q.executeQuery("SELECT jsonb_build_object('complaints',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM "+schema+".complaints c),'events',(SELECT jsonb_agg(to_jsonb(e) ORDER BY id) FROM "+schema+".complaint_events e))::text")){r.next();assertEquals(old,r.getString(1));}
+    }
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"anchor_null","due_null","pending_has_due","source_mismatch","basis_null","occupation_room_null","event_wrong_due","event_wrong_source","event_detected_early","unknown_target_event"})
+    void handlingTargetConstraintsRejectUnknownAndContradictoryDeadlineFacts(String problem) throws Exception {
+        DatabaseMigrations.migrate(flyway(),false);execute("INSERT INTO "+schema+".users(username,password_hash) VALUES('owner','hash'); INSERT INTO "+schema+".complaints(user_id,operation_id,request_hash,type,status,description,submitted_at) VALUES(1,'c1111111-1111-4111-8111-111111111111','intent','service','submitted','target simulation','2026-10-29 09:00')");
+        boolean event=problem.startsWith("event_")||problem.equals("unknown_target_event"),pending=problem.equals("pending_has_due")||problem.equals("unknown_target_event"),occupation=pending||problem.equals("occupation_room_null");String kind=occupation?"acceptance":"first_feedback",status=pending?"pending":"calculated",anchor=problem.equals("anchor_null")||pending?"NULL":"TIMESTAMP '2026-10-29 09:00'",due=problem.equals("due_null")||problem.equals("unknown_target_event")?"NULL":occupation?"TIMESTAMP '2026-10-29 09:15'":"TIMESTAMP '2026-10-30 09:00'",version=occupation&&!problem.equals("occupation_room_null")?"1":"NULL",basis=problem.equals("basis_null")?"NULL":pending?"'next_room_opening'":occupation?"'open_at_submission'":"'service_24h'",origin=problem.equals("source_mismatch")?"legacy_derived":"new_submission";
+        String insert="INSERT INTO "+schema+".complaint_targets(complaint_id,kind,calculation_status,anchor_at,due_at,reason,room_version,calculated_at,basis,source) VALUES(1,'"+kind+"','"+status+"',"+anchor+","+due+",'safe reason',"+version+",TIMESTAMP '2026-10-29 09:00',"+basis+",'"+origin+"')";
+        if(!event)assertThrows(SQLException.class,()->execute(insert));else{execute(insert);String occurred=problem.equals("event_wrong_due")?"2026-10-30 09:01":"2026-10-30 09:00",detected=problem.equals("event_detected_early")?"2026-10-30 08:59":"2026-10-30 10:00",sourceName=problem.equals("event_wrong_source")?"legacy_derived":"new_submission";assertThrows(SQLException.class,()->execute("INSERT INTO "+schema+".complaint_target_events(complaint_id,occurred_at,detected_at,source) VALUES(1,TIMESTAMP '"+occurred+"',TIMESTAMP '"+detected+"','"+sourceName+"')"));}
+    }
     @Test void failedMigrationIsDiagnosticAndTransactional() throws Exception {
         var f=flyway(); DatabaseMigrations.migrate(f,false);
         Files.writeString(scripts.resolve("V9999__broken.sql"),"CREATE TABLE rollback_probe(id bigint); INSERT INTO missing_table VALUES(1);");
@@ -174,6 +190,6 @@ class MigrationIntegrationTest {
         var error=assertThrows(FlywayException.class,()->DatabaseMigrations.migrate(broken,false));
         assertTrue(error.getMessage().contains("V9999__broken.sql"));
         assertEquals(0,count("SELECT count(*) FROM information_schema.tables WHERE table_schema='"+schema+"' AND table_name='rollback_probe'"));
-        assertEquals(13,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(14,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
     }
 }

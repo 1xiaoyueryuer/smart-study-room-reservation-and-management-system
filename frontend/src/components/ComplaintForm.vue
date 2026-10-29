@@ -16,6 +16,7 @@ const type=ref('service'), description=ref(''), useReservation=ref(false), reser
 const rooms=ref([]), choices=ref([]), roomsError=ref(''), choicesError=ref(''), contextError=ref(''), contextLoading=ref(false), roomsLoading=ref(false), choicesLoading=ref(false)
 const items=ref([]), uploading=ref(false), submitting=ref(false), uncertain=ref(false), error=ref(''), receipt=ref(null), record=ref(null), reading=ref(false), readError=ref('')
 const locked=computed(()=>submitting.value || uncertain.value || !!receipt.value)
+defineExpose({targetReadBlocked:computed(()=>submitting.value||uncertain.value||reading.value||uploading.value)})
 const typeOptions=Object.entries(complaintTypes).map(([value,label])=>({value,label}))
 const roomOptions=computed(()=>[{value:null,label:'不关联空间'},...rooms.value.map(room=>({value:room.id,label:`${room.name} · ${room.building || '楼栋未登记'} · ${room.floor || '楼层未登记'}`}))])
 const reservationOptions=computed(()=>{

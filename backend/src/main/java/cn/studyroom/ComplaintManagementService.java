@@ -15,8 +15,8 @@ import org.springframework.transaction.annotation.*;
 public class ComplaintManagementService {
     private static final Set<String> OUTCOMES=Set.of("cooperated","identity_pending","unsubstantiated","verified_refusal","service_verified");
     private static final String REMINDER_NOTE="管理员记录已配合纠正并给予提醒，本记录不计违规";
-    private final Store db;private final AuthService auth;private final ComplaintService complaints;private final AttachmentService attachments;private final OpeningScheduleService opening;private final UsageService usage;private final AuditService audit;private final ObjectMapper json;private final Clock clock;private final ComplaintPhaseProjection phases;
-    public ComplaintManagementService(Store db,AuthService auth,ComplaintService complaints,AttachmentService attachments,OpeningScheduleService opening,UsageService usage,AuditService audit,ObjectMapper json,Clock clock,ComplaintPhaseProjection phases) { this.db=db;this.auth=auth;this.complaints=complaints;this.attachments=attachments;this.opening=opening;this.usage=usage;this.audit=audit;this.json=json;this.clock=clock;this.phases=phases; }
+    private final Store db;private final AuthService auth;private final ComplaintService complaints;private final AttachmentService attachments;private final OpeningScheduleService opening;private final UsageService usage;private final AuditService audit;private final ObjectMapper json;private final Clock clock;private final ComplaintPhaseProjection phases;private final ComplaintTargetService targets;
+    public ComplaintManagementService(Store db,AuthService auth,ComplaintService complaints,AttachmentService attachments,OpeningScheduleService opening,UsageService usage,AuditService audit,ObjectMapper json,Clock clock,ComplaintPhaseProjection phases,ComplaintTargetService targets) { this.db=db;this.auth=auth;this.complaints=complaints;this.attachments=attachments;this.opening=opening;this.usage=usage;this.audit=audit;this.json=json;this.clock=clock;this.phases=phases;this.targets=targets; }
     @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
     public List<Map<String,Object>> list(long actor,String status,String type,Long room) {
         return listAt(actor,status,type,room,now());
@@ -34,7 +34,7 @@ public class ComplaintManagementService {
     @Transactional
     public Map<String,Object> accept(long actor,long id,Requests.ComplaintAccept request) {
         db.lockBookings();requireAdmin(actor);Api.require(request!=null,400,"受理参数必填");String operation=AttachmentService.uuid(request.operationId(),"operation_id");var intent=new TreeMap<String,Object>();intent.put("version",request.version());String hash=hash(actor,id,"accepted",intent);var replay=replay(actor,id,"accepted",operation,hash);if(replay!=null) return replay;
-        var complaint=required(id);version(complaint,request.version());Api.require("submitted".equals(complaint.get("status")),409,"仅待受理投诉可受理，受理不代表核实或解决");var now=now();
+        var complaint=required(id);version(complaint,request.version());Api.require("submitted".equals(complaint.get("status")),409,"仅待受理投诉可受理，受理不代表核实或解决");var now=now();targets.recordOne(id,now);
         db.update("UPDATE complaints SET status='processing',handler_id=?,accepted_at=?,version=version+1 WHERE id=?",actor,Timestamp.valueOf(now),id);
         long event=db.insert("INSERT INTO complaint_events(complaint_id,actor_id,event_type,source,created_at,operation_id,request_hash,public_note) VALUES(?,?,'accepted','admin_self_report',?,CAST(? AS UUID),?,?)",id,actor,Timestamp.valueOf(now),operation,hash,"管理员已受理，正在核查；受理不代表核实或解决");
         audit.record(actor,"complaint.accept","complaint",Long.toString(id),"管理员受理投诉，尚未核实或解决",Map.of("status","submitted","version",request.version()),Map.of("status","processing","handler_id",actor,"event_id",event,"version",request.version()+1));return receipt(id,event,operation,false,now);

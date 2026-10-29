@@ -14,24 +14,24 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ComplaintWorkflowService {
     public record ActionResult(int status,String message,Map<String,Object> data,Object details) {}
-    private final Store db;private final AuthService auth;private final AttachmentService attachments;private final ComplaintService complaints;private final ComplaintManagementService management;private final AuditService audit;private final ObjectMapper json;private final Clock clock;
-    public ComplaintWorkflowService(Store db,AuthService auth,AttachmentService attachments,ComplaintService complaints,ComplaintManagementService management,AuditService audit,ObjectMapper json,Clock clock) {this.db=db;this.auth=auth;this.attachments=attachments;this.complaints=complaints;this.management=management;this.audit=audit;this.json=json;this.clock=clock;}
+    private final Store db;private final AuthService auth;private final AttachmentService attachments;private final ComplaintService complaints;private final ComplaintManagementService management;private final AuditService audit;private final ObjectMapper json;private final Clock clock;private final ComplaintTargetService targets;
+    public ComplaintWorkflowService(Store db,AuthService auth,AttachmentService attachments,ComplaintService complaints,ComplaintManagementService management,AuditService audit,ObjectMapper json,Clock clock,ComplaintTargetService targets) {this.db=db;this.auth=auth;this.attachments=attachments;this.complaints=complaints;this.management=management;this.audit=audit;this.json=json;this.clock=clock;this.targets=targets;}
     @Transactional
-    public List<Map<String,Object>> mine(long actor) {db.lockBookings();attachments.requireOrdinary(actor);var now=now();reconcile("c.user_id=?",List.of(actor),now);return complaints.mineAt(actor,now);}
+    public List<Map<String,Object>> mine(long actor) {db.lockBookings();attachments.requireOrdinary(actor);var now=now();targets.recordScope("c.user_id=?",List.of(actor),now);reconcile("c.user_id=?",List.of(actor),now);return complaints.mineAt(actor,now);}
     @Transactional
-    public Map<String,Object> detail(long actor,long id) {db.lockBookings();owned(actor,id);var now=now();reconcile("c.id=?",List.of(id),now);return complaints.detailAt(actor,id,now);}
+    public Map<String,Object> detail(long actor,long id) {db.lockBookings();owned(actor,id);var now=now();targets.recordOne(id,now);reconcile("c.id=?",List.of(id),now);return complaints.detailAt(actor,id,now);}
     @Transactional
     public List<Map<String,Object>> managementList(long actor,String status,String type,Long room) {
-        db.lockBookings();requireAdmin(actor);ComplaintManagementService.validateFilters(status,type,room);var where=new StringBuilder("1=1");var args=new ArrayList<Object>();if(type!=null){where.append(" AND c.type=?");args.add(type);}if(room!=null){where.append(" AND c.room_id=?");args.add(room);}var now=now();reconcile(where.toString(),args,now);return management.listAt(actor,status,type,room,now);
+        db.lockBookings();requireAdmin(actor);ComplaintManagementService.validateFilters(status,type,room);var where=new StringBuilder("1=1");var args=new ArrayList<Object>();if(type!=null){where.append(" AND c.type=?");args.add(type);}if(room!=null){where.append(" AND c.room_id=?");args.add(room);}var now=now();targets.recordScope(where.toString(),args,now);reconcile(where.toString(),args,now);return management.listAt(actor,status,type,room,now);
     }
     @Transactional
-    public Map<String,Object> managementDetail(long actor,long id) {db.lockBookings();requireAdmin(actor);required(id);var now=now();reconcile("c.id=?",List.of(id),now);return management.detailAt(actor,id,now);}
+    public Map<String,Object> managementDetail(long actor,long id) {db.lockBookings();requireAdmin(actor);required(id);var now=now();targets.recordOne(id,now);reconcile("c.id=?",List.of(id),now);return management.detailAt(actor,id,now);}
     @Transactional
     public Map<String,Object> feedback(long actor,long id,Requests.ComplaintFeedback request) {
         db.lockBookings();requireAdmin(actor);Api.require(request!=null,400,"反馈参数必填");String operation=AttachmentService.uuid(request.operationId(),"operation_id");var saved=operation(operation);String result,basis;
         try {result=text(request.result(),2000,"处理结果");basis=text(request.basis(),2000,"反馈依据");}catch(Api.Failure failure){if(saved!=null)throw Api.fail(409,"操作标识已用于其他内容，请按原请求重试");throw failure;}
         var intent=new TreeMap<String,Object>();intent.put("version",request.version());intent.put("result",result);intent.put("basis",basis);String hash=hash(actor,id,"feedback",intent);var now=now();var replay=replay(saved,actor,id,"feedback",operation,hash,true,now);if(replay!=null)return replay;
-        var before=required(id);version(before,request.version());Api.require("processing".equals(before.get("status")),409,"仅处理中投诉可发送正式反馈，请刷新当前阶段");var deadline=now.plusDays(7);
+        var before=required(id);version(before,request.version());Api.require("processing".equals(before.get("status")),409,"仅处理中投诉可发送正式反馈，请刷新当前阶段");targets.recordOne(id,now);var deadline=now.plusDays(7);
         long event=db.insert("INSERT INTO complaint_events(complaint_id,actor_id,event_type,source,created_at,operation_id,request_hash,feedback_result,feedback_basis,feedback_deadline,public_note) VALUES(?,?,'feedback','admin_self_report',?,CAST(? AS UUID),?,?,?,?,?)",id,actor,Timestamp.valueOf(now),operation,hash,result,basis,Timestamp.valueOf(deadline),"管理员已发送处理结果及依据，请在确认期内确认或提出异议");
         db.update("UPDATE complaints SET status='awaiting_confirmation',version=version+1 WHERE id=?",id);notifyOwner(before,"complaint_feedback","投诉处理结果已反馈","请查看处理结果及依据，确认截止为"+deadline.atZone(BookingPolicy.CAMPUS_ZONE).toOffsetDateTime()+"；截止前可确认或提出异议。",now);
         audit.record(actor,"complaint.feedback","complaint",Long.toString(id),"管理员正式反馈并开始固定七天确认期",snapshot(before),Map.of("status","awaiting_confirmation","version",request.version()+1,"event_id",event,"feedback_deadline",deadline.toString()));return receipt(id,event,operation,false,true,actor,now);
@@ -47,6 +47,7 @@ public class ComplaintWorkflowService {
         version(before,request.version());Long related=null;String status;
         if(action.equals("withdraw")) {Api.require("submitted".equals(before.get("status")),409,"仅待受理投诉可撤回");status="withdrawn";}
         else {Api.require("awaiting_confirmation".equals(before.get("status")),409,"当前投诉不处于待确认阶段，请刷新记录");var feedback=latest(id);related=Store.id(feedback,"id");status=action.equals("confirm")?"closed":"processing";}
+        if(action.equals("withdraw"))targets.recordOne(id,now);
         long event=db.insert("INSERT INTO complaint_events(complaint_id,actor_id,event_type,source,created_at,operation_id,request_hash,related_feedback_id,response_note,public_note) VALUES(?,?,?,'user_submit',?,CAST(? AS UUID),?,?,?,?)",id,actor,type,Timestamp.valueOf(now),operation,hash,related,description,action.equals("withdraw")?"投诉人撤回待受理投诉":action.equals("confirm")?"投诉人已确认本次反馈并结案":"投诉人提出异议，继续核查");
         db.update("UPDATE complaints SET status=?,version=version+1 WHERE id=?",status,id);audit.record(actor,"complaint."+action,"complaint",Long.toString(id),action.equals("withdraw")?"本人撤回未受理投诉":action.equals("confirm")?"本人在确认期内确认反馈":"本人在确认期内提出异议继续核查",snapshot(before),Map.of("status",status,"version",request.version()+1,"event_id",event));return new ActionResult(200,"ok",receipt(id,event,operation,false,false,actor,now),null);
     }
