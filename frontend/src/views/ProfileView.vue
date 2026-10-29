@@ -10,6 +10,7 @@ import { useAuthStore } from '../stores/auth'
 import { getCreditOverview } from '../api/credit'
 import SEmpty from '../components/ui/SEmpty.vue'
 import RemindersPanel from '../components/RemindersPanel.vue'
+import RestrictionsPanel from '../components/RestrictionsPanel.vue'
 import ViolationsPanel from '../components/ViolationsPanel.vue'
 import SBanner from '../components/ui/SBanner.vue'
 
@@ -124,15 +125,14 @@ const { page, pages, pageItems } = usePagination(creditLogs, null)
         <SBanner v-else-if="creditError" type="error" :title="creditError"><SButton size="sm" @click="loadCredit">重试历史查询</SButton></SBanner>
         <template v-else-if="overview">
           <p class="score-num">{{ overview.score }}</p><p class="muted">历史信用分仅作溯源，不再新增奖惩或触发低分限制；预约资格由服务端复核，不能由分数推断。</p>
-          <SBanner v-if="overview.legacy_ban_active === true" type="warning" :title="`旧限制仍有效至 ${overview.legacy_banned_until || overview.banned_until}（校园时区Asia/Shanghai），按原截止保留，不新增或延长`" />
-          <p v-else-if="overview.legacy_banned_until || overview.banned_until" class="muted">历史限制截止记录：{{ overview.legacy_banned_until || overview.banned_until }}（Asia/Shanghai）；此处保留原依据。</p>
+          <p v-if="overview.legacy_banned_until || overview.banned_until" class="muted">历史限制截止记录：{{ overview.legacy_banned_until || overview.banned_until }}（Asia/Shanghai）；这里只保留历史值，当前是否受限请查看预约限制与当前资格。</p>
           <p v-else class="muted">无旧限制截止记录；这不代表其他预约条件已经满足。</p>
         </template>
       </section>
     </div>
 
     <div v-if="auth.isOrdinary" class="split-right">
-      <ViolationsPanel /><RemindersPanel />
+      <RestrictionsPanel /><ViolationsPanel /><RemindersPanel />
       <section class="card">
         <div class="card-title-row">
           <h3>历史信用流水（只读）</h3>

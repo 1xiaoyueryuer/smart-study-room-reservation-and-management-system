@@ -34,7 +34,7 @@ public class ApiController {
     @GetMapping("/booking-policy") Object bookingPolicy() { return ok(policy.view()); }
     @GetMapping("/rooms") Object rooms() { return ok(resources.rooms()); }
     @GetMapping("/rooms/{id}/seats") Object seats(@PathVariable long id,@RequestParam String date,@RequestParam String start,@RequestParam String end) { return ok(resources.seatMap(id,date,start,end)); }
-    @PostMapping("/reservations") Object create(HttpServletRequest req,@Valid @RequestBody Requests.Reservation body) { return ok(bookings.create(uid(req),body)); }
+    @PostMapping("/reservations") Object create(HttpServletRequest req,@Valid @RequestBody Requests.Reservation body) { return actionResponse(bookings.createForClient(uid(req),body)); }
     @PostMapping("/reservations/auto") Object allocate(HttpServletRequest req,@Valid @RequestBody Requests.Allocation body) { return ok(bookings.allocate(uid(req),body)); }
     @GetMapping("/reservations/mine") Object mine(HttpServletRequest req) { return ok(bookings.mine(uid(req))); }
     @GetMapping("/reservations/{id}") Object detail(HttpServletRequest req,@PathVariable long id) { return ok(bookings.detail(uid(req),id)); }

@@ -109,12 +109,12 @@ test('violation failure is separate from empty data and can recover through actu
   assert.match(source,/尚未读取本人独立违规记录/)
   assert.match(source,/尚无已登记的独立违规记录/)
 })
-test('historical credit display follows server legacy ban flag and removes new reward or score-based eligibility promises',async()=>{
+test('historical credit remains read-only while independent restriction eligibility replaces its legacy flag as the current source',async()=>{
   for(const file of ['ProfileView','HomeView','LoginView','MyReservationsView']){
     const source=await readFile(new URL(`../src/views/${file}.vue`,import.meta.url),'utf8')
     assert.doesNotMatch(source,/履约加分|违约扣分|低于 60|可正常预约|按期履约 \+1|不足 30 分钟的取消将扣除/)
     if(file==='ProfileView'){
-      assert.match(source,/overview\.legacy_ban_active === true/)
+      assert.doesNotMatch(source,/overview\.legacy_ban_active === true/);assert.match(source,/<RestrictionsPanel/)
       assert.match(source,/历史信用资料（只读）/)
       assert.doesNotMatch(source,/new Date\(until\)|scoreColor/)
     }

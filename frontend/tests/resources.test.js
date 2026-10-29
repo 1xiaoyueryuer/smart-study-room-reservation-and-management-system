@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { readFile } from 'node:fs/promises'
 import {  validateSlot, minuteValue, minuteText, serverStartMinute } from '../src/composables/bookingPolicy.js'
+import { bookingRestrictionDetails } from '../src/composables/restrictionForm.js'
 import { windowKey, validateWindowSlot, queryRequiredMinutes, shortfallText } from '../src/composables/availabilitySelection.js'
 import { operationReason } from '../src/components/admin/userForm.js'
 import { ref, computed } from 'vue'
@@ -104,6 +105,7 @@ async function booking() {
     '../components/ui/feedback': { message: { info() {}, warning() {}, success() {} }, confirmDialog: async () => {} },
     '../api/room': { getRooms: async () => ({ data: [] }), getSeatMap: async () => ({ data: { room: room(), seats: [seat()] } }) },
     '../api/availability': {getAvailability:async()=>({data:{}})},
+    '../composables/restrictionForm.js':{bookingRestrictionDetails},
     '../composables/availabilitySelection.js':{windowKey,validateWindowSlot,queryRequiredMinutes,shortfallText},
     '../api/reservation': { createReservation: async () => { calls.push('create') }, getBookingPolicy: async () => ({data:{}}) },
     '../composables/bookingPolicy.js': {validateSlot,minuteValue,minuteText,serverStartMinute}

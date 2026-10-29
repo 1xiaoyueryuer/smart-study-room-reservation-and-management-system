@@ -52,6 +52,11 @@ def main():
     room = body['data'][0]['id']
     status, policy = call('GET', '/booking-policy', token=student)
     check('校园日期政策与分钟规则', status == 200 and policy['data']['campus_zone'] == 'Asia/Shanghai' and policy['data']['min_duration_minutes'] == 30 and len(policy['data']['dates']) == 3)
+    status, eligibility = call('GET', '/booking-eligibility', token=student)
+    check('本人资格读取服务端独立限制集合',status == 200 and isinstance(eligibility['data']['can_book'],bool) and isinstance(eligibility['data']['active_restrictions'],list) and eligibility['data']['campus_zone'] == 'Asia/Shanghai')
+    status, restrictions = call('GET', '/restrictions/mine', token=student)
+    check('本人独立限制历史不公开管理私有核实依据',status == 200 and isinstance(restrictions['data'],list) and all(not any(key in item for key in ('verification_note','release_verification_note','subject')) for item in restrictions['data']))
+    check('普通用户不能读取全校限制管理',call('GET','/admin/restrictions',token=student)[0] == 403)
     date = policy['data']['dates'][1]
     status, available = call('GET',f'/availability?room_id={room}&date={date}&strategy=earliest',token=student)
     check('最早连续空档与图列表共享结果',status == 200 and available['data']['strategy'] == 'earliest' and isinstance(available['data']['results'],list) and all('available_windows' in seat for seat in available['data']['seats']))

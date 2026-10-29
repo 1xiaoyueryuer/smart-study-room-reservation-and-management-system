@@ -235,7 +235,7 @@ const cardToneClass = {
           <li>开始前取消不登记新违规；开始后未签到主动放弃会登记一次未使用违约</li>
           <li>到开始后15分钟仍未签到，系统结束预约、释放余时并登记一次未签到违约</li>
           <li>按服务端校园日期选择今天至后天，预约至少<b>30分钟</b>，使用分钟起止</li>
-          <li>历史信用只读，不再新增奖惩或低分触发；已有旧限制由服务端按原截止核对</li>
+          <li>历史信用只读，不再新增奖惩或低分触发；预约资格由服务端按独立限制统一核对</li>
         </ul>
         <ul v-else class="tips tips-list">
           <li>定期检查自习室开放时间与座位规模是否准确</li>
@@ -275,7 +275,7 @@ const cardToneClass = {
           </div>
           <div class="intro-cell">
             <div class="intro-label">独立违规记录</div>
-            <div class="intro-text">本人查询自动或核实登记的违规明细及有效性；历史信用流水另行只读保留，不按分数换算违规。</div>
+            <div class="intro-text">本人查看独立预约限制、当前资格及违规明细；历史信用流水另行只读保留，不按分数换算违规。</div>
           </div>
         </div>
         <div v-else class="intro-grid">

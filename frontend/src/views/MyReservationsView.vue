@@ -34,7 +34,7 @@ const statusMeta = {
   violation: { text:'旧违约状态（历史）', type:'info' }
 }
 const sourceMeta = { manual: '手动选座', auto: '历史智能分配', waitlist: '历史候补递补' }
-const terminationLabels = {user_cancelled:'开始前本人取消',abandon:'开始后主动放弃',no_show:'到签到期限仍未签到',legacy_violation:'历史违约状态，仅作溯源，未转为新独立违规',early_checkout:'提前签退',auto_end:'到期自动结束',legacy_unclassified:'历史结束，具体方式未记录',demo_completed:'演示模拟结束',temp_leave_timeout:'旧暂离流程结束（历史）',admin_resource_change:'资源管理取消（不记用户违约）'}
+const terminationLabels = {user_cancelled:'开始前本人取消',abandon:'开始后主动放弃',no_show:'到签到期限仍未签到',legacy_violation:'历史违约状态，仅作溯源，未转为新独立违规',early_checkout:'提前签退',auto_end:'到期自动结束',legacy_unclassified:'历史结束，具体方式未记录',demo_completed:'演示模拟结束',temp_leave_timeout:'旧暂离流程结束（历史）',admin_resource_change:'资源管理取消（不记用户违约）',admin_restriction:'预约限制管理取消（不记用户违约）'}
 
 async function load() {
   const sequence = ++loadSequence
@@ -210,7 +210,7 @@ const { page, pages, pageItems } = usePagination(filtered, filterStatus)
                       {{ statusMeta[row.status]?.text || row.status }}
                     </STag>
                     <div class="termination-detail">{{ terminationLabels[row.termination_reason] || row.termination_reason || '—' }}</div>
-                    <div v-if="row.termination_reason === 'admin_resource_change' && row.termination_note" class="termination-detail">当次公开管理原因：{{ row.termination_note }}</div>
+                    <div v-if="['admin_resource_change','admin_restriction'].includes(row.termination_reason) && row.termination_note" class="termination-detail">当次公开管理原因：{{ row.termination_note }}</div>
                     <div v-if="row.ended_at" class="termination-detail">结束：{{ row.ended_at }}（校园时间）</div>
                     <div v-if="row.legacy_status" class="termination-detail">历史原状态：{{ row.legacy_status === 'temp_leave' ? '暂离（已退出该流程）' : row.legacy_status }}</div>
                   </td>

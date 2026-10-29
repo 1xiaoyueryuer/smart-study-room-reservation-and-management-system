@@ -9,6 +9,8 @@ import { getRooms } from '../api/room'
 import { createReservation, getBookingPolicy } from '../api/reservation'
 import { getAvailability } from '../api/availability'
 import { windowKey, validateWindowSlot, queryRequiredMinutes, shortfallText } from '../composables/availabilitySelection.js'
+import { bookingRestrictionDetails } from '../composables/restrictionForm.js'
+import RestrictionRecord from '../components/RestrictionRecord.vue'
 import AppIcon from '../components/AppIcon.vue'
 import SButton from '../components/ui/SButton.vue'
 import SSelect from '../components/ui/SSelect.vue'
@@ -32,7 +34,7 @@ const shortfall = computed(() => shortfallText(availability.value?.required_minu
 const date = ref(''), start = ref(''), end = ref('')
 const selectedWindow = ref(null), results = ref([]), availability = ref(null), presentation = ref('map')
 let alive = true, policyRequest = 0, roomsRequest = 0
-const policy = ref(null), policyLoading = ref(false), policyError = ref(''), inputError = ref(''), bookingError = ref('')
+const policy = ref(null), policyLoading = ref(false), policyError = ref(''), inputError = ref(''), bookingError = ref(''), restrictionFailure = ref(null)
 const dateOptions = computed(() => (policy.value?.dates || []).map(value => ({ value, label:value })))
 const duration = computed(() => { try { return minuteValue(end.value,true) - minuteValue(start.value) } catch { return null } })
 async function loadPolicy(initialize = false) {
@@ -254,7 +256,7 @@ async function confirmBooking() {
   if (selectedWindow.value.seat_id !== selectedSeat.id || selectedWindow.value.room_id !== room.value.id) { bookingError.value = '所选座位与空档不一致，请重新选择'; return }
   const attempt = {room_id:room.value.id, seat_id:selectedSeat.id, date:date.value, start_time:start.value, end_time:end.value, room_name:room.value.name, seat_no:selectedSeat.seat_no, window:{...selectedWindow.value}, computed_at:availability.value?.computed_at, strategy:availability.value?.strategy, required_minutes:availability.value?.required_minutes}
   submitting.value = true
-  bookingError.value = ''
+  bookingError.value = ''; restrictionFailure.value = null
   try {
     try {
       const minutes = validateWindowSlot(policy.value,attempt.date,attempt.start_time,attempt.end_time,attempt.window)
@@ -273,6 +275,7 @@ async function confirmBooking() {
     explorer.value?.close()
   } catch (failure) {
     if (!alive) return
+    restrictionFailure.value = bookingRestrictionDetails(failure)
     bookingError.value = failure.status === 409 ? `${failure.message}。本次未完成预约；正在按原日期和空间刷新连续空档，请重新核对。` : failure.message
     if (currentQueryMatches(attempt)) await loadAvailability(true)
   } finally { if (alive) submitting.value = false }
@@ -446,7 +449,7 @@ onMounted(async () => { if (await loadPolicy(true)) await loadRooms() })
       </section>
 
       <!-- 已选座位操作条（随页面滚动，未选座位时为提示态，提交按钮禁用） -->
-      <SBanner v-if="bookingError" type="error" :title="bookingError" />
+      <SBanner v-if="bookingError" type="error" :title="bookingError" /><section v-if="restrictionFailure" class="card"><h4>服务端确认当前预约限制</h4><p>核对时刻：{{restrictionFailure.server_now}}（{{restrictionFailure.campus_zone}}）；以下为本次拒绝时仍有效的独立记录。解除一条不代表其他记录也已解除。</p><RestrictionRecord v-for="record in restrictionFailure.active_restrictions" :key="record.id" :record="record" /><RouterLink to="/profile#restrictions">查看本人限制与当前资格</RouterLink></section>
       <section class="card selected-card" :class="{ 'selected-card--empty': !selected }">
         <div class="sel-info">
           <div class="sel-icon"><AppIcon name="seat" :size="25" /></div>
@@ -473,7 +476,7 @@ onMounted(async () => { if (await loadPolicy(true)) await loadRooms() })
     </div>
   </div>
 
-  <SeatExplorer v-if="show3D" ref="explorer" :origin="seatCard" :room="room" :seats="seats" :selected-id="selected?.id" :selected-window="selectedWindow" :date="date" :start="start" :end="end" :loading="loading" :submitting="submitting" :submit-error="bookingError || policyError" :policy-ready="!!policy && !policyLoading && !queryDirty" :strategy-label="strategyLabel" :required-minutes="availability?.required_minutes" :shortfall="shortfall" @select="onSeatClick" @select-window="chooseWindow" @update:start="changeActualTime('start',$event)" @update:end="changeActualTime('end',$event)" @submit="confirmBooking" @closed="show3D = false" />
+  <SeatExplorer v-if="show3D" ref="explorer" :origin="seatCard" :room="room" :seats="seats" :selected-id="selected?.id" :selected-window="selectedWindow" :date="date" :start="start" :end="end" :loading="loading" :submitting="submitting" :submit-error="bookingError || policyError" :restriction-failure="restrictionFailure" :policy-ready="!!policy && !policyLoading && !queryDirty" :strategy-label="strategyLabel" :required-minutes="availability?.required_minutes" :shortfall="shortfall" @select="onSeatClick" @select-window="chooseWindow" @update:start="changeActualTime('start',$event)" @update:end="changeActualTime('end',$event)" @submit="confirmBooking" @closed="show3D = false" />
 
   <!-- 座位悬浮提示 -->
   <Teleport to="body">

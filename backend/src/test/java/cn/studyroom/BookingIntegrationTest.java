@@ -36,7 +36,7 @@ class BookingIntegrationTest {
     }
     @BeforeEach void setup() {
         assertTrue(env.getProperty("spring.datasource.url","").endsWith("/studyroom_java_test"),"必须使用独立测试库");
-        for(String table:List.of("notifications","violations","complaint_target_events","complaint_targets","reminders","complaint_attachments","complaint_events","complaints","resource_change_operations","usage_records","seat_codes","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("notifications","restriction_operations","restrictions","violations","complaint_target_events","complaint_targets","reminders","complaint_attachments","complaint_events","complaints","resource_change_operations","usage_records","seat_codes","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         u1=db.insert("INSERT INTO users(username,password_hash) VALUES('test1','unused')");
         u2=db.insert("INSERT INTO users(username,password_hash) VALUES('test2','unused')");
         admin=db.insert("INSERT INTO users(username,password_hash,role) VALUES('resource-admin','unused','admin')");
@@ -97,6 +97,7 @@ class BookingIntegrationTest {
     }
     @Test void blockedUserAndMaintenanceSeatCannotBeBooked() {
         db.update("UPDATE users SET credit_banned_until=TIMESTAMP '2026-11-01 00:00:00' WHERE id=?",u1);
+        db.update("INSERT INTO restrictions(user_id,source,starts_at,ends_at,reason,created_at) VALUES(?,'legacy',TIMESTAMP '2026-10-30 09:00',TIMESTAMP '2026-11-01 00:00','S19迁移余期工程模拟，原字段仅历史',TIMESTAMP '2026-10-30 09:00')",u1);
         assertEquals(403,assertThrows(Api.Failure.class,()->bookings.create(u1,request(s1,"10:00","11:00"))).status);
         resources.updateSeat(admin,s1,seatRequest(s1,"regular",false,false,"maintenance"));
         assertEquals(409,assertThrows(Api.Failure.class,()->bookings.create(u2,request(s1,"10:00","11:00"))).status);

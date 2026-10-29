@@ -1,12 +1,13 @@
 <script setup>
 import { ref, shallowRef, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
 import { gsap } from 'gsap'
+import RestrictionRecord from '../RestrictionRecord.vue'
 import SButton from '../ui/SButton.vue'
 import { windowKey } from '../../composables/availabilitySelection.js'
 import { feedbackState } from '../ui/feedback'
 import { seatType, seatState, stateLabels, stateColors, zoneName } from './seatPresentation'
 
-const props = defineProps({ origin: Object, room: Object, seats: Array, selectedId: Number, selectedWindow: Object, date: String, start: String, end: String, loading: Boolean, submitting: Boolean, submitError: String, policyReady: Boolean, strategyLabel: String, requiredMinutes: Number, shortfall: String })
+const props = defineProps({ origin: Object, room: Object, seats: Array, selectedId: Number, selectedWindow: Object, date: String, start: String, end: String, loading: Boolean, submitting: Boolean, submitError: String, restrictionFailure: Object, policyReady: Boolean, strategyLabel: String, requiredMinutes: Number, shortfall: String })
 const emit = defineEmits(['select', 'select-window', 'update:start', 'update:end', 'submit', 'closed'])
 const panel = ref(null), backdrop = ref(null), content = ref(null), snapshot = ref(null)
 const Scene = shallowRef(null), error = ref(''), ready = ref(false), closing = ref(false), opening = ref(true), view = ref('overview')
@@ -170,7 +171,7 @@ onBeforeUnmount(() => {
             <div v-if="ready && !error" class="scene-hint">{{ view === 'firstPerson' ? '拖动 / 方向键环视 · 点击总览退出体验' : '拖动旋转 · 滚轮 / 双指缩放 · 点击桌椅选座' }}</div>
           </div>
           <p v-if="shortfall" role="status" class="explorer-shortfall">{{ shortfall }}；本次预约已主动缩短，不代表满足原找座时长。</p><p v-if="requiredMinutes" class="explorer-required">找座所需{{ requiredMinutes }}分钟；下方完整空档、建议与本次起止分别展示。</p>
-          <p v-if="submitError" role="alert" class="explorer-submit-error">{{ submitError }}</p>
+          <p v-if="submitError" role="alert" class="explorer-submit-error">{{ submitError }}</p><details v-if="restrictionFailure" class="explorer-restrictions"><summary>查看服务端确认的{{restrictionFailure.active_restrictions.length}}条有效预约限制</summary><div><p>核对时刻：{{restrictionFailure.server_now}}（{{restrictionFailure.campus_zone}}），解除一条不代表其他记录也已解除。</p><RestrictionRecord v-for="record in restrictionFailure.active_restrictions" :key="record.id" :record="record" /><RouterLink to="/profile#restrictions">查看本人限制与当前资格</RouterLink></div></details>
           <div v-if="selected" class="explorer-slot"><label>完整空档<select :value="windowKey(selectedWindow)" :disabled="busy" @change="chooseSegment"><option value="" disabled>选择该座位的片段</option><option v-for="window in selected.available_windows" :key="windowKey(window)" :value="windowKey(window)">{{ window.available_start }}–{{ window.available_end }} · {{ window.duration_minutes }}分钟 · 建议{{ window.suggested_start }}–{{ window.suggested_end }} · 等待{{ window.wait_minutes }}分钟</option></select></label><template v-if="selectedWindow"><label>本次开始<input :value="start" type="time" step="60" :disabled="busy" @input="emit('update:start',$event.target.value)" /></label><label>本次结束<input :value="end" maxlength="5" placeholder="HH:mm，可24:00" :disabled="busy" @input="emit('update:end',$event.target.value)" /></label></template></div>
           <footer class="explorer-footer">
             <div class="explorer-selection" aria-live="polite"><strong>{{ selected ? `已选择 ${selected.seat_no}` : '找一个喜欢的位置' }}</strong><span>{{ selected ? `${seatType(selected)} · ${zoneName[selected.zone]}${selected.near_window ? ' · 靠窗' : ''}` : '选择有连续空档的桌椅，再选择片段' }}</span></div>
@@ -186,7 +187,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .explorer-shortfall{color:var(--amber-strong);padding:8px 20px;font-size:var(--fs-caption)}.explorer-required{padding:4px 20px;font-size:var(--fs-caption);color:var(--text-2)}
 .explorer-slot{display:flex;gap:12px;padding:10px 20px;flex-wrap:wrap;max-height:170px;overflow:auto}.explorer-slot label{display:grid;gap:4px;min-width:0;max-width:100%;font-size:var(--fs-caption)}.explorer-slot input,.explorer-slot select{max-width:100%;min-width:0;padding:6px;border:1px solid var(--border);background:var(--surface);color:var(--text-1);border-radius:var(--r-sm)}
-.explorer-submit-error { color:var(--red-strong); padding:10px 20px; font-size:var(--fs-caption); }
+.explorer-restrictions{margin:0 20px 8px;flex-shrink:0}.explorer-restrictions>div{display:grid;gap:8px;max-height:180px;overflow:auto;padding:8px 0}.explorer-submit-error { color:var(--red-strong); padding:10px 20px; font-size:var(--fs-caption); }
 .seat-explorer { position: fixed; inset: 0; z-index: var(--z-dialog); display: grid; place-items: center; }
 .explorer-backdrop { position: absolute; inset: 0; background: rgb(20 29 43 / 35%); }
 .explorer-panel { position: relative; width: min(1280px, calc(100vw - 48px)); height: min(850px, calc(100dvh - 48px)); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl); box-shadow: var(--shadow-4); overflow: hidden; outline: none; box-sizing: border-box; transform-origin: 0 0; transition: none; }

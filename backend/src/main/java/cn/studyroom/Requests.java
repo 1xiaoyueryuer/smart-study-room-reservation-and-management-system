@@ -59,4 +59,8 @@ public final class Requests {
     public record ComplaintFeedback(Long version,@JsonProperty("operation_id") String operationId,String result,String basis) {}
     public record ComplaintResponse(Long version,@JsonProperty("operation_id") String operationId,String description) {}
     public record ManualViolation(@JsonProperty("operation_id") String operationId,String reason) {}
+    public record RestrictionCreate(@JsonProperty("user_id") Long userId,@JsonProperty("ends_at") String endsAt,String reason,
+            @JsonProperty("verification_note") String verificationNote,@JsonProperty("facts_confirmed") Boolean factsConfirmed,@JsonProperty("operation_id") String operationId) {}
+    public record RestrictionRelease(Long version,String reason,@JsonProperty("verification_note") String verificationNote,
+            @JsonProperty("facts_confirmed") Boolean factsConfirmed,@JsonProperty("operation_id") String operationId) {}
 }

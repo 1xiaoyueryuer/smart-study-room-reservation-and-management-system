@@ -4,6 +4,7 @@ import vm from 'node:vm'
 import { readFile } from 'node:fs/promises'
 import { ref, computed } from 'vue'
 import { validateSlot, minuteValue, minuteText, serverStartMinute } from '../src/composables/bookingPolicy.js'
+import { bookingRestrictionDetails } from '../src/composables/restrictionForm.js'
 import { windowKey, validateWindowSlot, queryRequiredMinutes, shortfallText } from '../src/composables/availabilitySelection.js'
 const policy = (server_now = '2026-11-01T08:00:00+08:00') => ({server_now,campus_today:'2026-11-01',dates:['2026-11-01','2026-11-02','2026-11-03'],campus_zone:'Asia/Shanghai',min_duration_minutes:30})
 test('server second and nanosecond fractions round upward without millisecond truncation', () => {
@@ -42,13 +43,14 @@ async function booking(overrides = {}) {
     '../components/ui/feedback':{message:{success(){},info(){},warning(){}},confirmDialog:overrides.confirmDialog || (async()=>{})},
     '../api/room':{getRooms:async()=>({data:[currentRoom]})},
     '../api/availability':{getAvailability:overrides.getAvailability || (async(id,date,strategy='earliest',requiredMinutes=null)=>{calls.push(['map',{id,date,strategy,requiredMinutes}]);return{data:{room:{...currentRoom,version:9},date,strategy,required_minutes:requiredMinutes,server_now:policy().server_now,campus_today:policy().campus_today,computed_at:policy().server_now,campus_zone:'Asia/Shanghai',seats:[seat],results:[segment]}}})},
+    '../composables/restrictionForm.js':{bookingRestrictionDetails},
     '../composables/availabilitySelection.js':{windowKey,validateWindowSlot,queryRequiredMinutes,shortfallText},
     '../api/reservation':api,
     '../composables/bookingPolicy.js':{validateSlot,minuteValue,minuteText,serverStartMinute}
   }
   const context=vm.createContext({})
   const source=(await readFile(new URL('../src/views/BookingView.vue',import.meta.url),'utf8')).split('<script setup>')[1].split('</script>')[0]
-  const module=new vm.SourceTextModule(source+'\nexport {loadPolicy,refreshPolicy,loadAvailability,policy,policyError,bookingError,inputError,mapErrorText,submitting,date,start,end,roomId,room,rooms,seats,selected,selectedWindow,results,availability,chooseWindow,onSeatClick,changeActualTime,confirmBooking,strategy,requiredDraft,queryDirty,changeRequired,changeStrategy,shortfall}',{context})
+  const module=new vm.SourceTextModule(source+'\nexport {loadPolicy,refreshPolicy,loadAvailability,policy,policyError,restrictionFailure,bookingError,inputError,mapErrorText,submitting,date,start,end,roomId,room,rooms,seats,selected,selectedWindow,results,availability,chooseWindow,onSeatClick,changeActualTime,confirmBooking,strategy,requiredDraft,queryDirty,changeRequired,changeStrategy,shortfall}',{context})
   await module.link(specifier=>{
     const values=mocks[specifier]||(specifier.endsWith('.vue')?{default:{}}:null)
     assert.ok(values,specifier)
@@ -296,4 +298,10 @@ test('confirmation keeps original strategy and required minutes together with ac
   page.strategy.value='longest';page.requiredDraft.value='241';page.start.value='23:00';page.end.value='24:00'
   release();await attempt
   assert.equal(posted.start_time,'22:00');assert.equal(posted.end_time,'22:30');assert.match(confirmation,/满足学习时长/);assert.match(confirmation,/找座所需：120分钟/);assert.match(confirmation,/本次30分钟，短于找座时输入的120分钟/)
+})
+
+test('only structured restriction 403 exposes actual active records, preserves the attempted query and never retries a POST',async()=>{
+  for(const details of [{code:'booking_restricted',active_restrictions:[{id:8,source:'manual',status:'active',reason:'工程模拟限制'}],server_now:'2026-11-01T08:00+08:00',campus_zone:'Asia/Shanghai'},null]){
+    let posts=0;const page=await booking({createReservation:async()=>{posts++;throw{status:403,message:details?'仍有有效限制':'账号已停用',details}}});await page.loadPolicy(true);page.roomId.value=1;page.date.value='2026-11-02';await page.loadAvailability();page.chooseWindow(page.results.value[0]);const room=page.roomId.value,date=page.date.value,start=page.start.value,end=page.end.value;await page.confirmBooking();assert.equal(posts,1);assert.equal(page.roomId.value,room);assert.equal(page.date.value,date);assert.equal(page.start.value,start);assert.equal(page.end.value,end);assert.equal(page.restrictionFailure.value?.active_restrictions?.[0]?.id,details?8:undefined);assert.match(page.bookingError.value,details?/有效限制/:/停用/)
+  }
 })
