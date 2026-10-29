@@ -15,6 +15,8 @@ class RequestContractTest {
         assertEquals("教学楼",room.building());assertEquals("B1",room.floor());assertTrue(room.enabled());assertEquals(2L,room.version());assertEquals("资源维护",room.reason());
         var seat=json.readValue("{\"seat_no\":\"A-01\",\"row_no\":1,\"col_no\":2,\"zone\":\"quiet\",\"has_power\":true,\"near_window\":false,\"status\":\"available\",\"version\":3,\"reason\":\"维护编号\"}",Requests.Seat.class);
         assertEquals("A-01",seat.seatNo());assertEquals(2,seat.colNo());assertEquals(3L,seat.version());
+        var block=json.readValue("{\"seat_id\":9,\"start_at\":\"2026-10-30T09:00\",\"end_at\":\"2026-10-31T00:00\",\"version\":4,\"reason\":\"跨日维护\"}",Requests.Unavailability.class);
+        assertEquals(9L,block.seatId());assertEquals("2026-10-31T00:00",block.endAt());assertEquals(4L,block.version());
         var allocation=json.readValue("{\"room_id\":1,\"top_n\":3,\"auto_book\":true,\"has_power\":true}",Requests.Allocation.class);
         assertTrue(allocation.autoBook());assertTrue(allocation.hasPower());assertEquals(3,allocation.topN());
         var registration=json.readValue("{\"username\":\"test\",\"password\":\"123456\",\"real_name\":\"测试\",\"student_no\":\"001\"}",Requests.Register.class);

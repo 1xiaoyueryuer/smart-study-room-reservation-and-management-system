@@ -20,6 +20,7 @@ class BookingIntegrationTest {
     @Autowired Store db;
     @Autowired BookingService bookings;
     @Autowired ResourceService resources;
+    @Autowired OpeningScheduleService opening;
     @Autowired StatsService stats;
     @Autowired Environment env;
     @Autowired AuditService audit;
@@ -30,11 +31,11 @@ class BookingIntegrationTest {
     }
     @BeforeEach void setup() {
         assertTrue(env.getProperty("spring.datasource.url","").endsWith("/studyroom_java_test"),"必须使用独立测试库");
-        for(String table:List.of("audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         u1=db.insert("INSERT INTO users(username,password_hash) VALUES('test1','unused')");
         u2=db.insert("INSERT INTO users(username,password_hash) VALUES('test2','unused')");
         admin=db.insert("INSERT INTO users(username,password_hash,role) VALUES('resource-admin','unused','admin')");
-        room=Store.id(resources.save(admin,null,new Requests.Room("测试空间","测试楼","08:00","22:00",1,2,"测试数据",null,null,true,null,"测试空间初始化")),"id");
+        room=Store.id(resources.save(admin,null,new Requests.Room("测试空间","测试楼",null,null,1,2,"测试数据",null,null,true,null,"测试空间初始化")),"id");
         resources.batch(admin,room,new Requests.Batch(1,2,1L,"测试批量座位"));
         db.update("DELETE FROM audit_events");
         var seats=db.list("SELECT * FROM seats ORDER BY id");s1=Store.id(seats.get(0),"id");s2=Store.id(seats.get(1),"id");
@@ -96,7 +97,7 @@ class BookingIntegrationTest {
     @Test void resourceChangesPreserveExistingReservationsAndHistory() {
         bookings.create(u1,request(s1,"10:00","11:00"));
         assertThrows(Api.Failure.class,()->resources.updateSeat(admin,s1,seatRequest(s1,"regular",false,false,"disabled")));
-        assertThrows(Api.Failure.class,()->resources.save(admin,room,new Requests.Room("测试空间","测试楼","12:00","22:00",1,2,"",null,null,true,Store.id(resources.room(room),"version"),"测试缩短开放")));
+        assertThrows(Api.Failure.class,()->opening.save(admin,room,new Requests.OpeningChange(null,"2026-10-30",List.of(new Requests.OpeningWindow("12:00","22:00")),Store.id(resources.room(room),"version"),"测试缩短开放")));
         assertThrows(Api.Failure.class,()->resources.deleteRoom(admin,room,new Requests.ResourceDelete(Store.id(resources.room(room),"version"),"测试删除")));
         assertEquals("available",db.one("SELECT status FROM seats WHERE id=?",s1).get("status"));
     }

@@ -26,10 +26,10 @@ class SlotTest {
         slot.validateFuture(Clock.fixed(Instant.parse("2026-10-30T00:50:00Z"),ZoneId.of("Asia/Shanghai")));
         assertThrows(Api.Failure.class,()->slot.validateFuture(Clock.fixed(Instant.parse("2026-10-30T00:50:01Z"),ZoneId.of("Asia/Shanghai"))));
     }
-    @Test void enforcesRoomOpeningBoundaries() {
-        var room=java.util.Map.<String,Object>of("enabled",true,"open_time","08:00:00","close_time","21:00:00");
-        Slot.parse("2026-10-30","08:00","09:00").validateRoom(room);
-        Slot.parse("2026-10-30","20:00","21:00").validateRoom(room);
-        assertThrows(Api.Failure.class,()->Slot.parse("2026-10-30","20:00","21:30").validateRoom(room));
+    @Test void enforcesCanonicalOpeningBoundaries() {
+        var day=new OpeningScheduleService.Day(java.util.List.of(new OpeningScheduleService.Window(480,1260)),java.util.List.of());
+        assertTrue(day.contains(Slot.parse("2026-10-30","08:00","09:00")));
+        assertTrue(day.contains(Slot.parse("2026-10-30","20:00","21:00")));
+        assertFalse(day.contains(Slot.parse("2026-10-30","20:00","21:30")));
     }
 }

@@ -16,7 +16,8 @@ public class BookingService {
     private static final String VIEW="SELECT rv.*,s.seat_no,s.zone,s.has_power,s.room_id,r.name AS room_name,u.username,u.real_name FROM reservations rv JOIN seats s ON s.id=rv.seat_id JOIN rooms r ON r.id=s.room_id JOIN users u ON u.id=rv.user_id ";
     private final Store db;
     private final Clock clock;
-    public BookingService(Store db,Clock clock) { this.db=db;this.clock=clock; }
+    private final OpeningScheduleService opening;
+    public BookingService(Store db,Clock clock,OpeningScheduleService opening) { this.db=db;this.clock=clock;this.opening=opening; }
     public List<Map<String,Object>> mine(long uid) { return db.list(VIEW+"WHERE rv.user_id=? ORDER BY rv.res_date DESC,rv.start_time DESC,rv.id DESC",uid); }
     public Map<String,Object> create(long uid,Requests.Reservation req) {
         db.lockBookings();return createInternal(uid,req,"manual");
@@ -25,7 +26,7 @@ public class BookingService {
         Slot slot=Slot.parse(req.date(),req.startTime(),req.endTime()); slot.validateFuture(clock);eligible(uid);
         var seat=db.one("SELECT * FROM seats WHERE id=?",req.seatId());
         Api.require("available".equals(seat.get("status")),409,"座位当前不可预约");
-        var room=db.one("SELECT * FROM rooms WHERE id=?",id(seat,"room_id"));slot.validateRoom(room);
+        var room=db.one("SELECT * FROM rooms WHERE id=?",id(seat,"room_id"));opening.requireSlot(id(seat,"room_id"),req.seatId(),slot);
         Api.require(!conflict("seat_id",req.seatId(),slot),409,"该座位此时段已被预约");
         Api.require(!conflict("user_id",uid,slot),409,"您在同一时段已有其他预约");
         long resId=db.insert("INSERT INTO reservations(user_id,seat_id,res_date,start_time,end_time,source) VALUES(?,?,?,?,?,?)",
@@ -99,7 +100,7 @@ public class BookingService {
     }
     public Map<String,Object> allocate(long uid,Requests.Allocation req) {
         db.lockBookings();Slot slot=Slot.parse(req.date(),req.startTime(),req.endTime());slot.validateFuture(clock);eligible(uid);
-        slot.validateRoom(db.one("SELECT * FROM rooms WHERE id=?",req.roomId()));
+        opening.requireSlot(req.roomId(),null,slot);
         Api.require(!conflict("user_id",uid,slot),409,"您在同一时段已有预约");
         var candidates=candidates(req.roomId(),slot);var scored=new ArrayList<Map<String,Object>>();
         for(var seat:candidates) {
@@ -121,12 +122,13 @@ public class BookingService {
         return result;
     }
     private List<Map<String,Object>> candidates(long roomId,Slot slot) {
+        var calendar=opening.calendar(roomId);
         return db.list("SELECT s.* FROM seats s JOIN rooms r ON r.id=s.room_id WHERE s.room_id=? AND r.enabled AND s.status='available' AND NOT EXISTS(SELECT 1 FROM reservations rv WHERE rv.seat_id=s.id AND rv.res_date=? AND rv.status IN "+ACTIVE+" AND rv.start_time<? AND rv.end_time>?) ORDER BY row_no,col_no",
-                roomId,Date.valueOf(slot.date()),Time.valueOf(slot.end()),Time.valueOf(slot.start()));
+                roomId,Date.valueOf(slot.date()),Time.valueOf(slot.end()),Time.valueOf(slot.start())).stream().filter(seat->calendar.day(slot.date(),id(seat,"id")).contains(slot)).toList();
     }
     public Map<String,Object> join(long uid,Requests.Wait req) {
         db.lockBookings();Slot slot=Slot.parse(req.date(),req.startTime(),req.endTime());slot.validateFuture(clock);eligible(uid);
-        slot.validateRoom(db.one("SELECT * FROM rooms WHERE id=?",req.roomId()));
+        opening.requireSlot(req.roomId(),null,slot);
         Api.require(!conflict("user_id",uid,slot),409,"您在同一时段已有预约");
         Api.require(db.count("SELECT count(*) FROM waitlist WHERE user_id=? AND room_id=? AND res_date=? AND start_time=? AND end_time=? AND status='waiting'",
                 uid,req.roomId(),Date.valueOf(slot.date()),Time.valueOf(slot.start()),Time.valueOf(slot.end()))==0,409,"已在该时段候补队列中");
@@ -155,7 +157,7 @@ public class BookingService {
             Slot slot=Slot.parse(text(wait,"res_date"),text(wait,"start_time"),text(wait,"end_time"));
             if(slot.startsAt().isBefore(now.plusMinutes(10))) { db.update("UPDATE waitlist SET status='expired',updated_at=CURRENT_TIMESTAMP WHERE id=?",id(wait,"id"));continue; }
             long uid=id(wait,"user_id");
-            try { eligible(uid);slot.validateRoom(db.one("SELECT * FROM rooms WHERE id=?",id(wait,"room_id"))); } catch(Api.Failure e) { continue; }
+            try { eligible(uid);opening.requireSlot(id(wait,"room_id"),null,slot); } catch(Api.Failure e) { continue; }
             if(conflict("user_id",uid,slot)) continue;
             for(var seat:candidates(id(wait,"room_id"),slot)) {
                 if(wait.get("zone")!=null&&!wait.get("zone").equals(seat.get("zone"))) continue;

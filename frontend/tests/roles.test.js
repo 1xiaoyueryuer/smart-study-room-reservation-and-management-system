@@ -77,7 +77,7 @@ for (const role of ['student', 'staff', 'admin']) {
       'vue-router': { useRouter: () => ({ push() {} }) },
       '../stores/auth': { useAuthStore: () => store },
       '../stores/notification': { useNotificationStore: () => ({ unread: 0, refresh() {} }) },
-      '../api/room': { getRooms: async () => ({ data: [] }) },
+      '../api/room': { getRooms: async () => ({ data: [] }), getOpeningWindows: async () => ({ data: { windows: [], closed_reasons: [] } }) },
       '../api/stats': { getOverview: async () => { statsCalls++; return { data: { total_seats: 0, in_use_now: 0 } } } },
       '../api/credit': { getCreditOverview: async () => ({ data: { score: 100 } }) }
     }
@@ -93,3 +93,27 @@ for (const role of ['student', 'staff', 'admin']) {
     }
   })
 }
+test('homepage reads each room opening for campus date and shows a real open room rather than old daily fields', async () => {
+  const store = await auth('staff')
+  const calls = []
+  const source = (await readFile(new URL('../src/views/HomeView.vue', import.meta.url), 'utf8')).split('<script setup>')[1].split('</script>')[0]
+  const mocks = {
+    vue: { ref: value => ({ value }), computed: getter => ({get value(){return getter()}}), onMounted(){}, onUnmounted(){} },
+    'vue-router': { useRouter: () => ({push(){}}) },
+    '../stores/auth': { useAuthStore: () => store },
+    '../stores/notification': { useNotificationStore: () => ({unread:0,refresh(){}}) },
+    '../api/room': {
+      getRooms: async () => ({data:[{id:1,name:'闭馆空间',enabled:true,open_time:'01:00',close_time:'23:00'},{id:2,name:'分段空间',enabled:true,open_time:'01:00',close_time:'23:00'}]}),
+      getOpeningWindows: async (id,date) => { calls.push({id,date}); return {data:{windows:id===1?[]:[{start:'09:00',end:'12:00'},{start:'14:00',end:'18:00'}],closed_reasons:id===1?['日期闭馆']:[]}} }
+    },
+    '../api/stats': { getOverview: async () => ({data:{}}) },
+    '../api/credit': { getCreditOverview: async () => ({data:{score:100}}) }
+  }
+  for (const component of ['StudyTips','ui/SAnimatedNumber','AppIcon','ui/SBanner','ui/SButton']) mocks[`../components/${component}.vue`]={default:{}}
+  const page = await sourceModule(source+'\nexport {loadRooms,openHours,roomOpeningText}',mocks)
+  await page.loadRooms()
+  assert.equal(calls.length,2)
+  assert.match(calls[0].date,/^\d{4}-\d{2}-\d{2}$/)
+  assert.equal(page.openHours.value.name,'分段空间')
+  assert.equal(page.openHours.value.text,'09:00–12:00、14:00–18:00')
+})

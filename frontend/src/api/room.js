@@ -8,3 +8,7 @@ export function getRooms() {
 export function getSeatMap(roomId, date, start, end) {
   return request.get(`/rooms/${roomId}/seats`, { params: { date, start, end } })
 }
+
+export function getOpeningWindows(roomId, date, seatId) {
+  return request.get(`/rooms/${roomId}/opening-windows`, { params: { date, ...(seatId ? { seat_id: seatId } : {}) } })
+}

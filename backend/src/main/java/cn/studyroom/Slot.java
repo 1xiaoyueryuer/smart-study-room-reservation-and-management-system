@@ -16,9 +16,5 @@ public record Slot(LocalDate date,LocalTime start,LocalTime end) {
     public LocalDateTime startsAt() { return date.atTime(start); }
     public LocalDateTime endsAt() { return date.atTime(end); }
     public void validateFuture(Clock clock) { Api.require(!startsAt().isBefore(LocalDateTime.now(clock).plusMinutes(10)),400,"请至少提前10分钟预约"); }
-    public void validateRoom(java.util.Map<String,Object> room) {
-        Api.require(Boolean.TRUE.equals(room.get("enabled")),409,"空间已停用，当前不可预约");
-        Api.require(!start.isBefore(LocalTime.parse(Store.text(room,"open_time")))&&!end.isAfter(LocalTime.parse(Store.text(room,"close_time"))),400,"预约时段超出开放时间");
-    }
     public boolean overlaps(LocalTime otherStart,LocalTime otherEnd) { return start.isBefore(otherEnd)&&end.isAfter(otherStart); }
 }

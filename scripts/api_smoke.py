@@ -82,7 +82,7 @@ def main():
     check('统计总览字段',status == 200 and len(body['data']['trend_14']) == 14)
     status, body = call('GET',f'/stats/heatmap?room_id={room}&date={date}',token=admin)
     check('热力矩阵尺寸',status == 200 and len(body['data']['cells']) == len(body['data']['seats']) and len(body['data']['cells'][0]) == len(body['data']['hours']))
-    room_req = {'name':'API临时验证_'+str(time.time_ns()),'location':'验证楼','open_time':'08:00','close_time':'22:00','seat_rows':1,'seat_cols':2,'description':'','building':'API验证楼','floor':'B1','enabled':True,'reason':'API模拟资源验证'}
+    room_req = {'name':'API临时验证_'+str(time.time_ns()),'location':'验证楼','seat_rows':1,'seat_cols':2,'description':'','building':'API验证楼','floor':'B1','enabled':True,'reason':'API模拟资源验证'}
     status, body = call('POST','/admin/rooms',room_req,admin)
     check('管理端创建房间',status == 200)
     temp = body['data']['id']

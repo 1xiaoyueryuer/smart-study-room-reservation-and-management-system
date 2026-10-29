@@ -12,38 +12,50 @@ import org.springframework.transaction.annotation.Transactional;
 public class ResourceService {
     private static final String ACTIVE="('pending','checked_in','temp_leave')";
     private static final String ROOMS="SELECT r.*,(SELECT count(*) FROM seats s WHERE s.room_id=r.id) AS seat_count,(SELECT count(*) FROM seats s WHERE s.room_id=r.id AND s.status='available') AS capacity,CASE WHEN r.enabled THEN (SELECT count(*) FROM seats s WHERE s.room_id=r.id AND s.status='available') ELSE 0 END AS bookable_capacity FROM rooms r";
-    private static final List<String> ROOM_FIELDS=List.of("name","building","floor","location","enabled","open_time","close_time","seat_rows","seat_cols","description","version","resource_reason");
+    private static final List<String> ROOM_FIELDS=List.of("name","building","floor","location","enabled","seat_rows","seat_cols","description","version","resource_reason");
     private static final List<String> SEAT_FIELDS=List.of("room_id","seat_no","row_no","col_no","zone","has_power","near_window","status","version","resource_reason");
     private final Store db;
     private final AuthService auth;
     private final AuditService audit;
     private final Validator validator;
-    public ResourceService(Store db,AuthService auth,AuditService audit,Validator validator) { this.db=db;this.auth=auth;this.audit=audit;this.validator=validator; }
-    public List<Map<String,Object>> rooms() { return db.list(ROOMS+" ORDER BY r.id"); }
-    public Map<String,Object> room(long id) { return db.one(ROOMS+" WHERE r.id=?",id); }
+    private final OpeningScheduleService opening;
+    private final Clock clock;
+    public ResourceService(Store db,AuthService auth,AuditService audit,Validator validator,OpeningScheduleService opening,Clock clock) { this.db=db;this.auth=auth;this.audit=audit;this.validator=validator;this.opening=opening;this.clock=clock; }
+    public List<Map<String,Object>> rooms() {
+        var rooms=db.list(ROOMS+" ORDER BY r.id");
+        for(var room:rooms) decorate(room,opening.calendar(Store.id(room,"id")),LocalDate.now(clock));
+        return rooms;
+    }
+    public Map<String,Object> room(long id) { var room=db.one(ROOMS+" WHERE r.id=?",id);decorate(room,opening.calendar(id),LocalDate.now(clock));return room; }
+    private void decorate(Map<String,Object> room,OpeningScheduleService.Calendar calendar,LocalDate date) {
+        var day=calendar.day(date,null);room.remove("open_time");room.remove("close_time");room.put("campus_zone",OpeningScheduleService.ZONE);room.put("campus_today",LocalDate.now(clock).toString());room.put("opening_date",date.toString());room.put("opening_windows",day.view());room.put("closed_reasons",day.closedReasons());
+    }
     public Map<String,Object> managementSeats(long roomId) { return Map.of("room",room(roomId),"seats",db.list("SELECT * FROM seats WHERE room_id=? ORDER BY row_no,col_no",roomId)); }
     public Map<String,Object> seatMap(long roomId,String date,String start,String end) {
-        var room=room(roomId); Slot slot=Slot.parse(date,start,end);
+        Slot slot=Slot.parse(date,start,end);var calendar=opening.calendar(roomId);var room=db.one(ROOMS+" WHERE r.id=?",roomId);decorate(room,calendar,slot.date());room.put("bookable_for_slot",calendar.day(slot.date(),null).contains(slot));
         var seats=db.list("SELECT s.*,EXISTS(SELECT 1 FROM reservations rv WHERE rv.seat_id=s.id AND rv.res_date=? AND rv.status IN "+ACTIVE+" AND rv.start_time<? AND rv.end_time>?) AS occupied FROM seats s WHERE room_id=? ORDER BY row_no,col_no",
                 Date.valueOf(slot.date()),Time.valueOf(slot.end()),Time.valueOf(slot.start()),roomId);
+        for(var seat:seats) {
+            var day=calendar.day(slot.date(),Store.id(seat,"id"));boolean legal=day.contains(slot);seat.put("opening_windows",day.view());seat.put("bookable_for_slot",legal);
+            var reasons=new ArrayList<>(day.closedReasons());if(!legal&&!day.windows().isEmpty()) reasons.add("所选时段不在合法开放窗口内");seat.put("closed_reasons",reasons);
+        }
         return Map.of("room",room,"seats",seats);
     }
     @Transactional public Map<String,Object> save(long actor,Long id,Requests.Room req) {
         db.lockBookings();requireAdmin(actor);validate(req);
-        LocalTime start=time(req.openTime()),end=time(req.closeTime());
-        Api.require(start.isBefore(end),400,"关闭时间必须晚于开放时间");
+        Api.require(req.openTime()==null&&req.closeTime()==null,400,"每日时间字段已退出，请使用开放安排入口维护");
         Map<String,Object> before=Map.of();
         if(id==null) {
-            id=db.insert("INSERT INTO rooms(name,location,open_time,close_time,seat_rows,seat_cols,description,building,floor,enabled,resource_reason) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                req.name().trim(),value(req.location()),Time.valueOf(start),Time.valueOf(end),req.seatRows(),req.seatCols(),value(req.description()),value(req.building()),value(req.floor()),req.enabled(),req.reason().trim());
+            id=db.insert("INSERT INTO rooms(name,location,seat_rows,seat_cols,description,building,floor,enabled,resource_reason) VALUES(?,?,?,?,?,?,?,?,?)",
+                req.name().trim(),value(req.location()),req.seatRows(),req.seatCols(),value(req.description()),value(req.building()),value(req.floor()),req.enabled(),req.reason().trim());
+            opening.initializeDefaults(id);
         } else {
             before=room(id);version(before,req.version());
             boolean moved=!same(before,"building",req.building())||!same(before,"floor",req.floor())||!same(before,"location",req.location());
             if(!req.enabled()||moved) ensureNoActive("rv.seat_id IN (SELECT id FROM seats WHERE room_id=?)",id);
-            Api.require(db.count("SELECT count(*) FROM reservations rv JOIN seats s ON s.id=rv.seat_id WHERE s.room_id=? AND rv.status IN "+ACTIVE+" AND (rv.start_time<? OR rv.end_time>?)",id,Time.valueOf(start),Time.valueOf(end))==0,409,"开放时间变更影响有效预约，请先处理预约");
             Api.require(db.count("SELECT count(*) FROM seats WHERE room_id=? AND (row_no>? OR col_no>?)",id,req.seatRows(),req.seatCols())==0,409,"布局不能小于现有座位范围");
-            db.update("UPDATE rooms SET name=?,location=?,open_time=?,close_time=?,seat_rows=?,seat_cols=?,description=?,building=?,floor=?,enabled=?,resource_reason=?,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",
-                req.name().trim(),value(req.location()),Time.valueOf(start),Time.valueOf(end),req.seatRows(),req.seatCols(),value(req.description()),value(req.building()),value(req.floor()),req.enabled(),req.reason().trim(),id);
+            db.update("UPDATE rooms SET name=?,location=?,seat_rows=?,seat_cols=?,description=?,building=?,floor=?,enabled=?,resource_reason=?,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                req.name().trim(),value(req.location()),req.seatRows(),req.seatCols(),value(req.description()),value(req.building()),value(req.floor()),req.enabled(),req.reason().trim(),id);
         }
         var after=room(id);record(actor,before.isEmpty()?"room.create":"room.update","room",id,req.reason(),before,after,ROOM_FIELDS);return after;
     }
@@ -72,17 +84,19 @@ public class ResourceService {
     @Transactional public void deleteSeat(long actor,long id,Requests.ResourceDelete req) {
         db.lockBookings();requireAdmin(actor);validate(req);var before=seat(id);version(before,req.version());
         Api.require(db.count("SELECT count(*) FROM reservations WHERE seat_id=?",id)==0,409,"座位存在预约历史，请改为停用");
+        Api.require(db.count("SELECT count(*) FROM resource_unavailability WHERE seat_id=?",id)==0,409,"座位存在停用历史，请保留资源");
         db.update("DELETE FROM seats WHERE id=?",id);bumpRoom(Store.id(before,"room_id"));record(actor,"seat.delete","seat",id,req.reason(),before,Map.of(),SEAT_FIELDS);
     }
     @Transactional public void deleteRoom(long actor,long id,Requests.ResourceDelete req) {
         db.lockBookings();requireAdmin(actor);validate(req);var before=room(id);version(before,req.version());
         Api.require(db.count("SELECT count(*) FROM reservations rv JOIN seats s ON s.id=rv.seat_id WHERE s.room_id=?",id)==0&&db.count("SELECT count(*) FROM waitlist WHERE room_id=?",id)==0,409,"空间存在历史记录，不能删除");
+        Api.require(db.count("SELECT count(*) FROM resource_unavailability WHERE room_id=?",id)==0,409,"空间存在停用历史，请保留资源");
         db.update("DELETE FROM seats WHERE room_id=?",id);db.update("DELETE FROM rooms WHERE id=?",id);record(actor,"room.delete","room",id,req.reason(),before,Map.of(),ROOM_FIELDS);
     }
     private Map<String,Object> seat(long id) { return db.one("SELECT * FROM seats WHERE id=?",id); }
     private void bumpRoom(long id) { db.update("UPDATE rooms SET version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",id); }
     private void bounds(Map<String,Object> room,Requests.Seat req) { Api.require(req.rowNo()<=((Number)room.get("seat_rows")).intValue()&&req.colNo()<=((Number)room.get("seat_cols")).intValue(),400,"座位行列超出空间布局范围"); }
-    private void ensureNoActive(String condition,long id) { Api.require(db.count("SELECT count(*) FROM reservations rv WHERE "+condition+" AND rv.status IN "+ACTIVE,id)==0,409,"资源变更影响有效预约，请先处理预约"); }
+    private void ensureNoActive(String condition,long id) { Api.require(db.count("SELECT count(*) FROM reservations rv WHERE "+condition+" AND rv.status IN "+ACTIVE+" AND rv.res_date+rv.end_time>?",id,java.sql.Timestamp.valueOf(LocalDateTime.now(clock)))==0,409,"资源变更影响有效预约，请先处理预约"); }
     private void version(Map<String,Object> before,Long expected) { Api.require(expected!=null,400,"资源版本必填");Api.require(Store.id(before,"version")==expected,409,"资源已变化，请刷新后重试"); }
     private void requireAdmin(long actor) { var user=auth.profile(actor);Api.require("admin".equals(user.get("role"))&&"active".equals(user.get("status")),403,"需要管理员权限"); }
     private void validate(Object req) { var errors=validator.validate(req);Api.require(errors.isEmpty(),400,errors.stream().map(x->x.getPropertyPath()+": "+x.getMessage()).sorted().findFirst().orElse("参数错误")); }

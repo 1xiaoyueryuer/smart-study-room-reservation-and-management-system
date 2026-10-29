@@ -6,7 +6,7 @@ import { operationReason } from '../src/components/admin/userForm.js'
 import { ref, computed } from 'vue'
 
 const room = () => ({ id: 1, name: '测试空间', building: '教学楼', floor: 'B1', location: '东侧', enabled: true, seat_count: 2, capacity: 1, bookable_capacity: 1, seat_rows: 30, seat_cols: 30, version: 3, open_time: '08:00', close_time: '22:00', description: '' })
-const seat = () => ({ id: 2, seat_no: 'A1', row_no: 1, col_no: 1, zone: 'regular', status: 'available', has_power: false, near_window: false, occupied: false, version: 5 })
+const seat = () => ({ id: 2, seat_no: 'A1', row_no: 1, col_no: 1, zone: 'regular', status: 'available', has_power: false, near_window: false, occupied: false, bookable_for_slot: true, opening_windows: [{start:'08:00',end:'22:00'}], version: 5 })
 async function script(path, mocks, exports, extra = {}) {
   const source = (await readFile(new URL(path, import.meta.url), 'utf8')).split('<script setup>')[1].split('</script>')[0]
   const context = vm.createContext({ defineEmits: () => () => {}, defineExpose() {}, ...extra })
@@ -54,6 +54,8 @@ test('room editing sends expected version, string B1 floor and explicit public r
   assert.equal(call[2].floor, 'B1')
   assert.equal(call[2].version, 3)
   assert.equal(call[2].reason, '更新公开位置')
+  assert.equal('open_time' in call[2], false)
+  assert.equal('close_time' in call[2], false)
   assert.equal(page.roomDialog.value, false)
 })
 test('single seat creation uses room version and editing uses seat version; both refresh real resource data', async () => {
@@ -100,7 +102,7 @@ async function booking() {
     '../api/room': { getRooms: async () => ({ data: [] }), getSeatMap: async () => ({ data: { room: room(), seats: [seat()] } }) },
     '../api/reservation': { createReservation: async () => { calls.push('create') }, autoAllocate: async () => { calls.push('auto') } },
     '../api/waitlist': { joinWaitlist: async () => { calls.push('waitlist') } }
-  }, 'room, rooms, locationFilter, filteredRooms, selected, onSeatClick, confirmBooking, runAllocate, pickRecommended, seatStats')
+  }, 'room, rooms, seats, locationFilter, filteredRooms, selected, onSeatClick, confirmBooking, runAllocate, pickRecommended, seatStats')
   return { ...page, calls }
 }
 test('disabled room cannot submit through manual selection, direct confirmation, auto allocation or recommendations', async () => {
@@ -134,4 +136,18 @@ test('resource DELETE API retains version and reason in JSON body', async () => 
   assert.equal(calls[0][0], '/admin/rooms/1')
   assert.equal(calls[0][1].data.version, 3)
   assert.equal(calls[1][1].data.reason, '座位误建')
+})
+
+test('available seat outside authoritative opening window cannot bypass manual or automatic entry points', async () => {
+  const page = await booking()
+  page.room.value = room()
+  const closed = { ...seat(), bookable_for_slot: false, closed_reasons: ['临时停用'] }
+  page.seats.value = [closed]
+  page.onSeatClick(closed)
+  assert.equal(page.selected.value, null)
+  page.selected.value = closed
+  await page.confirmBooking()
+  await page.runAllocate(true)
+  await page.pickRecommended({ seat: closed })
+  assert.deepEqual(page.calls, [])
 })

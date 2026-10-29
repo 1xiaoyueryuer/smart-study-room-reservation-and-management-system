@@ -55,7 +55,7 @@ class MigrationIntegrationTest {
     }
     @Test void emptyInstallationAndRepeatedStartup() throws Exception {
         var f=flyway(); DatabaseMigrations.migrate(f,false); DatabaseMigrations.migrate(f,false);
-        assertEquals(5,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(6,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".booking_mutex WHERE id=1"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".audit_events"));
         assertThrows(FlywayException.class,f::clean);
@@ -66,12 +66,22 @@ class MigrationIntegrationTest {
         DatabaseMigrations.migrate(f,true); DatabaseMigrations.migrate(f,false);
         assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE username='legacy' AND campus_id IS NULL AND phone IS NULL AND email IS NULL"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE username='legacy' AND password_hash='hash'"));
+        assertEquals(7,count("SELECT count(*) FROM "+schema+".opening_schedules WHERE room_id=1 AND weekday BETWEEN 1 AND 7"));
+        assertEquals(7,count("SELECT count(*) FROM "+schema+".opening_windows WHERE start_minute=480 AND end_minute=1320"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".rooms WHERE name='legacy' AND enabled AND version=1 AND building IS NULL AND floor IS NULL AND resource_reason IS NULL"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".seats WHERE version=1 AND resource_reason IS NULL"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".reservations WHERE user_id=1 AND seat_id=1 AND status='pending'"));
-        assertEquals(5,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(6,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE username='known-campus' AND campus_id='OLD-01' AND student_no='OLD-01'"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE type='BASELINE'"));
+    }
+    @Test void legacyNonMinuteTimeRefusesMigrationWithoutChangingTrueValues() throws Exception {
+        legacy();execute("UPDATE "+schema+".rooms SET open_time=TIME '08:00:30'");
+        var failure=assertThrows(FlywayException.class,()->DatabaseMigrations.migrate(flyway(),true));
+        assertTrue(failure.getMessage().contains("非整分钟"));
+        assertEquals(1,count("SELECT count(*) FROM "+schema+".rooms WHERE open_time=TIME '08:00:30'"));
+        assertEquals(0,count("SELECT count(*) FROM information_schema.tables WHERE table_schema='"+schema+"' AND table_name='opening_schedules'"));
+        assertEquals(0,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE version='6'"));
     }
     @Test void unknownStructureRejectedWithoutBaseline() throws Exception {
         legacy(); execute("ALTER TABLE "+schema+".users ADD COLUMN unrecognized text");
@@ -87,6 +97,6 @@ class MigrationIntegrationTest {
         var error=assertThrows(FlywayException.class,()->DatabaseMigrations.migrate(broken,false));
         assertTrue(error.getMessage().contains("V9999__broken.sql"));
         assertEquals(0,count("SELECT count(*) FROM information_schema.tables WHERE table_schema='"+schema+"' AND table_name='rollback_probe'"));
-        assertEquals(5,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(6,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
     }
 }

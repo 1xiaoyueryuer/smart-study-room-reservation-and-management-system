@@ -5,7 +5,7 @@ import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import { useNotificationStore } from '../stores/notification'
-import { getRooms } from '../api/room'
+import { getRooms, getOpeningWindows } from '../api/room'
 import { getOverview } from '../api/stats'
 import { getCreditOverview } from '../api/credit'
 import AppIcon from '../components/AppIcon.vue'
@@ -32,6 +32,14 @@ const greeting = computed(() => {
 })
 
 const rooms = ref([])
+const todayOpenings = ref({})
+const campusDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year:'numeric', month:'2-digit', day:'2-digit' }).format(new Date())
+function roomOpeningText(room) {
+  const value = todayOpenings.value[room.id]
+  if (!value) return '开放信息尚未加载'
+  if (value.error) return `开放信息读取失败：${value.error}`
+  return value.windows.length ? value.windows.map(window => `${window.start}–${window.end}`).join('、') : `当日闭馆：${value.closed_reasons?.join('；') || '无开放时段'}`
+}
 const statsOverview = ref(null)
 const statsError = ref('')
 const statsLoading = ref(false)
@@ -48,13 +56,11 @@ const inUseNow = computed(() => statsOverview.value?.in_use_now ?? null)
 const availableSeats = computed(() => totalSeats.value === null || inUseNow.value === null ? null : Math.max(0, totalSeats.value - inUseNow.value))
 const roomCount = computed(() => rooms.value.length)
 const openHours = computed(() => {
-  if (rooms.value.length && rooms.value[0].open_time && rooms.value[0].close_time) {
-    return {
-      open: rooms.value[0].open_time.slice(0, 5),
-      close: rooms.value[0].close_time.slice(0, 5)
-    }
-  }
-  return { open: '—', close: '—' }
+  const available = rooms.value.find(room => room.enabled && todayOpenings.value[room.id]?.windows?.length)
+  if (available) return { name: available.name, text: roomOpeningText(available) }
+  if (roomsLoading.value) return { name: '正在加载', text: '—' }
+  if (roomsError.value || Object.values(todayOpenings.value).some(value => value.error)) return { name: '读取失败，请重试', text: '—' }
+  return { name: '当日无开放时段', text: '—' }
 })
 
 function refreshUnread() {
@@ -67,6 +73,8 @@ async function loadRooms() {
   try {
     const roomResp = await getRooms()
     rooms.value = roomResp.data || []
+    const openings = await Promise.allSettled(rooms.value.map(room => getOpeningWindows(room.id, campusDate)))
+    todayOpenings.value = Object.fromEntries(openings.map((result,index) => [rooms.value[index].id, result.status === 'fulfilled' ? result.value.data : { error: result.reason.message }]))
   } catch (error) {
     roomsError.value = error.message
   } finally {
@@ -167,10 +175,10 @@ const cardToneClass = {
           </div>
           <div class="kpi">
             <div class="kpi-num kpi-time">
-              <span class="kpi-time-start">{{ openHours.open }}</span>
-              <span class="kpi-time-end"><span class="kpi-tilde">~</span>{{ openHours.close }}</span>
+              <span class="kpi-time-start">{{ openHours.text }}</span>
+              <span class="kpi-time-end">{{ openHours.name }}</span>
             </div>
-            <div class="kpi-label">今日开放</div>
+            <div class="kpi-label">当日开放示例（校园时区）</div>
           </div>
         </div>
       </section>
@@ -199,10 +207,10 @@ const cardToneClass = {
           </div>
           <div class="kpi">
             <div class="kpi-num kpi-time">
-              <span class="kpi-time-start">{{ openHours.open }}</span>
-              <span class="kpi-time-end"><span class="kpi-tilde">~</span>{{ openHours.close }}</span>
+              <span class="kpi-time-start">{{ openHours.text }}</span>
+              <span class="kpi-time-end">{{ openHours.name }}</span>
             </div>
-            <div class="kpi-label">今日开放</div>
+            <div class="kpi-label">当日开放示例（校园时区）</div>
           </div>
         </div>
       </section>
@@ -254,7 +262,7 @@ const cardToneClass = {
         <div class="card-title-row"><h3>找到你的专注空间</h3><span class="muted">自习室</span></div>
         <div class="room-list">
           <button v-for="room in rooms" :key="room.id" class="room-link" @click="router.push(auth.isAdmin ? '/admin' : '/booking')">
-            <span><b>{{ room.name }}</b><small>{{ room.location }} · {{ room.open_time?.slice(0,5) }}–{{ room.close_time?.slice(0,5) }}</small></span><span aria-hidden="true">↗</span>
+            <span><b>{{ room.name }}</b><small>{{ room.location }} · {{ roomOpeningText(room) }}</small></span><span aria-hidden="true">↗</span>
           </button>
           <p v-if="roomsLoading" class="muted">正在加载自习室…</p>
           <SBanner v-else-if="roomsError" type="error" :title="roomsError"><SButton size="sm" @click="loadRooms">重试</SButton></SBanner>

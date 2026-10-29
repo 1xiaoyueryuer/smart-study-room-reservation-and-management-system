@@ -13,7 +13,8 @@ import static cn.studyroom.Store.*;
 public class StatsService {
     private final Store db;
     private final Clock clock;
-    public StatsService(Store db,Clock clock) { this.db=db;this.clock=clock; }
+    private final OpeningScheduleService opening;
+    public StatsService(Store db,Clock clock,OpeningScheduleService opening) { this.db=db;this.clock=clock;this.opening=opening; }
     private List<Map<String,Object>> used(LocalDate from,LocalDate until) {
         return db.list("SELECT rv.*,s.room_id,s.seat_no,r.name AS room_name FROM reservations rv JOIN seats s ON s.id=rv.seat_id JOIN rooms r ON r.id=s.room_id WHERE rv.res_date>=? AND rv.res_date<=? AND rv.status IN ('completed','checked_in','temp_leave') AND rv.checkin_at IS NOT NULL",Date.valueOf(from),Date.valueOf(until));
     }
@@ -24,17 +25,17 @@ public class StatsService {
         return actual.isBefore(scheduled)?actual:scheduled;
     }
     private double hours(Map<String,Object> row) { return Math.max(0,Duration.between(from(row),to(row)).toSeconds()/3600.0); }
-    private double capacity() {
-        double n=0;
-        for(var room:db.list("SELECT r.*, (SELECT count(*) FROM seats s WHERE s.room_id=r.id AND s.status='available') AS seats FROM rooms r WHERE r.enabled"))
-            n+=Duration.between(LocalTime.parse(text(room,"open_time")),LocalTime.parse(text(room,"close_time"))).toMinutes()/60.0*id(room,"seats");
-        return n;
+    private List<OpeningScheduleService.Calendar> calendars() { return db.list("SELECT id FROM rooms ORDER BY id").stream().map(row->opening.calendar(id(row,"id"))).toList(); }
+    private double capacity(LocalDate day,List<OpeningScheduleService.Calendar> calendars) {
+        double minutes=0;
+        for(var calendar:calendars) for(var seat:calendar.seats) for(var window:calendar.day(day,id(seat,"id")).windows()) minutes+=window.endMinute()-window.startMinute();
+        return minutes/60.0;
     }
     public List<Map<String,Object>> trend(int days) {
         days=bound(days,1,90);LocalDate today=LocalDate.now(clock);var rows=used(today.minusDays(days),today.minusDays(1));
-        var result=new ArrayList<Map<String,Object>>();double cap=capacity();
+        var result=new ArrayList<Map<String,Object>>();var calendars=calendars();
         for(int d=days;d>0;d--) {
-            String date=today.minusDays(d).toString();var day=rows.stream().filter(x->date.equals(x.get("res_date"))).toList();
+            double cap=capacity(today.minusDays(d),calendars);String date=today.minusDays(d).toString();var day=rows.stream().filter(x->date.equals(x.get("res_date"))).toList();
             result.add(Map.of("date",date,"count",day.size(),"utilization",cap==0?0:day.stream().mapToDouble(this::hours).sum()/cap));
         }
         return result;
@@ -53,7 +54,7 @@ public class StatsService {
         return result.subList(0,Math.min(bound(limit,1,50),result.size()));
     }
     public Map<String,Object> overview() {
-        LocalDate today=LocalDate.now(clock);double cap=capacity(),hours=used(today,today).stream().mapToDouble(this::hours).sum();
+        LocalDate today=LocalDate.now(clock);double cap=capacity(today,calendars()),hours=used(today,today).stream().mapToDouble(this::hours).sum();
         return Map.of("total_seats",db.count("SELECT count(*) FROM seats s JOIN rooms r ON r.id=s.room_id WHERE s.status='available' AND r.enabled"),
                 "active_today",db.count("SELECT count(*) FROM reservations WHERE res_date=? AND status<>'cancelled'",Date.valueOf(today)),
                 "in_use_now",db.count("SELECT count(*) FROM reservations WHERE res_date=? AND status IN ('checked_in','temp_leave')",Date.valueOf(today)),
@@ -61,21 +62,28 @@ public class StatsService {
     }
     public Map<String,Object> heatmap(long roomId,String date) {
         LocalDate day;try { day=date==null||date.isBlank()?LocalDate.now(clock):LocalDate.parse(date); }catch(DateTimeException e) { throw Api.fail(400,"日期格式错误"); }
-        var room=db.one("SELECT * FROM rooms WHERE id=?",roomId);var seats=db.list("SELECT * FROM seats WHERE room_id=? ORDER BY row_no,col_no",roomId);
-        var rows=used(day,day).stream().filter(x->id(x,"room_id")==roomId).toList();
-        LocalDateTime opening=day.atTime(LocalTime.parse(text(room,"open_time"))),closing=day.atTime(LocalTime.parse(text(room,"close_time")));
-        var times=new ArrayList<LocalDateTime>();for(var t=opening;t.isBefore(closing);t=t.plusHours(1)) times.add(t);
-        var cells=new ArrayList<List<Integer>>();double[] hourly=new double[times.size()];
+        var calendar=opening.calendar(roomId);var room=new LinkedHashMap<>(calendar.room);room.remove("open_time");room.remove("close_time");room.put("opening_windows",calendar.day(day,null).view());room.put("campus_zone",OpeningScheduleService.ZONE);
+        var seats=calendar.seats;var rows=used(day,day).stream().filter(x->id(x,"room_id")==roomId).toList();
+        // 以正式窗口和座位临停边界切分，热力单元不会跨越闭馆段。
+        var edges=new TreeSet<Integer>();
+        for(var window:calendar.day(day,null).windows()) { edges.add(window.startMinute());edges.add(window.endMinute());for(int t=window.startMinute();t<window.endMinute();t+=60) edges.add(t); }
+        for(var seat:seats) for(var window:calendar.day(day,id(seat,"id")).windows()) { edges.add(window.startMinute());edges.add(window.endMinute()); }
+        var points=new ArrayList<>(edges);var times=new ArrayList<LocalDateTime>();var ends=new ArrayList<LocalDateTime>();
+        for(int i=0;i+1<points.size();i++) {
+            var left=day.atStartOfDay().plusMinutes(points.get(i));var right=day.atStartOfDay().plusMinutes(points.get(i+1));
+            if(calendar.day(day,null).contains(day,left,right)) { times.add(left);ends.add(right); }
+        }
+        var cells=new ArrayList<List<Integer>>();double[] hourly=new double[times.size()];long[] eligible=new long[times.size()];
         for(var seat:seats) {
-            var cell=new ArrayList<Integer>();
+            var cell=new ArrayList<Integer>();var seatDay=calendar.day(day,id(seat,"id"));
             for(int h=0;h<times.size();h++) {
-                LocalDateTime left=times.get(h),right=left.plusHours(1).isAfter(closing)?closing:left.plusHours(1);
+                LocalDateTime left=times.get(h),right=ends.get(h);boolean legal=seatDay.contains(day,left,right);
                 boolean occupied=rows.stream().anyMatch(x->id(x,"seat_id")==id(seat,"id")&&from(x).isBefore(right)&&to(x).isAfter(left));
-                cell.add(occupied?1:0);if(occupied&&"available".equals(seat.get("status"))) hourly[h]++;
+                cell.add(occupied?1:0);if(legal) { eligible[h]++;if(occupied) hourly[h]++; }
             }
             cells.add(cell);
         }
-        long count=seats.stream().filter(x->"available".equals(x.get("status"))).count();for(int i=0;i<hourly.length;i++) hourly[i]=count==0?0:hourly[i]/count;
+        for(int i=0;i<hourly.length;i++) hourly[i]=eligible[i]==0?0:hourly[i]/eligible[i];
         return Map.of("room",room,"seats",seats,"hours",times.stream().map(x->x.toLocalTime().toString()).toList(),"cells",cells,"hourly_usage",hourly);
     }
     private int bound(int n,int min,int max) { return Math.max(min,Math.min(n,max)); }

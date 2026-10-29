@@ -67,3 +67,11 @@ export function listRoomSeats(roomId) {
 export function createSeat(roomId, data) {
   return request.post(`/admin/rooms/${roomId}/seats`, data)
 }
+
+export function getRoomSchedule(roomId) { return request.get(`/admin/rooms/${roomId}/opening-windows`) }
+export function saveRoomSchedule(roomId, data) { return request.put(`/admin/rooms/${roomId}/opening-windows`, data) }
+export function deleteDateException(roomId, data) { return request.delete(`/admin/rooms/${roomId}/opening-windows`, { data }) }
+export function listUnavailability(roomId) { return request.get(`/admin/rooms/${roomId}/unavailability`) }
+export function createUnavailability(roomId, data) { return request.post(`/admin/rooms/${roomId}/unavailability`, data) }
+export function updateUnavailability(roomId, id, data) { return request.put(`/admin/rooms/${roomId}/unavailability/${id}`, data) }
+export function cancelUnavailability(roomId, id, data) { return request.delete(`/admin/rooms/${roomId}/unavailability/${id}`, { data }) }

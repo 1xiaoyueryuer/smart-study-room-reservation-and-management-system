@@ -23,6 +23,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class UserIntegrationTest {
     @Autowired MockMvc http;
     @Autowired Store db;
+    @Autowired OpeningScheduleService opening;
     @Autowired ObjectMapper json;
     @Autowired StringRedisTemplate redis;
     Map<String,Long> ids;
@@ -31,7 +32,7 @@ class UserIntegrationTest {
 
     @BeforeEach void fixture() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"),"禁止操作其他数据库");
-        for(String table:List.of("audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         ids=new LinkedHashMap<>();remote="s03-test-"+UUID.randomUUID();
         String hash=new BCryptPasswordEncoder().encode(PASSWORD);
         for(String role:List.of("student","staff","admin")) ids.put(role,db.insert("INSERT INTO users(username,password_hash,real_name,campus_id,role) VALUES(?,?,?,?,?)","s03_"+role,hash,"S03模拟"+role,"S03-"+role,role));
@@ -82,6 +83,7 @@ class UserIntegrationTest {
         String admin=token("admin");long uid=ids.get("staff");
         String hash=Store.text(db.one("SELECT password_hash FROM users WHERE id=?",uid),"password_hash");
         long room=db.insert("INSERT INTO rooms(name,seat_rows,seat_cols) VALUES('history-room',1,1)");
+        opening.initializeDefaults(room);
         long seat=db.insert("INSERT INTO seats(room_id,seat_no,row_no,col_no) VALUES(?,'01',1,1)",room);
         db.update("INSERT INTO reservations(user_id,seat_id,res_date,start_time,end_time,status) VALUES(?,?,'2026-10-20','10:00','11:00','completed')",uid,seat);
         var changes=user("staff","UPDATED-STAFF","s03_staff");changes.remove("password");changes.put("real_name","已编辑模拟姓名");

@@ -9,7 +9,7 @@ public final class Requests {
     public record Register(@NotBlank @Size(min=3,max=50) String username,@NotBlank @Size(min=6,max=64) String password,
                            @JsonProperty("real_name") @NotBlank @Size(max=50) String realName,@JsonProperty("student_no") @Size(max=20) String studentNo) {}
     public record Room(@NotBlank @Size(max=100) String name,@Size(max=200) String location,
-                       @JsonProperty("open_time") @NotBlank String openTime,@JsonProperty("close_time") @NotBlank String closeTime,
+                       @JsonProperty("open_time") String openTime,@JsonProperty("close_time") String closeTime,
                        @JsonProperty("seat_rows") @Min(1) @Max(30) int seatRows,@JsonProperty("seat_cols") @Min(1) @Max(30) int seatCols,
                        @Size(max=5000) String description,@Size(max=100) String building,@Size(max=30) String floor,
                        @NotNull Boolean enabled,@Positive Long version,@NotBlank @Size(max=1000) String reason) {}
@@ -22,6 +22,12 @@ public final class Requests {
                        @JsonProperty("row_no") @Min(1) int rowNo,@JsonProperty("col_no") @Min(1) int colNo,
                        @NotNull @Positive Long version,@NotBlank @Size(max=1000) String reason) {}
     public record ResourceDelete(@NotNull @Positive Long version,@NotBlank @Size(max=1000) String reason) {}
+    public record OpeningWindow(@NotBlank String start,@NotBlank String end) {}
+    public record OpeningChange(Integer weekday,String date,@NotNull java.util.List<@javax.validation.Valid OpeningWindow> windows,
+                                @NotNull @Positive Long version,@NotBlank @Size(max=1000) String reason) {}
+    public record OpeningDelete(@NotBlank String date,@NotNull @Positive Long version,@NotBlank @Size(max=1000) String reason) {}
+    public record Unavailability(@JsonProperty("seat_id") @Positive Long seatId,@JsonProperty("start_at") @NotBlank String startAt,
+                                 @JsonProperty("end_at") @NotBlank String endAt,@NotNull @Positive Long version,@NotBlank @Size(max=1000) String reason) {}
     public record Status(@NotBlank @Pattern(regexp="active|disabled") String status,@NotBlank @Size(max=1000) String reason) {}
     public record UserChange(@NotBlank @Size(min=3,max=50) String username,
             @JsonProperty("real_name") @NotBlank @Size(max=50) String realName,

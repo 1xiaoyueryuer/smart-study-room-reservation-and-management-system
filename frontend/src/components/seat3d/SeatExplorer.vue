@@ -11,7 +11,7 @@ const panel = ref(null), backdrop = ref(null), content = ref(null), snapshot = r
 const Scene = shallowRef(null), error = ref(''), ready = ref(false), closing = ref(false), opening = ref(true), view = ref('overview')
 const selected = computed(() => props.seats.find(s => s.id === props.selectedId))
 const sceneRef = ref(null)
-const canExperience = computed(() => ready.value && props.room?.enabled && !error.value && selected.value?.status === 'available' && !selected.value?.occupied)
+const canExperience = computed(() => ready.value && props.room?.enabled && !error.value && selected.value?.status === 'available' && selected.value?.bookable_for_slot === true && !selected.value?.occupied)
 watch(canExperience, valid => { if (!valid && view.value === 'firstPerson') view.value = 'overview' })
 const busy = computed(() => props.loading || props.submitting || opening.value || closing.value || !!feedbackState.box)
 let sceneLoadFrame = 0
@@ -169,8 +169,8 @@ onBeforeUnmount(() => {
           </div>
           <footer class="explorer-footer">
             <div class="explorer-selection" aria-live="polite"><strong>{{ selected ? `已选择 ${selected.seat_no}` : '找一个喜欢的位置' }}</strong><span>{{ selected ? `${seatType(selected)} · ${zoneName[selected.zone]}${selected.near_window ? ' · 靠窗' : ''}` : '选择可预约的桌椅，或使用座位列表' }}</span></div>
-            <label class="seat-list"><span class="sr-only">按编号选择座位</span><select :value="selectedId ?? ''" :disabled="busy || !!error" @change="chooseFromList"><option value="" disabled>按编号选座</option><option v-for="s in seats" :key="s.id" :value="s.id" :disabled="s.status !== 'available' || s.occupied">{{ s.seat_no }} · {{ stateLabels[seatState(s, selectedId)] }}</option></select></label>
-            <SButton variant="primary" size="lg" :disabled="!room?.enabled || !selected || busy || !!error" :loading="submitting" @click="emit('submit')">提交预约</SButton>
+            <label class="seat-list"><span class="sr-only">按编号选择座位</span><select :value="selectedId ?? ''" :disabled="busy || !!error" @change="chooseFromList"><option value="" disabled>按编号选座</option><option v-for="s in seats" :key="s.id" :value="s.id" :disabled="s.status !== 'available' || s.bookable_for_slot !== true || s.occupied">{{ s.seat_no }} · {{ stateLabels[seatState(s, selectedId)] }}</option></select></label>
+            <SButton variant="primary" size="lg" :disabled="!room?.enabled || !selected || selected.bookable_for_slot !== true || busy || !!error" :loading="submitting" @click="emit('submit')">提交预约</SButton>
           </footer>
         </div>
       </section>

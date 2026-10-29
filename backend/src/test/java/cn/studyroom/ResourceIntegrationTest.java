@@ -23,6 +23,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class ResourceIntegrationTest {
     @Autowired MockMvc http;
     @Autowired Store db;
+    @Autowired OpeningScheduleService opening;
     @Autowired ObjectMapper json;
     @Autowired StringRedisTemplate redis;
     @Autowired BookingService bookings;
@@ -34,10 +35,11 @@ class ResourceIntegrationTest {
     static final String PASSWORD="S02-test-only-password";
     @BeforeEach void fixture() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"));
-        for(String table:List.of("audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         ids=new LinkedHashMap<>();remote="s05-test-"+UUID.randomUUID();String hash=new BCryptPasswordEncoder().encode(PASSWORD);
         for(String role:List.of("student","staff","admin")) ids.put(role,db.insert("INSERT INTO users(username,password_hash,real_name,campus_id,role) VALUES(?,?,?,?,?)","s05_"+role,hash,"S05模拟"+role,"S05-"+role,role));
         room=db.insert("INSERT INTO rooms(name,building,floor,location,seat_rows,seat_cols) VALUES('S05模拟空间','模拟楼','B1','东侧',2,3)");
+        opening.initializeDefaults(room);
         seat1=db.insert("INSERT INTO seats(room_id,seat_no,row_no,col_no) VALUES(?,'A1',1,1)",room);
         seat2=db.insert("INSERT INTO seats(room_id,seat_no,row_no,col_no) VALUES(?,'A2',1,2)",room);
     }
@@ -48,7 +50,7 @@ class ResourceIntegrationTest {
         return json.readTree(response.getResponse().getContentAsString()).path("data").path("token").asText();
     }
     Map<String,Object> roomBody(long version,boolean enabled) {
-        var body=new LinkedHashMap<String,Object>();body.put("name","S05模拟空间");body.put("building","模拟楼");body.put("floor","B1");body.put("location","东侧");body.put("seat_rows",2);body.put("seat_cols",3);body.put("description","模拟资源维护");body.put("open_time","08:00");body.put("close_time","22:00");body.put("enabled",enabled);body.put("version",version);body.put("reason","测试维护资源");return body;
+        var body=new LinkedHashMap<String,Object>();body.put("name","S05模拟空间");body.put("building","模拟楼");body.put("floor","B1");body.put("location","东侧");body.put("seat_rows",2);body.put("seat_cols",3);body.put("description","模拟资源维护");body.put("enabled",enabled);body.put("version",version);body.put("reason","测试维护资源");return body;
     }
     Map<String,Object> seatBody(String number,int row,int col,long version,String status) {
         return new LinkedHashMap<>(Map.of("seat_no",number,"row_no",row,"col_no",col,"version",version,"status",status,"zone","regular","has_power",false,"near_window",false,"reason","测试座位维护"));
@@ -100,7 +102,7 @@ class ResourceIntegrationTest {
         http.perform(payload(put("/api/admin/seats/"+seat1),admin,seatBody("MOVED",2,1,1,"available"))).andExpect(status().isConflict());
         http.perform(payload(put("/api/admin/rooms/"+room),admin,roomBody(1,false))).andExpect(status().isConflict());
         var move=roomBody(1,true);move.put("floor","2F");http.perform(payload(put("/api/admin/rooms/"+room),admin,move)).andExpect(status().isConflict());
-        var hours=roomBody(1,true);hours.put("open_time","12:00");http.perform(payload(put("/api/admin/rooms/"+room),admin,hours)).andExpect(status().isConflict());
+        http.perform(payload(put("/api/admin/rooms/"+room+"/opening-windows"),admin,Map.of("date",booking(seat1).date(),"windows",List.of(Map.of("start","12:00","end","22:00")),"version",1,"reason","测试缩短开放"))).andExpect(status().isConflict());
         var layout=roomBody(1,true);layout.put("seat_cols",4);http.perform(payload(put("/api/admin/rooms/"+room),admin,layout)).andExpect(status().isOk());
         assertEquals("pending",db.one("SELECT status FROM reservations WHERE id=?",reservation).get("status"));
         var describe=roomBody(2,true);describe.put("description","只修改说明，不中止预约");http.perform(payload(put("/api/admin/rooms/"+room),admin,describe)).andExpect(status().isOk());
@@ -128,6 +130,7 @@ class ResourceIntegrationTest {
         assertEquals(2,db.count("SELECT count(*) FROM seats WHERE room_id=? AND resource_reason='生成模拟座位'",closedEmpty));
         assertEquals(1,db.count("SELECT count(*) FROM audit_events WHERE action='room.seats.batch' AND object_id=? AND reason='生成模拟座位'",Long.toString(closedEmpty)));
         long other=db.insert("INSERT INTO rooms(name,seat_rows,seat_cols) VALUES('另一个模拟空间',1,1)");
+        opening.initializeDefaults(other);
         db.insert("INSERT INTO seats(room_id,seat_no,row_no,col_no) VALUES(?,'01',1,1)",other);
         bookings.join(ids.get("staff"),new Requests.Wait(other,booking(seat1).date(),"10:00","11:00",null,null,null));
         bookings.tick();

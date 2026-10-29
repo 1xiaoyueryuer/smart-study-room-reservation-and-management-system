@@ -7,6 +7,7 @@ export function seatType(s) {
 }
 export function seatState(s, selectedId) {
   if (s.status !== 'available') return s.status === 'maintenance' ? 'maintenance' : 'disabled'
+  if (s.bookable_for_slot === false) return 'disabled'
   if (s.occupied) return 'occupied'
   return s.id === selectedId ? 'selected' : 'available'
 }

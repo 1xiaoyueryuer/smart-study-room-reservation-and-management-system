@@ -25,6 +25,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class PermissionIntegrationTest {
     @Autowired MockMvc http;
     @Autowired Store db;
+    @Autowired OpeningScheduleService opening;
     @Autowired ObjectMapper json;
     @Autowired AuthService auth;
     @Autowired BookingService bookings;
@@ -38,12 +39,13 @@ class PermissionIntegrationTest {
 
     @BeforeEach void fixture() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"),"禁止操作其他数据库");
-        for(String table:List.of("audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         remote="s02-test-"+UUID.randomUUID();
         ids=new LinkedHashMap<>();
         String hash=new BCryptPasswordEncoder().encode(PASSWORD);
         for(String role:List.of("student","staff","admin")) ids.put(role,db.insert("INSERT INTO users(username,password_hash,real_name,role) VALUES(?,?,?,?)","s02_"+role,hash,"S02模拟"+role,role));
         room=db.insert("INSERT INTO rooms(name,seat_rows,seat_cols) VALUES('S02模拟空间',1,2)");
+        opening.initializeDefaults(room);
         seat1=db.insert("INSERT INTO seats(room_id,seat_no,row_no,col_no) VALUES(?,'01',1,1)",room);
         seat2=db.insert("INSERT INTO seats(room_id,seat_no,row_no,col_no) VALUES(?,'02',1,2)",room);
     }
