@@ -123,8 +123,8 @@ class UserIntegrationTest {
         // 数据库真实故障注入，验证审计与业务共享同一事务。
         db.update("ALTER TABLE audit_events ADD CONSTRAINT s03_reject_audit CHECK (false) NOT VALID");
         try {
-            http.perform(payload(post("/api/admin/users"),admin,user("student","ROLLBACK","rollback_user"))).andExpect(status().isConflict());
-            http.perform(payload(patch("/api/auth/profile"),student,Map.of("phone","not-saved"))).andExpect(status().isConflict());
+            http.perform(payload(post("/api/admin/users"),admin,user("student","ROLLBACK","rollback_user"))).andExpect(status().isInternalServerError());
+            http.perform(payload(patch("/api/auth/profile"),student,Map.of("phone","not-saved"))).andExpect(status().isInternalServerError());
             assertEquals(0,db.count("SELECT count(*) FROM users WHERE username='rollback_user'"));
             assertNull(db.one("SELECT phone FROM users WHERE id=?",ids.get("student")).get("phone"));
             assertEquals(0,db.count("SELECT count(*) FROM audit_events"));

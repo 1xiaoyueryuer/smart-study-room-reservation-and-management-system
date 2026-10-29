@@ -35,6 +35,7 @@ async function management(overrides = {}) {
     '../../stores/auth': { ROLE_LABELS: { student: '学生', staff: '教职工', admin: '管理员' }, useAuthStore: () => ({ user: { id: 1 }, setUser: value => { effects.profile = value } }) },
     '../../api/admin': api,
     './userForm.js': { userPayload },
+    './UserImport.vue': { default: {} },
     '../ui/feedback': { message: { success() {} }, promptDialog: async () => ({ value: '测试理由' }) }
   }
   for (const name of ['SButton', 'SInput', 'SSelect', 'SDialog', 'STag', 'SEmpty', 'SBanner']) mocks[`../ui/${name}.vue`] = { default: {} }
@@ -79,4 +80,16 @@ test('editing current administrator refreshes safe profile in authentication sto
   assert.equal(page.effects.profile.id, 1)
   assert.equal(page.effects.requests[0][0], 'update')
   assert.equal('password' in page.effects.requests[0][2], false)
+})
+test('a stale list read cannot overwrite a newer refresh after import', async () => {
+  const pending = []
+  const page = await management({ listUsers: () => new Promise(resolve => pending.push(resolve)) })
+  const older = page.loadUsers()
+  const latest = page.loadUsers()
+  pending[1]({ data: [{ id: 10, status: 'active' }] })
+  await latest
+  pending[0]({ data: [] })
+  await older
+  assert.equal(page.effects.summaries.length, 1)
+  assert.equal(page.effects.summaries[0].total, 1)
 })

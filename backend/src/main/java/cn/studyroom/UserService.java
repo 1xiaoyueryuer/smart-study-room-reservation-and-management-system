@@ -35,7 +35,7 @@ public class UserService {
         String password=body.password();
         boolean reset=password!=null&&!password.isEmpty();
         Api.require(id!=null||reset,400,"新账号必须提供初始口令");
-        if(reset) Api.require(!password.isBlank()&&password.length()>=6&&password.length()<=64&&password.getBytes(StandardCharsets.UTF_8).length<=72,400,"口令须为6至64个字符且UTF-8长度不超过72字节");
+        if(reset) validateInitialPassword(password);
         String phone=AuthService.blankNull(body.phone()),email=AuthService.blankNull(body.email());
         long target;
         if(id==null) {
@@ -72,6 +72,17 @@ public class UserService {
         // 本人维护无管理理由输入；记录真实操作类型，与管理提供的理由分开。
         audit.record(uid,"user.contacts.update","user",Long.toString(uid),"本人更新联系方式",snapshot(before),snapshot(after));
         return after;
+    }
+    @Transactional(propagation=org.springframework.transaction.annotation.Propagation.SUPPORTS)
+    public void validateInitialPassword(String password) {
+        Api.require(password!=null&&!password.isBlank()&&password.length()>=6&&password.length()<=64&&password.getBytes(StandardCharsets.UTF_8).length<=72,400,"口令须为6至64个字符且UTF-8长度不超过72字节");
+    }
+    @Transactional(propagation=org.springframework.transaction.annotation.Propagation.SUPPORTS)
+    public List<String> creationErrors(Requests.UserChange value) {
+        var errors=new ArrayList<String>();
+        validator.validate(value).stream().map(x->x.getPropertyPath()+": "+x.getMessage()).sorted().forEach(errors::add);
+        if(AuthService.blankNull(value.campusId())==null) errors.add("campus_id: 新账号必须提供校园编号");
+        return errors;
     }
     private void requireAdmin(long actor) { Api.require("admin".equals(auth.profile(actor).get("role")),403,"需要管理员权限"); }
     private void validate(Object value) {

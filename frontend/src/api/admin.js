@@ -40,3 +40,22 @@ export function createUser(data) {
 export function updateUser(id, data) {
   return request.put(`/admin/users/${id}`, data)
 }
+
+export function userImportTemplate() {
+  return request.get('/admin/users/import/template', { responseType: 'blob' })
+}
+
+export function previewUserImport(file) {
+  const data = new FormData()
+  data.append('file', file)
+  return request.post('/admin/users/import/preview', data)
+}
+
+export function confirmUserImport(file, fileSha256, initialPassword, reason) {
+  const data = new FormData()
+  data.append('file', file)
+  data.append('file_sha256', fileSha256)
+  data.append('initial_password', initialPassword)
+  data.append('reason', reason)
+  return request.post('/admin/users/import/confirm', data, { timeout: 120000, silent: true })
+}

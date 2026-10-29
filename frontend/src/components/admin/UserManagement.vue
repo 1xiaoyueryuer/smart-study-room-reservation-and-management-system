@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
+import UserImport from './UserImport.vue'
 import { ROLE_LABELS, useAuthStore } from '../../stores/auth'
 import { createUser, updateUser, listUsers, setUserStatus } from '../../api/admin'
 import { userPayload } from './userForm.js'
@@ -15,6 +16,7 @@ import SBanner from '../ui/SBanner.vue'
 const emit = defineEmits(['summary'])
 const auth = useAuthStore()
 const users = ref([])
+let loadSequence = 0
 const loading = ref(false)
 const error = ref('')
 const dialog = ref(false)
@@ -28,18 +30,20 @@ const roles = Object.entries(ROLE_LABELS).map(([value, label]) => ({ value, labe
 const statuses = [{ value: 'active', label: '正常' }, { value: 'disabled', label: '禁用' }]
 
 async function loadUsers() {
-  if (loading.value) return
+  const sequence = ++loadSequence
   loading.value = true
   error.value = ''
   try {
     const response = await listUsers()
+    if (sequence !== loadSequence) return
     users.value = response.data
     emit('summary', { total: users.value.length, disabled: users.value.filter(user => user.status === 'disabled').length })
   } catch (failure) {
+    if (sequence !== loadSequence) return
     error.value = failure.message
     emit('summary', null)
   } finally {
-    loading.value = false
+    if (sequence === loadSequence) loading.value = false
   }
 }
 function openCreate() {
@@ -115,6 +119,7 @@ defineExpose({ loadUsers, openCreate })
         <td><div class="row-actions"><SButton size="sm" @click="openEdit(user)">编辑账号</SButton><SButton v-if="String(user.id) !== String(auth.user?.id)" size="sm" :loading="statusBusy === user.id" :disabled="statusBusy !== null" @click="toggleStatus(user)">{{ user.status === 'active' ? '禁用账号' : '启用账号' }}</SButton><span v-else class="muted">当前账号</span></div></td>
       </tr></tbody>
     </table><SEmpty v-if="!users.length" description="暂无校园账号，可创建学生或教职工账号" /></div></div>
+    <UserImport @imported="loadUsers" @refresh="loadUsers" />
     <SDialog v-model="dialog" :title="editing === null ? '创建校园账号' : '编辑校园账号'" width="660px" :close-on-click-modal="!saving" :show-close="!saving">
       <form id="account-form" class="account-form" @submit.prevent="saveUser">
         <p v-if="formError" role="alert" class="form-error">{{ formError }}</p>
