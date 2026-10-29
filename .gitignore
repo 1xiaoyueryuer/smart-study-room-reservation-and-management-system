@@ -46,3 +46,6 @@ backend/target/
 # Python cache
 __pycache__/
 *.pyc
+
+# Per-developer drafts and complete debug logs
+work/

@@ -6,6 +6,15 @@
 
 当前是可运行的迁移底座。本组“三种找座方案、投诉申诉、累计违规限制”等业务改造尚待下一阶段落实，详见 [迁移说明与需求差距](docs/MIGRATION.md)。
 
+## 后续开发从这里开始
+
+1. 阅读 [AGENTS.md](AGENTS.md)、[CONTRIBUTING.md](CONTRIBUTING.md)、[团队分工](docs/团队分工.md) 和 [文档索引](docs/README.md)。
+2. 使用本人固定分支 member/a～member/d；新功能先完善两份方案，连续实施、验证、自查后中文提交，再通过 PR 人工审核、普通合并进入 main。
+3. 既有首版标签 v1.0.0-postgresql 保留。当前 A/B/C 账号、独立审核人与强制分支保护尚未配置，规则文件不等于已完成权限隔离。
+4. 仓库检查：`python scripts/check_repository.py`；检查器测试：`python -m unittest discover -s scripts/tests -v`。业务构建与验证见下文。
+
+智能体开工提示：先读上述约定；我是成员 A/B/C/D，本次功能为 Fxx-名称，允许修改范围为具体文件/目录。可以阅读相关代码，按两份方案连续完成实现与验证；不改他人未授权模块，不新造分支或重复报告，只推本人分支并创建PR。
+
 ## 本机运行
 
 打开 Docker Desktop，在本项目目录运行：
