@@ -21,9 +21,13 @@ spring:
   jackson:
     property-naming-strategy: SNAKE_CASE
     time-zone: Asia/Shanghai
+  flyway:
+    baseline-on-migrate: false
+    clean-disabled: true
+    validate-on-migrate: true
   sql:
     init:
-      mode: always
+      mode: never
       encoding: UTF-8
 studyroom:
   jwt-secret: ${STUDYROOM_JWT_SECRET}

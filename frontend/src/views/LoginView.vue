@@ -15,6 +15,7 @@ const auth = useAuthStore()
 
 const mode = ref('login') // login | register
 const loading = ref(false)
+const loginError = ref('')
 
 const loginForm = reactive({ username: 'stu01', password: '123456' })
 const regForm = reactive({ username: '', password: '', confirm: '', real_name: '', student_no: '' })
@@ -24,12 +25,15 @@ async function onLogin() {
     message.warning('请输入用户名与口令')
     return
   }
+  loginError.value = ''
   loading.value = true
   try {
     const resp = await login(loginForm)
     auth.setLogin(resp.data)
     message.success('登录成功')
     router.push(route.query.redirect || '/')
+  } catch (error) {
+    loginError.value = error.message
   } finally {
     loading.value = false
   }
@@ -128,6 +132,7 @@ const features = [
         </div>
 
         <form v-if="mode === 'login'" class="auth-form" @submit.prevent="onLogin">
+          <p v-if="loginError" role="alert" class="form-label">{{ loginError }}</p>
           <div class="form-field">
             <label class="form-label" for="login-username">用户名</label>
             <SInput id="login-username" v-model="loginForm.username" size="lg" placeholder="用户名" autocomplete="username" />

@@ -60,6 +60,8 @@ Java 从 `.local/server.jar` 独立副本运行，不锁定 Maven 构建产物�
 
 随机口令只保存在上述被 Git 忽略的本地文件中。可在 IDEA、DataGrip、DBeaver 等工具中按该配置连接。数据库与旧 openGauss 的5432端口独立；没有改动原有业务数据。
 
+数据库结构由 Flyway 增量迁移管理。旧版无迁移历史的数据库首次升级默认拒绝启动；停服务并备份后，通过应用参数 `--studyroom.migration.adopt-legacy=true` 一次接管，程序核对结构与V1一致后才升级，完成后移除参数。未知结构不能盲目baseline；恢复与验证见 [F01架构方案](docs/features/F01-校园账号与权限/校园账号与权限功能架构方案.md)。
+
 首次部署或换一台电脑时：
 
 ```powershell

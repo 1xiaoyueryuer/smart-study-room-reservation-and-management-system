@@ -2,7 +2,7 @@ import request from './request'
 
 // 认证相关 API
 export function login(data) {
-  return request.post('/auth/login', data)
+  return request.post('/auth/login', data, { silent: true, skipAuthHandling: true })
 }
 
 export function register(data) {

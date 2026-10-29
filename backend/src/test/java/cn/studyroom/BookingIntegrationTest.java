@@ -22,13 +22,15 @@ class BookingIntegrationTest {
     @Autowired ResourceService resources;
     @Autowired StatsService stats;
     @Autowired Environment env;
+    @Autowired AuditService audit;
+    @Autowired org.springframework.transaction.support.TransactionTemplate transactions;
     long u1,u2,room,s1,s2;
     @TestConfiguration static class TimeConfig {
         @Bean @Primary Clock fixedClock() { return Clock.fixed(Instant.parse("2026-10-30T01:00:00Z"),ZoneId.of("Asia/Shanghai")); }
     }
     @BeforeEach void setup() {
         assertTrue(env.getProperty("spring.datasource.url","").endsWith("/studyroom_java_test"),"必须使用独立测试库");
-        for(String table:List.of("credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         u1=db.insert("INSERT INTO users(username,password_hash) VALUES('test1','unused')");
         u2=db.insert("INSERT INTO users(username,password_hash) VALUES('test2','unused')");
         room=Store.id(resources.save(null,new Requests.Room("测试空间","测试楼","08:00","22:00",1,2,"测试数据")),"id");
@@ -91,6 +93,30 @@ class BookingIntegrationTest {
         assertThrows(Api.Failure.class,()->resources.save(room,new Requests.Room("测试空间","测试楼","12:00","22:00",1,2,"")));
         assertThrows(Api.Failure.class,()->resources.deleteRoom(room));
         assertEquals("available",db.one("SELECT status FROM seats WHERE id=?",s1).get("status"));
+    }
+    @Test void auditSharesBusinessCommitAndRollback() {
+        transactions.executeWithoutResult(tx -> {
+            db.update("UPDATE users SET real_name='已更新' WHERE id=?", u1);
+            audit.record(u1,"update","user",Long.toString(u1),"测试更新",Map.of("real_name","未命名"),Map.of("real_name","已更新"));
+        });
+        assertEquals(1,db.count("SELECT count(*) FROM audit_events WHERE actor_id=?",u1));
+        assertThrows(IllegalStateException.class,()->transactions.executeWithoutResult(tx -> {
+            db.update("UPDATE users SET real_name='不应保存' WHERE id=?",u1);
+            audit.record(u1,"update","user",Long.toString(u1),"回滚测试",Map.of(),Map.of("real_name","不应保存"));
+            throw new IllegalStateException("故障");
+        }));
+        assertEquals("已更新",db.one("SELECT real_name FROM users WHERE id=?",u1).get("real_name"));
+        assertEquals(1,db.count("SELECT count(*) FROM audit_events"));
+        assertThrows(RuntimeException.class,()->transactions.executeWithoutResult(tx -> {
+            db.update("UPDATE users SET real_name='审计失败不应保存' WHERE id=?",u1);
+            audit.record(u1,"update","user",Long.toString(u1),"",Map.of(),Map.of());
+        }));
+        assertEquals("已更新",db.one("SELECT real_name FROM users WHERE id=?",u1).get("real_name"));
+    }
+    @Test void auditRejectsCredentialsAndRequiresTransaction() {
+        assertThrows(org.springframework.transaction.IllegalTransactionStateException.class,()->audit.record(u1,"update","user","1","test",Map.of(),Map.of()));
+        assertThrows(IllegalArgumentException.class,()->transactions.executeWithoutResult(tx -> audit.record(u1,"update","user","1","test",Map.of(),Map.of("nested",List.of(Map.of("password_hash","secret"))))));
+        assertEquals(0,db.count("SELECT count(*) FROM audit_events"));
     }
     private interface Work { void run(int n); }
     private List<Integer> race(int n,Work work) throws Exception {

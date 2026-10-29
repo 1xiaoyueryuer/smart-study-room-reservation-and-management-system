@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { requestError } from './requestError.js'
 import { message } from '../components/ui/feedback'
 import router from '../router'
 import { useAuthStore } from '../stores/auth'
@@ -22,8 +23,8 @@ request.interceptors.request.use((config) => {
 request.interceptors.response.use(
   (resp) => resp.data,
   (err) => {
-    const status = err.response?.status
-    const errMsg = err.response?.data?.message || '网络异常，请稍后重试'
+    const failure = requestError(err)
+    const { status, message: errMsg } = failure
     if (status === 401 && !err.config?.skipAuthHandling) {
       const expiredToken = localStorage.getItem('token') || ''
       if (expiredToken && expiredToken !== expiredTokenHandled) {
@@ -35,7 +36,7 @@ request.interceptors.response.use(
     } else if (!err.config?.silent) {
       message.error(errMsg)
     }
-    return Promise.reject(new Error(errMsg))
+    return Promise.reject(failure)
   }
 )
 
