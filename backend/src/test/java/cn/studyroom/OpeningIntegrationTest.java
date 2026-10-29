@@ -115,21 +115,22 @@ class OpeningIntegrationTest {
         assertEquals("checked_in",db.one("SELECT status FROM reservations WHERE id=?",id).get("status"));
         assertEquals(List.of(new OpeningScheduleService.Window(540,1320)),windows(d(0),seat1));
     }
-    @Test void querySubmissionAndLegacyCandidateFlowsUseSameAuthoritativeWindows() throws Exception {
+    @Test void querySubmissionUseCanonicalWindowsAndRetiredFlowsCannotBypass() throws Exception {
         day(d(1),List.of(w("08:00","12:00"),w("14:00","18:00")));
         block(seat1,at(1,"10:00"),at(1,"11:00"),"仅座位1临停");
         String studentToken=token("s06_student");
         http.perform(get("/api/rooms/"+room+"/seats").param("date",d(1)).param("start","10:00").param("end","11:00").header("Authorization","Bearer "+studentToken)).andExpect(status().isOk()).andExpect(jsonPath("$.data.seats[0].occupied").value(false)).andExpect(jsonPath("$.data.seats[0].bookable_for_slot").value(false)).andExpect(jsonPath("$.data.seats[1].bookable_for_slot").value(true));
         assertEquals(409,assertThrows(Api.Failure.class,()->bookings.create(student,new Requests.Reservation(seat1,d(1),"10:00","11:00"))).status);
-        var allocated=bookings.allocate(student,new Requests.Allocation(room,d(1),"10:00","11:00",null,null,null,0,true));
-        @SuppressWarnings("unchecked") var reservation=(Map<String,Object>)allocated.get("reservation");assertEquals(seat2,Store.id(reservation,"seat_id"));
-        assertEquals(409,assertThrows(Api.Failure.class,()->bookings.join(student,new Requests.Wait(room,d(1),"12:00","13:00",null,null,null))).status);
-        bookings.join(student,new Requests.Wait(room,d(1),"15:00","16:00",null,null,null));
+        assertEquals(410,assertThrows(Api.Failure.class,()->bookings.allocate(student,new Requests.Allocation(room,d(1),"10:00","11:00",null,null,null,0,true))).status);
+        var reservation=bookings.create(student,new Requests.Reservation(seat2,d(1),"10:00","11:00"));assertEquals(seat2,Store.id(reservation,"seat_id"));
+        assertEquals(410,assertThrows(Api.Failure.class,()->bookings.join(student,new Requests.Wait(room,d(1),"12:00","13:00",null,null,null))).status);
+        long waiting=db.insert("INSERT INTO waitlist(user_id,room_id,res_date,start_time,end_time) VALUES(?,?,?,TIME '15:00',TIME '16:00')",student,room,java.sql.Date.valueOf(d(1)));
         block(seat1,at(1,"15:00"),at(1,"16:00"),"座位1待处理");long waitingBlock=block(seat2,at(1,"15:00"),at(1,"16:00"),"座位2待处理");
         bookings.tick();assertEquals("waiting",db.one("SELECT status FROM waitlist WHERE user_id=?",student).get("status"));
         opening.cancelBlock(admin,room,waitingBlock,new Requests.ResourceDelete(version(),"座位2恢复"));
-        bookings.tick();assertEquals("promoted",db.one("SELECT status FROM waitlist WHERE user_id=?",student).get("status"));
-        assertEquals(1,db.count("SELECT count(*) FROM reservations WHERE seat_id=? AND start_time=TIME '15:00' AND source='waitlist'",seat2));
+        bookings.tick();assertEquals("waiting",db.one("SELECT status FROM waitlist WHERE user_id=?",student).get("status"));
+        assertEquals(0,db.count("SELECT count(*) FROM reservations WHERE source='waitlist'"));
+        bookings.cancelWait(student,waiting);assertEquals("cancelled",db.one("SELECT status FROM waitlist WHERE id=?",waiting).get("status"));
         var heat=http.perform(get("/api/stats/heatmap").param("room_id",""+room).param("date",d(1)).header("Authorization","Bearer "+token("s06_admin"))).andExpect(status().isOk()).andReturn();
         var hours=json.readTree(heat.getResponse().getContentAsString()).path("data").path("hours");assertFalse(hours.toString().contains("12:00"));assertTrue(hours.toString().contains("14:00"));
     }

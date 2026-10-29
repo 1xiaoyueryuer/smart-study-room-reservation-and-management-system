@@ -1,7 +1,6 @@
 package cn.studyroom;
 
 import java.sql.Date;
-import java.sql.Time;
 import java.sql.Timestamp;
 import java.time.*;
 import org.springframework.beans.factory.annotation.Value;
@@ -34,8 +33,8 @@ public class SeedData implements ApplicationRunner {
                 if((row+col)%4==0) for(int d=1;d<=14;d++) {
                     LocalDate day=LocalDate.now(clock).minusDays(d);int hour=9+(row+col+d)%8;
                     long user=studentIds.get((row*col+d)%40);
-                    db.update("INSERT INTO reservations(user_id,seat_id,res_date,start_time,end_time,status,checkin_at,checkout_at) VALUES(?,?,?,?,?,'completed',?,?)",
-                            user,seat,Date.valueOf(day),Time.valueOf(LocalTime.of(hour,0)),Time.valueOf(LocalTime.of(hour+1,0)),Timestamp.valueOf(day.atTime(hour,0)),Timestamp.valueOf(day.atTime(hour+1,0)));
+                    db.update("INSERT INTO reservations(user_id,seat_id,res_date,start_time,end_time,status,checkin_at,checkout_at) VALUES(?,?,?,CAST(? AS TIME),CAST(? AS TIME),'completed',?,?)",
+                            user,seat,Date.valueOf(day),Slot.format(hour*60),Slot.format((hour+1)*60),Timestamp.valueOf(day.atTime(hour,0)),Timestamp.valueOf(day.atTime(hour+1,0)));
                 }
             }
         }

@@ -6,17 +6,14 @@ import SeatPlanDesk from '../components/SeatPlanDesk.vue'
 import { seatType, zoneName, getWindowSides } from '../components/seat3d/seatPresentation'
 import { message, confirmDialog } from '../components/ui/feedback'
 import { getRooms, getSeatMap } from '../api/room'
-import { createReservation, autoAllocate } from '../api/reservation'
-import { joinWaitlist } from '../api/waitlist'
+import { createReservation, getBookingPolicy } from '../api/reservation'
 import AppIcon from '../components/AppIcon.vue'
 import SButton from '../components/ui/SButton.vue'
 import SSelect from '../components/ui/SSelect.vue'
-import SDatePicker from '../components/ui/SDatePicker.vue'
-import SCheckbox from '../components/ui/SCheckbox.vue'
-import SDialog from '../components/ui/SDialog.vue'
 import STag from '../components/ui/STag.vue'
 import SInput from '../components/ui/SInput.vue'
 import SBanner from '../components/ui/SBanner.vue'
+import { initialSlot, validateSlot, minuteValue, serverStartMinute } from '../composables/bookingPolicy.js'
 
 // ---- 条件区状态 ----
 const rooms = ref([])
@@ -25,15 +22,36 @@ const roomsError = ref('')
 const locationFilter = ref({ building: '', floor: '', location: '' })
 const filteredRooms = computed(() => rooms.value.filter(room => ['building', 'floor', 'location'].every(key => String(room[key] || '').toLowerCase().includes(locationFilter.value[key].trim().toLowerCase()))))
 const roomId = ref(null)
-const date = ref(new Date().toISOString().slice(0, 10))
-const start = ref('09:00')
-const end = ref('12:00')
+const date = ref(''), start = ref(''), end = ref('')
+const policy = ref(null), policyLoading = ref(false), policyError = ref(''), inputError = ref(''), bookingError = ref('')
+const dateOptions = computed(() => (policy.value?.dates || []).map(value => ({ value, label:value })))
+const duration = computed(() => { try { return minuteValue(end.value,true) - minuteValue(start.value) } catch { return null } })
+async function loadPolicy(initialize = false) {
+  policyLoading.value = true
+  policyError.value = ''
+  try {
+    const response = await getBookingPolicy()
+    const value = response.data
+    if (!value || !Array.isArray(value.dates) || !value.dates.includes(value.campus_today) || value.min_duration_minutes !== 30) throw new Error('预约政策返回不完整，请重试')
+    serverStartMinute(value)
+    policy.value = value
+    if (initialize) {
+      const defaults = initialSlot(value)
+      date.value = defaults.date; start.value = defaults.start; end.value = defaults.end
+    }
+    return true
+  } catch (failure) {
+    policy.value = null
+    policyError.value = failure.message
+    return false
+  } finally { policyLoading.value = false }
+}
 
-// 时间选项(30 分钟粒度)
-const timeOptions = []
-for (let h = 7; h <= 22; h++) {
-  timeOptions.push({ label: `${String(h).padStart(2, '0')}:00`, value: `${String(h).padStart(2, '0')}:00` })
-  timeOptions.push({ label: `${String(h).padStart(2, '0')}:30`, value: `${String(h).padStart(2, '0')}:30` })
+async function refreshPolicy() {
+  if (submitting.value || policyLoading.value) return
+  if (!await loadPolicy(!date.value)) return
+  if (!rooms.value.length) await loadRooms()
+  else await loadSeatMap()
 }
 
 // ---- 平面图 ----
@@ -41,7 +59,6 @@ const room = ref(null)
 const seats = ref([])
 const loading = ref(false)
 const selected = ref(null)
-const canAllocate = computed(() => !!room.value?.enabled && !loading.value && !mapError.value && seats.value.some(seat => seat.bookable_for_slot === true))
 function showWindows(windows) { return windows?.length ? windows.map(window => `${window.start}–${window.end}`).join('、') : '无开放时段' }
 
 const seatCard = ref(null)
@@ -49,9 +66,10 @@ const explorer = ref(null)
 const show3D = ref(false)
 const submitting = ref(false)
 const mapError = ref(false)
+const mapErrorText = ref('')
 let mapRequest = 0
 function open3D() {
-  if (!room.value || loading.value || mapError.value || !seats.value.length) return
+  if (submitting.value || !room.value || loading.value || mapError.value || !seats.value.length) return
   hoverTip.value = null
   show3D.value = true
 }
@@ -84,15 +102,11 @@ watch(filteredRooms, available => {
 async function loadSeatMap(preserveSelection = false) {
   const requestId = ++mapRequest
   if (!roomId.value || !date.value || !start.value || !end.value) return
-  if (start.value >= end.value) {
-    mapError.value = true
-    selected.value = null
-    loading.value = false
-    message.warning('开始时间需早于结束时间')
-    return
-  }
+  try { validateSlot(policy.value,date.value,start.value,end.value); inputError.value = '' }
+  catch (failure) { mapError.value = true; selected.value = null; loading.value = false; inputError.value = failure.message; return }
   loading.value = true
   mapError.value = false
+  mapErrorText.value = ''
   const previousId = preserveSelection === true ? selected.value?.id : null
   selected.value = null
   try {
@@ -104,8 +118,8 @@ async function loadSeatMap(preserveSelection = false) {
       selected.value = seats.value.find(s => s.id === previousId && s.status === 'available' && s.bookable_for_slot === true && !s.occupied) || null
       if (!selected.value) message.info('该座位状态已变化，请重新选择')
     }
-  } catch {
-    if (requestId === mapRequest) { mapError.value = true; selected.value = null; seats.value = [] }
+  } catch (failure) {
+    if (requestId === mapRequest) { mapError.value = true; mapErrorText.value = failure.message; selected.value = null; seats.value = [] }
   } finally {
     if (requestId === mapRequest) loading.value = false
   }
@@ -190,100 +204,30 @@ function onSeatClick(s) {
 }
 
 async function confirmBooking() {
-  const s = selected.value
-  if (!room.value?.enabled || !s || submitting.value || loading.value || mapError.value || s.bookable_for_slot !== true || s.status !== 'available' || s.occupied) return
-  const payload = { seat_id: s.id, date: date.value, start_time: start.value, end_time: end.value }
+  const selectedSeat = selected.value
+  if (!policy.value || !room.value?.enabled || !selectedSeat || submitting.value || loading.value || mapError.value || selectedSeat.bookable_for_slot !== true || selectedSeat.status !== 'available' || selectedSeat.occupied) return
+  const attempt = {seat_id:selectedSeat.id, date:date.value, start_time:start.value, end_time:end.value, room_name:room.value.name, seat_no:selectedSeat.seat_no}
   submitting.value = true
+  bookingError.value = ''
   try {
     try {
-    await confirmDialog(
-      `确认预约 ${room.value.name} ${s.seat_no} 座位？\n日期：${payload.date}　时段：${payload.start_time} - ${payload.end_time}`,
-      '预约确认',
-      { confirmButtonText: '确认预约', cancelButtonText: '再想想' }
-    )
-    } catch { return }
-    try {
-      const resp = await createReservation(payload)
-      message.success(`预约成功：${resp.data.room_name} ${resp.data.seat_no}`)
-    } catch {
-      await loadSeatMap(true)
+      const minutes = validateSlot(policy.value,attempt.date,attempt.start_time,attempt.end_time)
+      await confirmDialog(`确认预约 ${attempt.room_name} ${attempt.seat_no}？\n${attempt.date} ${attempt.start_time}–${attempt.end_time}（${minutes}分钟，Asia/Shanghai）`, '预约确认', { confirmButtonText:'确认预约',cancelButtonText:'再想想' })
+    } catch (failure) {
+      if (failure?.message) bookingError.value = failure.message
       return
     }
+    if (!await loadPolicy(false)) return
+    validateSlot(policy.value,attempt.date,attempt.start_time,attempt.end_time)
+    const response = await createReservation({ seat_id:attempt.seat_id,date:attempt.date,start_time:attempt.start_time,end_time:attempt.end_time })
+    message.success(`预约成功：${response.data.room_name} ${response.data.seat_no}`)
     selected.value = null
     await loadSeatMap()
     explorer.value?.close()
+  } catch (failure) {
+    bookingError.value = failure.status === 409 ? `${failure.message}。已刷新座位状态，请重新选择。` : failure.message
+    await loadSeatMap(true)
   } finally { submitting.value = false }
-}
-
-// ---- 智能分配 ----
-const allocVisible = ref(false)
-const allocForm = ref({ zone: '', need_power: false, need_window: false })
-const recommendations = ref([])
-const allocLoading = ref(false)
-
-const zoneOptions = [
-  { label: '静音区', value: 'quiet' },
-  { label: '普通区', value: 'regular' },
-  { label: '研讨区', value: 'discussion' },
-  { label: '机房区', value: 'computer' }
-]
-
-function openAlloc() {
-  if (!canAllocate.value) return
-  recommendations.value = []
-  allocVisible.value = true
-}
-
-async function runAllocate(autoBook = false) {
-  if (!canAllocate.value || allocLoading.value) return
-  allocLoading.value = true
-  try {
-    const resp = await autoAllocate({
-      room_id: roomId.value, date: date.value, start_time: start.value, end_time: end.value,
-      zone: allocForm.value.zone || undefined,
-      has_power: allocForm.value.need_power || undefined,
-      near_window: allocForm.value.need_window || undefined,
-      auto_book: autoBook
-    })
-    if (autoBook) {
-      const r = resp.data.reservation
-      message.success(`已为您分配：${r.room_name} ${r.seat_no}，请按时签到`)
-      allocVisible.value = false
-      loadSeatMap()
-    } else {
-      recommendations.value = resp.data.recommendations || []
-      if (!recommendations.value.length) message.info('没有满足条件的推荐')
-    }
-  } catch (e) {
-    if (String(e.message).includes('没有满足条件')) {
-      try {
-        await confirmDialog('当前时段已满座，是否加入候补队列？', '满座提示', { type: 'info' })
-        await joinWaitlist({
-          room_id: roomId.value, date: date.value, start_time: start.value, end_time: end.value,
-          zone: allocForm.value.zone || undefined
-        })
-        message.success('已加入候补队列，空出座位将自动递补并通知您')
-        allocVisible.value = false
-      } catch { /* 取消 */ }
-    }
-  } finally {
-    allocLoading.value = false
-  }
-}
-
-function recommendationAllowed(rec) {
-  return !!room.value?.enabled && !loading.value && !mapError.value && seats.value.some(seat => seat.id === rec.seat.id && seat.bookable_for_slot === true && seat.status === 'available' && !seat.occupied)
-}
-async function pickRecommended(rec) {
-  if (!recommendationAllowed(rec) || submitting.value) return
-  submitting.value = true
-  try {
-    const response = await createReservation({ seat_id: rec.seat.id, date: date.value, start_time: start.value, end_time: end.value })
-    message.success(`预约成功：${response.data.room_name} ${response.data.seat_no}`)
-    allocVisible.value = false
-    await loadSeatMap()
-  } catch { await loadSeatMap(true) }
-  finally { submitting.value = false }
 }
 
 // 统计右栏实时数据
@@ -299,7 +243,7 @@ const seatStats = computed(() => {
   return { total, free: total - occ - down, occ, down }
 })
 
-onMounted(loadRooms)
+onMounted(async () => { if (await loadPolicy(true)) await loadRooms() })
 </script>
 
 <template>
@@ -316,34 +260,27 @@ onMounted(loadRooms)
         <div class="card-title-row">
           <h3>预约条件</h3>
         </div>
+        <p v-if="policyLoading" role="status">正在读取服务端预约政策…</p>
+        <SBanner v-if="policyError" type="error" :title="policyError"><SButton size="sm" :disabled="submitting" @click="refreshPolicy">重试预约政策</SButton></SBanner>
+        <p v-if="policy" class="muted">服务端时刻：{{ policy.server_now }}；校园日期：{{ policy.campus_today }}。</p>
+        <SButton size="sm" :loading="policyLoading" :disabled="submitting" @click="refreshPolicy">刷新预约政策</SButton>
+        <SBanner v-if="inputError" type="error" :title="inputError" />
         <p v-if="roomsLoading" role="status">正在加载空间…</p>
-        <SBanner v-if="roomsError" type="error" :title="roomsError"><SButton size="sm" @click="loadRooms">重试空间列表</SButton></SBanner>
+        <SBanner v-if="roomsError" type="error" :title="roomsError"><SButton size="sm" :disabled="submitting" @click="loadRooms">重试空间列表</SButton></SBanner>
         <div class="filter-group">
-          <label class="filter-row">楼栋筛选<SInput v-model="locationFilter.building" placeholder="按楼栋名称筛选" /></label>
-          <label class="filter-row">楼层筛选<SInput v-model="locationFilter.floor" placeholder="如B1" /></label>
-          <label class="filter-row">位置筛选<SInput v-model="locationFilter.location" placeholder="按详细位置筛选" /></label>
+          <label class="filter-row">楼栋筛选<SInput v-model="locationFilter.building" :disabled="submitting" placeholder="按楼栋名称筛选" /></label>
+          <label class="filter-row">楼层筛选<SInput v-model="locationFilter.floor" :disabled="submitting" placeholder="如B1" /></label>
+          <label class="filter-row">位置筛选<SInput v-model="locationFilter.location" :disabled="submitting" placeholder="按详细位置筛选" /></label>
           <p v-if="!roomsLoading && !roomsError && !filteredRooms.length" class="muted">没有符合位置条件的空间，请调整筛选。</p>
           <div class="filter-row">
             <label>自习室</label>
-            <SSelect v-model="roomId" :options="filteredRooms" label-key="name" value-key="id" @change="loadSeatMap" />
+            <SSelect v-model="roomId" :options="filteredRooms" label-key="name" value-key="id" :disabled="submitting" @change="loadSeatMap" />
           </div>
-          <div class="filter-row">
-            <label>日期</label>
-            <SDatePicker
-              v-model="date"
-              :disabled-date="(d) => d.getTime() < Date.now() - 86400000"
-              @change="loadSeatMap"
-            />
-          </div>
-          <div class="filter-row">
-            <label>时段</label>
-            <div class="time-pair">
-              <SSelect v-model="start" :options="timeOptions" @change="loadSeatMap" />
-              <span class="arrow">→</span>
-              <SSelect v-model="end" :options="timeOptions" @change="loadSeatMap" />
-            </div>
-            <div class="filter-hint">默认 30 分钟粒度，开始需早于结束</div>
-          </div>
+          <div class="filter-row"><label>预约日期（校园时间）</label><SSelect v-model="date" :options="dateOptions" :disabled="submitting || policyLoading || !policy" @change="loadSeatMap" /></div>
+          <label class="filter-row">开始时间<SInput v-model="start" type="time" step="60" required :disabled="submitting || !policy" @change="loadSeatMap" /></label>
+          <label class="filter-row">结束时间<SInput v-model="end" required maxlength="5" pattern="([01][0-9]|2[0-3]):[0-5][0-9]|24:00" placeholder="HH:mm，支持24:00" :disabled="submitting || !policy" @change="loadSeatMap" /></label>
+          <p class="filter-hint">分钟精度，至少{{ policy?.min_duration_minutes ?? '—' }}分钟，单次时长由开放窗口决定，不设额外时长上限。24:00仅表示所选日结束，不允许跨预约日期。</p>
+          <p v-if="duration !== null" class="muted">当前选择{{ duration }}分钟；服务端提交时再次核对日期、开放、资格和冲突。</p>
         </div>
       </section>
 
@@ -383,10 +320,7 @@ onMounted(loadRooms)
         </div>
         </div>
 <div class="booking-actions">
-          <SButton variant="primary" block :disabled="!canAllocate" @click="openAlloc">
-            <AppIcon name="sparkles" :size="16" />智能分配
-          </SButton>
-          <SButton variant="secondary" block @click="loadSeatMap">
+          <SButton variant="secondary" block :disabled="submitting" @click="loadSeatMap">
             <AppIcon name="refresh" :size="16" />刷新座位图
           </SButton>
         </div>
@@ -400,12 +334,12 @@ onMounted(loadRooms)
           <div class="seat-heading">
             <h3 style="margin:0">座位平面图</h3>
             <div class="seat-head-tools">
-              <SSelect v-if="room" v-model="roomId" class="room-select" :options="filteredRooms" label-key="name" value-key="id" aria-label="选择自习室" @change="loadSeatMap" />
+              <SSelect v-if="room" v-model="roomId" class="room-select" :options="filteredRooms" label-key="name" value-key="id" aria-label="选择自习室" :disabled="submitting" @change="loadSeatMap" />
               <div v-if="room" class="room-chip">
                 <span class="room-chip__meta">{{ room.building || '楼栋未登记' }} · {{ room.floor || '楼层未登记' }} · {{ room.location || '位置未登记' }} · 当日开放 {{ showWindows(room.opening_windows) }} · 布局{{ room.seat_rows }}×{{ room.seat_cols }} · 实际座位{{ room.seat_count }} · 有效容量{{ room.capacity }} · 空间可约容量{{ room.bookable_capacity }}</span>
               </div>
             </div>
-            <SButton :disabled="!room || loading || mapError || !seats.length" aria-label="打开 3D 选座" @click="open3D">3D</SButton>
+            <SButton :disabled="submitting || !room || loading || mapError || !seats.length" aria-label="打开 3D 选座" @click="open3D">3D</SButton>
           </div>
         </div>
 
@@ -414,7 +348,7 @@ onMounted(loadRooms)
         <SBanner v-if="room?.closed_reasons?.length" type="warning" :title="room.closed_reasons.join('；')" />
         <SBanner v-if="room && !room.enabled" type="warning" :title="`空间已停用：${room.resource_reason || '未提供原因'}`" />
         <p v-else-if="room?.resource_reason" class="muted">资源原因：{{ room.resource_reason }}</p>
-        <SBanner v-if="mapError" type="error" title="座位查询失败，请核对条件并重试"><SButton size="sm" @click="loadSeatMap">重试座位查询</SButton></SBanner>
+        <SBanner v-if="mapError && !inputError" type="error" :title="mapErrorText || '座位查询失败，请核对条件并重试'"><SButton size="sm" :disabled="submitting" @click="loadSeatMap">重试座位查询</SButton></SBanner>
         <div class="responsive-scroll" tabindex="0" aria-label="座位平面图，可左右滑动">
         <div v-loading="loading" class="seat-grid-wrap" @mouseover="onGridOver" @mouseleave="onGridLeave">
           <div v-if="!room" class="empty-tip muted">请先选择自习室并设置预约条件</div>
@@ -457,6 +391,7 @@ onMounted(loadRooms)
       </section>
 
       <!-- 已选座位操作条（随页面滚动，未选座位时为提示态，提交按钮禁用） -->
+      <SBanner v-if="bookingError" type="error" :title="bookingError" />
       <section class="card selected-card" :class="{ 'selected-card--empty': !selected }">
         <div class="sel-info">
           <div class="sel-icon"><AppIcon name="seat" :size="25" /></div>
@@ -478,12 +413,12 @@ onMounted(loadRooms)
             </template>
           </div>
         </div>
-        <SButton variant="primary" size="lg" :disabled="!room?.enabled || !selected || selected.bookable_for_slot !== true || loading || mapError" :loading="submitting" @click="confirmBooking">提交预约</SButton>
+        <SButton variant="primary" size="lg" :disabled="!policy || policyLoading || !room?.enabled || !selected || selected.bookable_for_slot !== true || loading || mapError" :loading="submitting" @click="confirmBooking">提交预约</SButton>
       </section>
     </div>
   </div>
 
-  <SeatExplorer v-if="show3D" ref="explorer" :origin="seatCard" :room="room" :seats="seats" :selected-id="selected?.id" :date="date" :start="start" :end="end" :loading="loading" :submitting="submitting" @select="onSeatClick" @submit="confirmBooking" @closed="show3D = false" />
+  <SeatExplorer v-if="show3D" ref="explorer" :origin="seatCard" :room="room" :seats="seats" :selected-id="selected?.id" :date="date" :start="start" :end="end" :loading="loading" :submitting="submitting" :submit-error="bookingError || policyError" :policy-ready="!!policy && !policyLoading" @select="onSeatClick" @submit="confirmBooking" @closed="show3D = false" />
 
   <!-- 座位悬浮提示 -->
   <Teleport to="body">
@@ -497,47 +432,7 @@ onMounted(loadRooms)
     </div>
   </Teleport>
 
-  <!-- 智能分配对话框 -->
-  <SDialog v-model="allocVisible" title="智能分配座位" width="520px">
-    <div class="alloc-form">
-      <div class="filter-row">
-        <label>偏好区域</label>
-        <SSelect v-model="allocForm.zone" :options="zoneOptions" placeholder="不限（推荐）" clearable />
-      </div>
-      <div class="pref-checks">
-        <SCheckbox v-model="allocForm.need_power">需要电源插座</SCheckbox>
-        <SCheckbox v-model="allocForm.need_window">偏好靠窗</SCheckbox>
-      </div>
-    </div>
 
-    <div v-if="recommendations.length" class="rec-title">推荐座位（评分从高到低）</div>
-    <div v-if="recommendations.length" class="rec-list">
-      <div v-for="(r, i) in recommendations" :key="r.seat.id" class="rec-item">
-        <div class="rec-rank">{{ i + 1 }}</div>
-        <div class="rec-main">
-          <div class="rec-seat">
-            <b>{{ r.seat.seat_no }}</b>
-            <STag>{{ zoneName[r.seat.zone] || r.seat.zone }}</STag>
-            <span v-if="r.seat.has_power" class="muted">· 电源</span>
-            <span v-if="r.seat.near_window" class="muted">· 靠窗</span>
-          </div>
-          <div class="muted rec-score">匹配得分 {{ r.score.toFixed(1) }}</div>
-        </div>
-        <SButton size="sm" variant="primary" :disabled="!recommendationAllowed(r)" :loading="submitting" @click="pickRecommended(r)">选这个预约</SButton>
-      </div>
-    </div>
-
-    <template #footer>
-      <div class="alloc-footer">
-        <SButton :loading="allocLoading" variant="secondary" @click="runAllocate(false)">
-          <AppIcon name="eye" :size="16" />仅推荐
-        </SButton>
-        <SButton :loading="allocLoading" variant="primary" @click="runAllocate(true)">
-          <AppIcon name="sparkles" :size="16" />立即分配并下单
-        </SButton>
-      </div>
-    </template>
-  </SDialog>
   </div>
 </template>
 
@@ -938,87 +833,14 @@ onMounted(loadRooms)
   margin-bottom: 2px;
 }
 
-/* 智能分配弹窗内 */
-.alloc-form {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.pref-checks {
-  display: flex;
-  gap: 18px;
-}
-.rec-title {
-  margin: 20px 0 10px;
-  font-weight: 600;
-  color: var(--text-2);
-  font-size: var(--fs-body-sm);
-}
-.rec-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 264px;
-  overflow: auto;
-  scrollbar-width: thin;
-}
-.rec-item {
-  display: grid;
-  grid-template-columns: 34px 1fr auto;
-  gap: 12px;
-  align-items: center;
-  padding: 10px 12px;
-  border-radius: var(--r-lg);
-  background: var(--surface-2);
-  border: 1px solid var(--hairline);
-}
-.rec-rank {
-  width: 28px;
-  height: 28px;
-  border-radius: var(--r-sm);
-  background: var(--primary-weak);
-  color: var(--primary-active);
-  display: grid;
-  place-items: center;
-  font-weight: 700;
-  font-size: var(--fs-caption);
-  font-variant-numeric: tabular-nums;
-}
-.rec-main {
-  min-width: 0;
-}
-.rec-seat {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--fs-body);
-}
-.rec-score {
-  margin-top: 2px;
-  font-size: var(--fs-caption);
-  font-variant-numeric: tabular-nums;
-}
-.alloc-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  width: 100%;
-}
-
 @media (max-width: 720px) {
   .seat-grid-wrap { padding: 10px; min-width: max-content; }
   .seat-grid { padding: 8px; }
   .seat { border-radius: var(--r-sm); font-size: 10px; }
   .selected-card { align-items: stretch; flex-direction: column; }
   .selected-card :deep(.s-btn) { width: 100%; }
-  .pref-checks { align-items: flex-start; flex-direction: column; gap: 10px; }
-  .rec-item { grid-template-columns: 32px minmax(0, 1fr); }
-  .rec-item :deep(.s-btn) { grid-column: 1 / -1; width: 100%; }
   .seat-card { overflow: hidden; }
   .sel-info { min-width: 0; align-items: flex-start; }
   .sel-title { flex-wrap: wrap; }
-  .alloc-footer { align-items: stretch; flex-direction: column; }
-  .alloc-footer :deep(.s-btn) { width: 100%; }
 }
 </style>

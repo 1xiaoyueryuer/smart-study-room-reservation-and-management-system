@@ -1,7 +1,6 @@
 package cn.studyroom;
 
 import java.sql.Date;
-import java.sql.Time;
 import java.time.*;
 import java.util.*;
 import javax.validation.Validator;
@@ -33,8 +32,8 @@ public class ResourceService {
     public Map<String,Object> managementSeats(long roomId) { return Map.of("room",room(roomId),"seats",db.list("SELECT * FROM seats WHERE room_id=? ORDER BY row_no,col_no",roomId)); }
     public Map<String,Object> seatMap(long roomId,String date,String start,String end) {
         Slot slot=Slot.parse(date,start,end);var calendar=opening.calendar(roomId);var room=db.one(ROOMS+" WHERE r.id=?",roomId);decorate(room,calendar,slot.date());room.put("bookable_for_slot",calendar.day(slot.date(),null).contains(slot));
-        var seats=db.list("SELECT s.*,EXISTS(SELECT 1 FROM reservations rv WHERE rv.seat_id=s.id AND rv.res_date=? AND rv.status IN "+ACTIVE+" AND rv.start_time<? AND rv.end_time>?) AS occupied FROM seats s WHERE room_id=? ORDER BY row_no,col_no",
-                Date.valueOf(slot.date()),Time.valueOf(slot.end()),Time.valueOf(slot.start()),roomId);
+        var seats=db.list("SELECT s.*,EXISTS(SELECT 1 FROM reservations rv WHERE rv.seat_id=s.id AND rv.res_date=? AND rv.status IN "+ACTIVE+" AND rv.start_time<CAST(? AS TIME) AND rv.end_time>CAST(? AS TIME)) AS occupied FROM seats s WHERE room_id=? ORDER BY row_no,col_no",
+                Date.valueOf(slot.date()),slot.endText(),slot.startText(),roomId);
         for(var seat:seats) {
             var day=calendar.day(slot.date(),Store.id(seat,"id"));boolean legal=day.contains(slot);seat.put("opening_windows",day.view());seat.put("bookable_for_slot",legal);
             var reasons=new ArrayList<>(day.closedReasons());if(!legal&&!day.windows().isEmpty()) reasons.add("所选时段不在合法开放窗口内");seat.put("closed_reasons",reasons);
@@ -102,7 +101,6 @@ public class ResourceService {
     private void validate(Object req) { var errors=validator.validate(req);Api.require(errors.isEmpty(),400,errors.stream().map(x->x.getPropertyPath()+": "+x.getMessage()).sorted().findFirst().orElse("参数错误")); }
     private void record(long actor,String action,String type,long id,String reason,Map<String,Object> before,Map<String,Object> after,List<String> fields) { audit.record(actor,action,type,Long.toString(id),reason.trim(),snapshot(before,fields),snapshot(after,fields)); }
     private Map<String,Object> snapshot(Map<String,Object> source,List<String> fields) { var result=new LinkedHashMap<String,Object>();for(String field:fields) if(source.containsKey(field)) result.put(field,source.get(field));return result; }
-    static LocalTime time(String value) { try { return LocalTime.parse(value); }catch(Exception e) { throw Api.fail(400,"时间格式错误"); } }
     private boolean same(Map<String,Object> source,String key,String proposed) { return Objects.equals(value(Objects.toString(source.get(key),null)),value(proposed)); }
     private String value(String s) { return AuthService.blankNull(s); }
 }

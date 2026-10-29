@@ -40,8 +40,8 @@ async function onLogin() {
 
 const features = [
   { icon: 'booking', title: '可视化选座', desc: '平面图实时选座，冲突自动检测' },
-  { icon: 'sparkles', title: '智能分配', desc: '按区域与偏好加权推荐最优座位' },
-  { icon: 'waitlist', title: '候补递补', desc: '满座自动排队，空位按序递补' },
+  { icon: 'booking', title: '分钟预约', desc: '校园日期与开放窗口统一复核' },
+  { icon: 'notification', title: '站内消息', desc: '查询预约结果与历史通知' },
   { icon: 'credit', title: '信用治理', desc: '履约加分，违约扣分，公平利用' }
 ]
 </script>
@@ -60,7 +60,7 @@ const features = [
 
       <div class="hero-body"><div class="study-art" aria-hidden="true"><span/><span/><span/></div>
         <h1 class="hero-title">让每一次自习<br />都有理想的位置</h1>
-        <p class="hero-desc">座位预约 · 智能分配 · 信用治理 —— 面向校园的一站式自习室数字化系统。</p>
+        <p class="hero-desc">分钟预约 · 可视化选座 · 站内消息 —— 面向校园的一站式自习室数字化系统。</p>
 
         <ul class="hero-features">
           <li v-for="f in features" :key="f.title">

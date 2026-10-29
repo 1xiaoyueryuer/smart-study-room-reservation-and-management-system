@@ -94,11 +94,11 @@ const { page, pages, pageItems } = usePagination(filtered, filterType)
   <div v-reveal class="page-view">
     <header class="view-heading has-page-help"><div class="heading-copy" data-page-title>
       <h1>消息中心</h1>
-      <p class="heading-sub">预约结果、违约警告与候补递补通知</p>
+      <p class="heading-sub">预约结果、违约警告与历史通知</p>
     </div><PageHelp title="使用提示">
         <ul class="tips">
           <li>点击消息条目将其标记为<b>已读</b></li>
-          <li>候补递补、违约警告等<b>关键事件</b>建议及时查看</li>
+          <li>历史候补递补、违约警告等<b>已发生事件</b>可在此追溯</li>
           <li>每 60 秒自动刷新未读数量（顶部铃铛）</li>
         </ul>
       </PageHelp></header>

@@ -1,6 +1,6 @@
-# PostgreSQL 版验证记录
+# PostgreSQL 基线验证记录
 
-日期：2026-10-29。环境：Windows、JDK17、Maven3.9.9、Node24、Docker PostgreSQL17、Redis7.2。以下结果来自本次执行，与原作者报告独立。
+日期：2026-10-29。环境：Windows、JDK17、Maven3.9.9、Node24、Docker PostgreSQL17、Redis7.2。以下为发布基线时的历史结果，与原作者报告独立；后续S01起的实际改动、测试数量和页面证据原位维护于所属 `docs/features/Fxx/` 两份方案。旧规则推荐/候补结果不表示当前仍开放这些入口，旧28条HTTP记录不作为新代码已复验的证明。
 
 | 验证 | 结果 | 入口 |
 |---|---|---|

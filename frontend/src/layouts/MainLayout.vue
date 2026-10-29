@@ -51,7 +51,7 @@ const menus = computed(() => {
     : [
         { index: '/booking', title: '座位预约', icon: 'booking' },
         { index: '/mine', title: '我的预约', icon: 'reservations' },
-        { index: '/waitlist', title: '我的候补', icon: 'waitlist' },
+        { index: '/waitlist', title: '历史候补', icon: 'waitlist' },
         { index: '/notifications', title: '消息中心', icon: unread.value > 0 ? 'notification' : 'notification-empty' }
       ]
   return [...common, ...roleMenus, { index: '/profile', title: '个人中心', icon: 'profile' }]

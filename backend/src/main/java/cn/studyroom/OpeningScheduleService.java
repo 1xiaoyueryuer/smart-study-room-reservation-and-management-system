@@ -137,7 +137,7 @@ public class OpeningScheduleService {
     private List<ProtectedUse> protectedUses(long roomId) {
         LocalDateTime now=LocalDateTime.now(clock);var calendar=calendar(roomId);List<ProtectedUse> result=new ArrayList<>();
         for(var booking:db.list("SELECT rv.* FROM reservations rv JOIN seats s ON s.id=rv.seat_id WHERE s.room_id=? AND rv.status IN ('pending','checked_in','temp_leave')",roomId)) {
-            LocalDate day=LocalDate.parse(Store.text(booking,"res_date"));LocalDateTime start=day.atTime(LocalTime.parse(Store.text(booking,"start_time"))),end=day.atTime(LocalTime.parse(Store.text(booking,"end_time")));
+            LocalDate day=LocalDate.parse(Store.text(booking,"res_date"));LocalDateTime start=Slot.endpoint(day,Store.text(booking,"start_time")),end=Slot.endpoint(day,Store.text(booking,"end_time"));
             if(!end.isAfter(now)) continue;if(!"pending".equals(booking.get("status"))&&start.isBefore(now)) start=now;
             long seat=Store.id(booking,"seat_id");
             for(Window window:calendar.day(day,seat).windows()) {

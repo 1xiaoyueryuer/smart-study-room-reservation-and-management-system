@@ -125,12 +125,12 @@ const shortcuts = computed(() => auth.isAdmin
       { title: '个人中心', desc: '查看管理员账户信息', icon: 'profile', to: '/profile', tone: 'violet' }
     ]
   : [
-      { title: '座位预约', desc: '手动选座 · 智能分配', icon: 'booking', to: '/booking', tone: 'primary' },
+      { title: '座位预约', desc: '分钟时段 · 平面图与3D选座', icon: 'booking', to: '/booking', tone: 'primary' },
       { title: '我的预约', desc: '签到 · 临时离开 · 签退', icon: 'reservations', to: '/mine', tone: 'success' },
-      { title: '我的候补', desc: '查看排队与递补状态', icon: 'waitlist', to: '/waitlist', tone: 'warm' },
+      { title: '历史候补', desc: '查原记录 · 可退出历史等待', icon: 'waitlist', to: '/waitlist', tone: 'warm' },
       {
         title: '消息中心',
-        desc: unread.value > 0 ? `${unread.value} 条未读消息` : '预约结果 · 违约警告 · 递补',
+        desc: unread.value > 0 ? `${unread.value} 条未读消息` : '预约结果 · 历史消息',
         icon: unread.value > 0 ? 'notification' : 'notification-empty',
         to: '/notifications',
         tone: 'violet'
@@ -248,7 +248,7 @@ const cardToneClass = {
         <ul v-if="auth.isOrdinary" class="tips tips-list">
           <li>距开始不足 30 分钟取消预约将扣 <b>2 分</b>信用分</li>
           <li>超时未签到会自动记为违约，扣 <b>8 分</b>，并释放座位</li>
-          <li>满座时段可加入 <b>候补</b>，空位释放时按序自动递补</li>
+          <li>按服务端校园日期选择今天至后天，预约至少<b>30分钟</b>，使用分钟起止</li>
           <li>信用分低于 60，<b>3 天内</b>无法发起新预约</li>
         </ul>
         <ul v-else class="tips tips-list">
@@ -280,16 +280,16 @@ const cardToneClass = {
             <div class="intro-text">平面图可视化选座，时段冲突自动检测，支持签到 / 临时离开 / 签退全生命周期。</div>
           </div>
           <div class="intro-cell">
-            <div class="intro-label">智能分配</div>
-            <div class="intro-text">按区域、电源、靠窗偏好加权评分，一键推荐最优座位或直接自动下单。</div>
+            <div class="intro-label">分钟预约</div>
+            <div class="intro-text">按开放窗口选择分钟起止，结束可填24:00；提交时重新核对资格和时段冲突。</div>
           </div>
           <div class="intro-cell">
-            <div class="intro-label">候补递补</div>
-            <div class="intro-text">满座时加入候补队列，空位释放后按排队顺序自动递补并发送通知。</div>
+            <div class="intro-label">历史候补</div>
+            <div class="intro-text">保留原候补状态及预约来源，可查询历史记录并退出仍在等待的条目；不再新增或递补。</div>
           </div>
           <div class="intro-cell">
             <div class="intro-label">信用治理</div>
-            <div class="intro-text">违约扣分、履约加分、低分限约，配合满座候补递补机制，公平利用座位资源。</div>
+            <div class="intro-text">违约扣分、履约加分、低分限约，保留真实流水供本人查询。</div>
           </div>
         </div>
         <div v-else class="intro-grid">

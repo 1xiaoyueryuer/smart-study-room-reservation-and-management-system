@@ -35,7 +35,8 @@ public class WebSecurity implements WebMvcConfigurer {
                     if(path.startsWith("/api/admin/")||path.startsWith("/api/stats/")) Api.require("admin".equals(user.get("role")),403,"需要管理员权限");
                     if ("POST".equals(req.getMethod())&&(path.equals("/api/reservations")||path.startsWith("/api/reservations/")||path.equals("/api/waitlist")||path.startsWith("/api/waitlist/")))
                         Api.require(AuthService.isOrdinary(user.get("role")),403,"仅学生和教职工可操作本人预约或候补");
-                    if("POST".equals(req.getMethod())&&(path.equals("/api/reservations")||path.equals("/api/reservations/auto")))
+                    if("POST".equals(req.getMethod())&&(path.equals("/api/reservations/auto")||path.equals("/api/waitlist"))) throw Api.fail(410,"旧自动分配与新增候补已退出，请手动选择座位预约");
+                    if("POST".equals(req.getMethod())&&path.equals("/api/reservations"))
                         rate("reserve:"+user.get("id"),2,1000);
                     return true;
                 } catch(Api.Failure e) { write(resp,e.status,e.getMessage());return false; }

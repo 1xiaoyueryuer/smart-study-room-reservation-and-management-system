@@ -1,5 +1,4 @@
 """对正在运行的 Java 服务验证前端 API 契约；使用模拟账号，测试预约最终取消。"""
-import datetime as dt
 import json
 import os
 import sys
@@ -48,13 +47,16 @@ def main():
     status, body = call('GET','/rooms',token=student)
     check('房间列表兼容原前端',status == 200 and len(body['data']) >= 3)
     room = body['data'][0]['id']
-    date = (dt.datetime.now(dt.timezone(dt.timedelta(hours=8))).date() + dt.timedelta(days=1)).isoformat()
+    status, policy = call('GET', '/booking-policy', token=student)
+    check('校园日期政策与分钟规则', status == 200 and policy['data']['campus_zone'] == 'Asia/Shanghai' and policy['data']['min_duration_minutes'] == 30 and len(policy['data']['dates']) == 3)
+    date = policy['data']['dates'][1]
     status, body = call('GET',f'/rooms/{room}/seats?date={date}&start=10:00&end=11:00',token=student)
     check('座位图字段与布尔类型',status == 200 and isinstance(body['data']['seats'][0]['occupied'],bool))
-    seats = [s for s in body['data']['seats'] if s['status']=='available' and not s['occupied']]
+    seats = [s for s in body['data']['seats'] if s['status']=='available' and s['bookable_for_slot'] and not s['occupied']]
     seat = seats[-1]['id']
     status, body = call('POST','/reservations/auto',{'room_id':room,'date':date,'start_time':'10:00','end_time':'11:00','top_n':3,'auto_book':False},student)
-    check('规则选座推荐（非智能助手）',status == 200 and len(body['data']['recommendations']) == 3)
+    check('旧偏好自动分配入口已退出',status == 410)
+    check('旧候补新增入口已退出', call('POST', '/waitlist', {'room_id':room,'date':date,'start_time':'10:00','end_time':'11:00'},student)[0] == 410)
     request = {'seat_id':seat,'date':date,'start_time':'10:00','end_time':'11:00'}
     res_id = None
     try:
@@ -68,8 +70,8 @@ def main():
         status, body = call('GET','/reservations/mine',token=student)
         check('我的预约包含座位与房间',status == 200 and any(r['id']==res_id and 'room_name' in r for r in body['data']))
         time.sleep(1.1)
-        status, _ = call('POST','/reservations',{**request,'start_time':'10:01'},student)
-        check('时间格式约束返回400',status == 400)
+        status, _ = call('POST','/reservations',{**request,'start_time':'10:01','end_time':'10:30'},student)
+        check('不足30分钟返回400',status == 400)
     finally:
         if res_id:
             check('本人取消释放座位',call('POST',f'/reservations/{res_id}/cancel',{},student)[0] == 200)

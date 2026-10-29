@@ -36,7 +36,7 @@ const routes = [
         path: '/waitlist',
         name: 'waitlist',
         component: () => import('../views/WaitlistView.vue'),
-        meta: { title: '我的候补', requiresAuth: true, allowedRoles: ['student', 'staff'] }
+        meta: { title: '历史候补', requiresAuth: true, allowedRoles: ['student', 'staff'] }
       },
       {
         path: '/analytics',

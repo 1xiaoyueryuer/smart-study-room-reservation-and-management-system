@@ -1,7 +1,6 @@
 package cn.studyroom;
 
 import java.sql.Date;
-import java.sql.Time;
 import java.sql.Timestamp;
 import java.time.*;
 import java.util.*;
@@ -17,26 +16,29 @@ public class BookingService {
     private final Store db;
     private final Clock clock;
     private final OpeningScheduleService opening;
-    public BookingService(Store db,Clock clock,OpeningScheduleService opening) { this.db=db;this.clock=clock;this.opening=opening; }
+    private final BookingPolicy policy;
+    private final AuditService audit;
+    public BookingService(Store db,Clock clock,OpeningScheduleService opening,BookingPolicy policy,AuditService audit) { this.db=db;this.clock=clock;this.opening=opening;this.policy=policy;this.audit=audit; }
     public List<Map<String,Object>> mine(long uid) { return db.list(VIEW+"WHERE rv.user_id=? ORDER BY rv.res_date DESC,rv.start_time DESC,rv.id DESC",uid); }
     public Map<String,Object> create(long uid,Requests.Reservation req) {
         db.lockBookings();return createInternal(uid,req,"manual");
     }
     private Map<String,Object> createInternal(long uid,Requests.Reservation req,String source) {
-        Slot slot=Slot.parse(req.date(),req.startTime(),req.endTime()); slot.validateFuture(clock);eligible(uid);
+        Slot slot=Slot.parse(req.date(),req.startTime(),req.endTime()); policy.validate(slot);eligible(uid);
         var seat=db.one("SELECT * FROM seats WHERE id=?",req.seatId());
         Api.require("available".equals(seat.get("status")),409,"座位当前不可预约");
         var room=db.one("SELECT * FROM rooms WHERE id=?",id(seat,"room_id"));opening.requireSlot(id(seat,"room_id"),req.seatId(),slot);
         Api.require(!conflict("seat_id",req.seatId(),slot),409,"该座位此时段已被预约");
         Api.require(!conflict("user_id",uid,slot),409,"您在同一时段已有其他预约");
-        long resId=db.insert("INSERT INTO reservations(user_id,seat_id,res_date,start_time,end_time,source) VALUES(?,?,?,?,?,?)",
-                uid,req.seatId(),Date.valueOf(slot.date()),Time.valueOf(slot.start()),Time.valueOf(slot.end()),source);
+        long resId=db.insert("INSERT INTO reservations(user_id,seat_id,res_date,start_time,end_time,source) VALUES(?,?,?,CAST(? AS TIME),CAST(? AS TIME),?)",
+                uid,req.seatId(),Date.valueOf(slot.date()),slot.startText(),slot.endText(),source);
         notify(uid,"reservation_success","预约成功",room.get("name")+" "+seat.get("seat_no")+" "+req.date()+" "+req.startTime()+"—"+req.endTime()+"，请按时签到。");
+        audit.record(uid,"reservation.create","reservation",Long.toString(resId),"用户预约",Map.of(),Map.of("seat_id",req.seatId(),"date",slot.date().toString(),"start_time",slot.startText(),"end_time",slot.endText(),"source",source));
         return db.one(VIEW+"WHERE rv.id=?",resId);
     }
     private boolean conflict(String column,long id,Slot slot) {
-        return db.count("SELECT count(*) FROM reservations WHERE "+column+"=? AND res_date=? AND status IN "+ACTIVE+" AND start_time<? AND end_time>?",
-                id,Date.valueOf(slot.date()),Time.valueOf(slot.end()),Time.valueOf(slot.start()))>0;
+        return db.count("SELECT count(*) FROM reservations WHERE "+column+"=? AND res_date=? AND status IN "+ACTIVE+" AND start_time<CAST(? AS TIME) AND end_time>CAST(? AS TIME)",
+                id,Date.valueOf(slot.date()),slot.endText(),slot.startText())>0;
     }
     private void eligible(long uid) {
         var user=db.one("SELECT * FROM users WHERE id=?",uid);
@@ -98,44 +100,8 @@ public class BookingService {
     void notify(long uid,String type,String title,String content) {
         db.update("INSERT INTO notifications(user_id,type,title,content) VALUES(?,?,?,?)",uid,type,title,content);
     }
-    public Map<String,Object> allocate(long uid,Requests.Allocation req) {
-        db.lockBookings();Slot slot=Slot.parse(req.date(),req.startTime(),req.endTime());slot.validateFuture(clock);eligible(uid);
-        opening.requireSlot(req.roomId(),null,slot);
-        Api.require(!conflict("user_id",uid,slot),409,"您在同一时段已有预约");
-        var candidates=candidates(req.roomId(),slot);var scored=new ArrayList<Map<String,Object>>();
-        for(var seat:candidates) {
-            double score=0;var reasons=new ArrayList<String>();
-            if(req.zone()!=null&&req.zone().equals(seat.get("zone"))) { score+=30;reasons.add("匹配区域偏好"); }
-            if(Boolean.TRUE.equals(req.hasPower())&&Boolean.TRUE.equals(seat.get("has_power"))) { score+=25;reasons.add("带电源插座"); }
-            if(Boolean.TRUE.equals(req.nearWindow())&&Boolean.TRUE.equals(seat.get("near_window"))) { score+=15;reasons.add("靠窗采光好"); }
-            long recent=db.count("SELECT count(*) FROM reservations WHERE seat_id=? AND res_date>=? AND status='completed'",id(seat,"id"),Date.valueOf(LocalDate.now(clock).minusDays(7)));
-            score-=Math.min(20,recent);if(recent==0) reasons.add("近期使用率低");
-            scored.add(Map.of("seat",seat,"score",score,"reasons",reasons));
-        }
-        scored.sort(Comparator.<Map<String,Object>>comparingDouble(x->((Number)x.get("score")).doubleValue()).reversed());
-        Api.require(!scored.isEmpty(),409,"当前时段没有空座位，可尝试候补");
-        var result=new LinkedHashMap<String,Object>();result.put("recommendations",scored.subList(0,Math.min(req.topN()==0?5:req.topN(),scored.size())));result.put("booked",false);
-        if(req.autoBook()) {
-            @SuppressWarnings("unchecked") var best=(Map<String,Object>)scored.get(0).get("seat");
-            result.put("reservation",createInternal(uid,new Requests.Reservation(id(best,"id"),req.date(),req.startTime(),req.endTime()),"auto"));result.put("booked",true);
-        }
-        return result;
-    }
-    private List<Map<String,Object>> candidates(long roomId,Slot slot) {
-        var calendar=opening.calendar(roomId);
-        return db.list("SELECT s.* FROM seats s JOIN rooms r ON r.id=s.room_id WHERE s.room_id=? AND r.enabled AND s.status='available' AND NOT EXISTS(SELECT 1 FROM reservations rv WHERE rv.seat_id=s.id AND rv.res_date=? AND rv.status IN "+ACTIVE+" AND rv.start_time<? AND rv.end_time>?) ORDER BY row_no,col_no",
-                roomId,Date.valueOf(slot.date()),Time.valueOf(slot.end()),Time.valueOf(slot.start())).stream().filter(seat->calendar.day(slot.date(),id(seat,"id")).contains(slot)).toList();
-    }
-    public Map<String,Object> join(long uid,Requests.Wait req) {
-        db.lockBookings();Slot slot=Slot.parse(req.date(),req.startTime(),req.endTime());slot.validateFuture(clock);eligible(uid);
-        opening.requireSlot(req.roomId(),null,slot);
-        Api.require(!conflict("user_id",uid,slot),409,"您在同一时段已有预约");
-        Api.require(db.count("SELECT count(*) FROM waitlist WHERE user_id=? AND room_id=? AND res_date=? AND start_time=? AND end_time=? AND status='waiting'",
-                uid,req.roomId(),Date.valueOf(slot.date()),Time.valueOf(slot.start()),Time.valueOf(slot.end()))==0,409,"已在该时段候补队列中");
-        long waitId=db.insert("INSERT INTO waitlist(user_id,room_id,res_date,start_time,end_time,zone,has_power,near_window) VALUES(?,?,?,?,?,?,?,?)",
-                uid,req.roomId(),Date.valueOf(slot.date()),Time.valueOf(slot.start()),Time.valueOf(slot.end()),AuthService.blankNull(req.zone()),req.hasPower(),req.nearWindow());
-        return waitMine(uid).stream().filter(x->id(x,"id")==waitId).findFirst().orElseThrow();
-    }
+    public Map<String,Object> allocate(long uid,Requests.Allocation req) { requireOrdinary(uid);throw Api.fail(410,"旧偏好自动分配已退出，请手动选择座位预约"); }
+    public Map<String,Object> join(long uid,Requests.Wait req) { requireOrdinary(uid);throw Api.fail(410,"新增候补已退出，历史候补可查看或退出"); }
     public List<Map<String,Object>> waitMine(long uid) {
         return db.list("SELECT w.*,r.name AS room_name,CASE WHEN w.status='waiting' THEN (SELECT count(*) FROM waitlist q WHERE q.room_id=w.room_id AND q.res_date=w.res_date AND q.start_time=w.start_time AND q.end_time=w.end_time AND q.status='waiting' AND q.id<=w.id) ELSE 0 END AS position FROM waitlist w JOIN rooms r ON r.id=w.room_id WHERE w.user_id=? ORDER BY w.id DESC",uid);
     }
@@ -153,25 +119,11 @@ public class BookingService {
             } else if(!state.equals("pending")&&!now.isBefore(ends(res))) complete(res,ends(res));
             else if(state.equals("temp_leave")&&now.isAfter(LocalDateTime.parse(text(res,"leave_at")).plusMinutes(30))) complete(res,now);
         }
-        for(var wait:db.list("SELECT * FROM waitlist WHERE status='waiting' ORDER BY id")) {
-            Slot slot=Slot.parse(text(wait,"res_date"),text(wait,"start_time"),text(wait,"end_time"));
-            if(slot.startsAt().isBefore(now.plusMinutes(10))) { db.update("UPDATE waitlist SET status='expired',updated_at=CURRENT_TIMESTAMP WHERE id=?",id(wait,"id"));continue; }
-            long uid=id(wait,"user_id");
-            try { eligible(uid);opening.requireSlot(id(wait,"room_id"),null,slot); } catch(Api.Failure e) { continue; }
-            if(conflict("user_id",uid,slot)) continue;
-            for(var seat:candidates(id(wait,"room_id"),slot)) {
-                if(wait.get("zone")!=null&&!wait.get("zone").equals(seat.get("zone"))) continue;
-                if(wait.get("has_power")!=null&&!wait.get("has_power").equals(seat.get("has_power"))) continue;
-                if(wait.get("near_window")!=null&&!wait.get("near_window").equals(seat.get("near_window"))) continue;
-                createInternal(uid,new Requests.Reservation(id(seat,"id"),text(wait,"res_date"),text(wait,"start_time"),text(wait,"end_time")),"waitlist");
-                db.update("UPDATE waitlist SET status='promoted',updated_at=CURRENT_TIMESTAMP WHERE id=?",id(wait,"id"));
-                notify(uid,"waitlist_promoted","候补成功","已为您预约 "+seat.get("seat_no")+"，请按时签到。");break;
-            }
-        }
+        // 已退出候补递补；历史记录保持原状，只有本人主动退出才修改waiting。
     }
     private void requireOrdinary(long uid) {
         Api.require(AuthService.isOrdinary(db.one("SELECT role FROM users WHERE id=?",uid).get("role")),403,"仅学生和教职工可操作本人预约或候补");
     }
-    private LocalDateTime starts(Map<String,Object> r) { return LocalDate.parse(text(r,"res_date")).atTime(LocalTime.parse(text(r,"start_time"))); }
-    private LocalDateTime ends(Map<String,Object> r) { return LocalDate.parse(text(r,"res_date")).atTime(LocalTime.parse(text(r,"end_time"))); }
+    private LocalDateTime starts(Map<String,Object> r) { return Slot.endpoint(LocalDate.parse(text(r,"res_date")),text(r,"start_time")); }
+    private LocalDateTime ends(Map<String,Object> r) { return Slot.endpoint(LocalDate.parse(text(r,"res_date")),text(r,"end_time")); }
 }

@@ -26,12 +26,13 @@ public class Store {
         Map<String,Object> result=new LinkedHashMap<>();
         for(int i=1;i<=rs.getMetaData().getColumnCount();i++) {
             String label=rs.getMetaData().getColumnLabel(i).toLowerCase(Locale.ROOT);
+            // PostgreSQL TIME允许24:00:00，getObject(java.sql.Time)会丢失此边界。
+            if(rs.getMetaData().getColumnType(i)==java.sql.Types.TIME) { result.put(label,rs.getString(i));continue; }
             Object value=rs.getObject(i);
             // 日期与业务时间戳分别映射，保持前端 YYYY-MM-DD 契约。
             if(label.equals("res_date")&&value!=null) value=rs.getDate(i).toLocalDate().toString();
             else if(value instanceof Timestamp t) value=t.toLocalDateTime().toString();
             else if(value instanceof java.sql.Date d) value=d.toLocalDate().toString();
-            else if(value instanceof java.sql.Time t) value=t.toString();
             result.put(label,value);
         }
         return result;

@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { readFile } from 'node:fs/promises'
+import { initialSlot, validateSlot, minuteValue, serverStartMinute } from '../src/composables/bookingPolicy.js'
 import { operationReason } from '../src/components/admin/userForm.js'
 import { ref, computed } from 'vue'
 
@@ -100,20 +101,20 @@ async function booking() {
     '../components/seat3d/seatPresentation': { seatType: () => '普通桌', zoneName: { regular: '普通区' }, getWindowSides: () => ({}) },
     '../components/ui/feedback': { message: { info() {}, warning() {}, success() {} }, confirmDialog: async () => {} },
     '../api/room': { getRooms: async () => ({ data: [] }), getSeatMap: async () => ({ data: { room: room(), seats: [seat()] } }) },
-    '../api/reservation': { createReservation: async () => { calls.push('create') }, autoAllocate: async () => { calls.push('auto') } },
-    '../api/waitlist': { joinWaitlist: async () => { calls.push('waitlist') } }
-  }, 'room, rooms, seats, locationFilter, filteredRooms, selected, onSeatClick, confirmBooking, runAllocate, pickRecommended, seatStats')
+    '../api/reservation': { createReservation: async () => { calls.push('create') }, getBookingPolicy: async () => ({data:{}}) },
+    '../composables/bookingPolicy.js': {initialSlot,validateSlot,minuteValue,serverStartMinute}
+  }, 'room, rooms, seats, policy, date, start, end, locationFilter, filteredRooms, selected, onSeatClick, confirmBooking, seatStats')
+  page.policy.value = {server_now:'2026-11-01T08:00:00+08:00',campus_today:'2026-11-01',dates:['2026-11-01','2026-11-02','2026-11-03'],campus_zone:'Asia/Shanghai',min_duration_minutes:30}
+  page.date.value='2026-11-01';page.start.value='09:00';page.end.value='12:00'
   return { ...page, calls }
 }
-test('disabled room cannot submit through manual selection, direct confirmation, auto allocation or recommendations', async () => {
+test('disabled room cannot submit through manual selection or direct confirmation', async () => {
   const page = await booking()
   page.room.value = { ...room(), enabled: false }
   page.onSeatClick(seat())
   assert.equal(page.selected.value, null)
   page.selected.value = seat()
   await page.confirmBooking()
-  await page.runAllocate(true)
-  await page.pickRecommended({ seat: seat() })
   assert.deepEqual(page.calls, [])
 })
 test('public position filters preserve B1 and do not guess unknown metadata', async () => {
@@ -138,7 +139,7 @@ test('resource DELETE API retains version and reason in JSON body', async () => 
   assert.equal(calls[1][1].data.reason, '座位误建')
 })
 
-test('available seat outside authoritative opening window cannot bypass manual or automatic entry points', async () => {
+test('available seat outside authoritative opening window cannot bypass manual submission', async () => {
   const page = await booking()
   page.room.value = room()
   const closed = { ...seat(), bookable_for_slot: false, closed_reasons: ['临时停用'] }
@@ -147,7 +148,5 @@ test('available seat outside authoritative opening window cannot bypass manual o
   assert.equal(page.selected.value, null)
   page.selected.value = closed
   await page.confirmBooking()
-  await page.runAllocate(true)
-  await page.pickRecommended({ seat: closed })
   assert.deepEqual(page.calls, [])
 })

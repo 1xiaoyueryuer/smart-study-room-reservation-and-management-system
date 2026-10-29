@@ -17,9 +17,10 @@ public class ApiController {
     private final StatsService stats;
     private final Store db;
     private final UserService users;
+    private final BookingPolicy policy;
     private final StringRedisTemplate redis;
-    public ApiController(AuthService auth,ResourceService resources,BookingService bookings,StatsService stats,Store db,StringRedisTemplate redis,UserService users) {
-        this.auth=auth;this.resources=resources;this.bookings=bookings;this.stats=stats;this.db=db;this.redis=redis;this.users=users;
+    public ApiController(AuthService auth,ResourceService resources,BookingService bookings,StatsService stats,Store db,StringRedisTemplate redis,UserService users,BookingPolicy policy) {
+        this.auth=auth;this.resources=resources;this.bookings=bookings;this.stats=stats;this.db=db;this.redis=redis;this.users=users;this.policy=policy;
     }
     @GetMapping("/health") Object health() {
         db.count("SELECT count(*) FROM booking_mutex");redis.hasKey("studyroom-java:health");
@@ -30,6 +31,7 @@ public class ApiController {
     @PostMapping("/auth/logout") Object logout(HttpServletRequest req) { auth.logout((String)req.getAttribute("token"));return ok(Map.of("logged_out",true)); }
     @GetMapping("/auth/profile") Object profile(HttpServletRequest req) { return ok(auth.profile(uid(req))); }
     @PatchMapping("/auth/profile") Object updateProfile(HttpServletRequest req,@RequestBody Map<String,Object> body) { return ok(users.updateContacts(uid(req),body)); }
+    @GetMapping("/booking-policy") Object bookingPolicy() { return ok(policy.view()); }
     @GetMapping("/rooms") Object rooms() { return ok(resources.rooms()); }
     @GetMapping("/rooms/{id}/seats") Object seats(@PathVariable long id,@RequestParam String date,@RequestParam String start,@RequestParam String end) { return ok(resources.seatMap(id,date,start,end)); }
     @PostMapping("/reservations") Object create(HttpServletRequest req,@Valid @RequestBody Requests.Reservation body) { return ok(bookings.create(uid(req),body)); }

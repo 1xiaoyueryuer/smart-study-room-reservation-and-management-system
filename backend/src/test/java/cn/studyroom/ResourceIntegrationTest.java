@@ -111,13 +111,13 @@ class ResourceIntegrationTest {
         http.perform(payload(delete("/api/admin/rooms/"+room),admin,Map.of("version",3,"reason","测试历史保护"))).andExpect(status().isConflict());
         assertEquals(1,db.count("SELECT count(*) FROM reservations"));assertEquals(0,db.count("SELECT count(*) FROM credit_logs"));
     }
-    @Test void disabledRoomCannotBeBookedAllocatedWaitlistedOrPromotedAndDoesNotBreakOtherRooms() throws Exception {
+    @Test void disabledRoomCannotBeBookedAndRetiredQueuesNeverPromote() throws Exception {
         String admin=token("admin");
-        bookings.join(ids.get("student"),new Requests.Wait(room,booking(seat1).date(),"10:00","11:00",null,null,null));
+        db.update("INSERT INTO waitlist(user_id,room_id,res_date,start_time,end_time) VALUES(?,?,?,TIME '10:00',TIME '11:00')",ids.get("student"),room,java.sql.Date.valueOf(booking(seat1).date()));
         http.perform(payload(put("/api/admin/rooms/"+room),admin,roomBody(1,false))).andExpect(status().isOk()).andExpect(jsonPath("$.data.capacity").value(2)).andExpect(jsonPath("$.data.bookable_capacity").value(0));
         assertEquals(409,assertThrows(Api.Failure.class,()->bookings.create(ids.get("staff"),booking(seat1))).status);
-        assertEquals(409,assertThrows(Api.Failure.class,()->bookings.allocate(ids.get("staff"),new Requests.Allocation(room,booking(seat1).date(),"10:00","11:00",null,null,null,0,true))).status);
-        assertEquals(409,assertThrows(Api.Failure.class,()->bookings.join(ids.get("staff"),new Requests.Wait(room,booking(seat1).date(),"10:00","11:00",null,null,null))).status);
+        assertEquals(410,assertThrows(Api.Failure.class,()->bookings.allocate(ids.get("staff"),new Requests.Allocation(room,booking(seat1).date(),"10:00","11:00",null,null,null,0,true))).status);
+        assertEquals(410,assertThrows(Api.Failure.class,()->bookings.join(ids.get("staff"),new Requests.Wait(room,booking(seat1).date(),"10:00","11:00",null,null,null))).status);
         var maintenance=seatBody("A2",1,2,1,"maintenance");maintenance.put("reason","仅维护座位，空间仍保持原原因");
         http.perform(payload(put("/api/admin/seats/"+seat2),admin,maintenance)).andExpect(status().isOk());
         assertEquals("测试维护资源",resources.room(room).get("resource_reason"));
@@ -132,10 +132,11 @@ class ResourceIntegrationTest {
         long other=db.insert("INSERT INTO rooms(name,seat_rows,seat_cols) VALUES('另一个模拟空间',1,1)");
         opening.initializeDefaults(other);
         db.insert("INSERT INTO seats(room_id,seat_no,row_no,col_no) VALUES(?,'01',1,1)",other);
-        bookings.join(ids.get("staff"),new Requests.Wait(other,booking(seat1).date(),"10:00","11:00",null,null,null));
+        db.update("INSERT INTO waitlist(user_id,room_id,res_date,start_time,end_time) VALUES(?,?,?,TIME '10:00',TIME '11:00')",ids.get("staff"),other,java.sql.Date.valueOf(booking(seat1).date()));
         bookings.tick();
         assertEquals("waiting",db.one("SELECT status FROM waitlist WHERE user_id=?",ids.get("student")).get("status"));
-        assertEquals("promoted",db.one("SELECT status FROM waitlist WHERE user_id=?",ids.get("staff")).get("status"));
+        assertEquals("waiting",db.one("SELECT status FROM waitlist WHERE user_id=?",ids.get("staff")).get("status"));
+        assertEquals(0,db.count("SELECT count(*) FROM reservations"));
         http.perform(get("/api/stats/overview").header("Authorization","Bearer "+admin)).andExpect(status().isOk()).andExpect(jsonPath("$.data.total_seats").value(1));
     }
     @Test void auditFailureRollsBackResourceAndRoomVersionTogether() throws Exception {

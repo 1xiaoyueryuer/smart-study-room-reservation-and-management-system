@@ -5,7 +5,7 @@ import SButton from '../ui/SButton.vue'
 import { feedbackState } from '../ui/feedback'
 import { seatType, seatState, stateLabels, stateColors, zoneName } from './seatPresentation'
 
-const props = defineProps({ origin: Object, room: Object, seats: Array, selectedId: Number, date: String, start: String, end: String, loading: Boolean, submitting: Boolean })
+const props = defineProps({ origin: Object, room: Object, seats: Array, selectedId: Number, date: String, start: String, end: String, loading: Boolean, submitting: Boolean, submitError: String, policyReady: Boolean })
 const emit = defineEmits(['select', 'submit', 'closed'])
 const panel = ref(null), backdrop = ref(null), content = ref(null), snapshot = ref(null)
 const Scene = shallowRef(null), error = ref(''), ready = ref(false), closing = ref(false), opening = ref(true), view = ref('overview')
@@ -167,10 +167,11 @@ onBeforeUnmount(() => {
             <div v-if="ready && !error && view === 'firstPerson'" class="seated-tools"><span aria-live="polite">正在体验 {{ selected?.seat_no }}</span><button :disabled="busy" @click="sceneRef?.resetLook()">回正视线</button></div>
             <div v-if="ready && !error" class="scene-hint">{{ view === 'firstPerson' ? '拖动 / 方向键环视 · 点击总览退出体验' : '拖动旋转 · 滚轮 / 双指缩放 · 点击桌椅选座' }}</div>
           </div>
+          <p v-if="submitError" role="alert" class="explorer-submit-error">{{ submitError }}</p>
           <footer class="explorer-footer">
             <div class="explorer-selection" aria-live="polite"><strong>{{ selected ? `已选择 ${selected.seat_no}` : '找一个喜欢的位置' }}</strong><span>{{ selected ? `${seatType(selected)} · ${zoneName[selected.zone]}${selected.near_window ? ' · 靠窗' : ''}` : '选择可预约的桌椅，或使用座位列表' }}</span></div>
             <label class="seat-list"><span class="sr-only">按编号选择座位</span><select :value="selectedId ?? ''" :disabled="busy || !!error" @change="chooseFromList"><option value="" disabled>按编号选座</option><option v-for="s in seats" :key="s.id" :value="s.id" :disabled="s.status !== 'available' || s.bookable_for_slot !== true || s.occupied">{{ s.seat_no }} · {{ stateLabels[seatState(s, selectedId)] }}</option></select></label>
-            <SButton variant="primary" size="lg" :disabled="!room?.enabled || !selected || selected.bookable_for_slot !== true || busy || !!error" :loading="submitting" @click="emit('submit')">提交预约</SButton>
+            <SButton variant="primary" size="lg" :disabled="!policyReady || !room?.enabled || !selected || selected.bookable_for_slot !== true || busy || !!error" :loading="submitting" @click="emit('submit')">提交预约</SButton>
           </footer>
         </div>
       </section>
@@ -179,6 +180,7 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.explorer-submit-error { color:var(--red-strong); padding:10px 20px; font-size:var(--fs-caption); }
 .seat-explorer { position: fixed; inset: 0; z-index: var(--z-dialog); display: grid; place-items: center; }
 .explorer-backdrop { position: absolute; inset: 0; background: rgb(20 29 43 / 35%); }
 .explorer-panel { position: relative; width: min(1280px, calc(100vw - 48px)); height: min(850px, calc(100dvh - 48px)); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-xl); box-shadow: var(--shadow-4); overflow: hidden; outline: none; box-sizing: border-box; transform-origin: 0 0; transition: none; }

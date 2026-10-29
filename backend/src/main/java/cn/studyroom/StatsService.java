@@ -20,7 +20,7 @@ public class StatsService {
     }
     private LocalDateTime from(Map<String,Object> row) { return LocalDateTime.parse(text(row,"checkin_at")); }
     private LocalDateTime to(Map<String,Object> row) {
-        LocalDateTime scheduled=LocalDate.parse(text(row,"res_date")).atTime(LocalTime.parse(text(row,"end_time")));
+        LocalDateTime scheduled=Slot.endpoint(LocalDate.parse(text(row,"res_date")),text(row,"end_time"));
         LocalDateTime actual=row.get("checkout_at")==null?LocalDateTime.now(clock):LocalDateTime.parse(text(row,"checkout_at"));
         return actual.isBefore(scheduled)?actual:scheduled;
     }
@@ -42,7 +42,7 @@ public class StatsService {
     }
     public List<Map<String,Object>> peak(int days) {
         var rows=used(LocalDate.now(clock).minusDays(bound(days,1,90)),LocalDate.now(clock).minusDays(1));var result=new ArrayList<Map<String,Object>>();
-        for(int h=7;h<=22;h++) { final int hour=h;result.add(Map.of("hour",String.format("%02d:00",h),"count",rows.stream().filter(x->LocalTime.parse(text(x,"start_time")).getHour()==hour).count())); }
+        for(int h=0;h<24;h++) { final int hour=h;result.add(Map.of("hour",String.format("%02d:00",h),"count",rows.stream().filter(x->Slot.endpoint(LocalDate.parse(text(x,"res_date")),text(x,"start_time")).getHour()==hour).count())); }
         return result;
     }
     public List<Map<String,Object>> top(int days,int limit) {

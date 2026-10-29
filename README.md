@@ -30,7 +30,7 @@
 | 管理员 | admin | admin123 |
 | 模拟学生 | stu01 至 stu40 | 123456 |
 
-数据库初始化包含3个模拟空间、158个座位、14天模拟历史。预约演示请选择未来有效时段，目前仍保留上游半小时粒度和提前10分钟规则。
+数据库初始化包含3个模拟空间、158个座位、14天模拟历史。预约按校园时区当天至后两天、整分钟、至少30分钟校验；单段结束可为24:00，不设单次或每日4小时额度。候补和属性偏好自动分配已退出新增入口，历史记录保留。空间分段、日期例外与临时停用统一决定合法开放窗口。
 
 停止 Java：`./scripts/Stop.ps1`。该脚本不会关闭共享数据库或 Redis。
 
@@ -87,6 +87,6 @@ python ./scripts/api_smoke.py
 
 [本次验证结果](docs/VALIDATION.md) 与上游资料分开保存。`docs/upstream/` 和 `diagrams/` 是原作者材料，不等于本组贡献或本次测试结果。
 
-后端入口为 `backend/src/main/java/cn/studyroom/`：`Requests` 定义前端契约，`ApiController` 提供接口，`AuthService`/`WebSecurity` 负责权限，`ResourceService` 管理资源，`BookingService` 统一预约与候补事务，`StatsService` 汇总统计，`Store` 处理 SQL 和行映射。
+后端入口为 `backend/src/main/java/cn/studyroom/`：`Requests` 定义前端契约，控制器提供接口，`AuthService`/`WebSecurity` 负责权限，`UserService` 维护校园账号，`ResourceService` 管理资源，`OpeningScheduleService` 计算合法窗口，`Slot`/`BookingService` 统一预约时间与事务，`StatsService` 汇总统计，`Store` 处理 SQL 和保真时间映射。
 
 应用仅监听127.0.0.1。上游来源和许可证在本项目中保留；原作者材料不能作为本组的实现或测试结果。

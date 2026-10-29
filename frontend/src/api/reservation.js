@@ -2,11 +2,7 @@ import request from './request'
 
 // 预约
 export function createReservation(data) {
-  return request.post('/reservations', data)
-}
-
-export function autoAllocate(data) {
-  return request.post('/reservations/auto', data)
+  return request.post('/reservations', data, { silent: true })
 }
 
 export function listMyReservations() {
@@ -31,4 +27,8 @@ export function returnReservation(id) {
 
 export function checkoutReservation(id) {
   return request.post(`/reservations/${id}/checkout`)
+}
+
+export function getBookingPolicy() {
+  return request.get('/booking-policy', { silent: true })
 }

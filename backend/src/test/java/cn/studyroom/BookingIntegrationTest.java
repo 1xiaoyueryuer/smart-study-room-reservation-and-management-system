@@ -50,6 +50,7 @@ class BookingIntegrationTest {
         var results=race(20,i->bookings.create(ids.get(i),request(s1,i%2==0?"10:00":"10:30",i%2==0?"12:00":"12:30")));
         assertEquals(1,results.stream().filter(x->x==200).count());assertEquals(19,results.stream().filter(x->x==409).count());
         assertEquals(1,db.count("SELECT count(*) FROM reservations"));assertEquals(1,db.count("SELECT count(*) FROM notifications"));
+        assertEquals(1,db.count("SELECT count(*) FROM audit_events WHERE action='reservation.create'"));
     }
     @Test void sameUserCannotConcurrentlyBookDifferentSeats() throws Exception {
         var results=race(12,i->bookings.create(u1,request(i%2==0?s1:s2,"10:00","11:00")));
@@ -77,15 +78,16 @@ class BookingIntegrationTest {
         assertEquals(92,db.count("SELECT credit_score FROM users WHERE id=?",u1));
         assertEquals(0.0,((Number)stats.overview().get("today_utilization")).doubleValue());
     }
-    @Test void waitlistRespectsPreferencesAndPromotesOnlyOnce() {
+    @Test void retiredWaitlistNeverPromotesAndHistoricalPreferencesRemainCancellable() {
         resources.updateSeat(admin,s2,seatRequest(s2,"quiet",true,true,"available"));
         long held=Store.id(bookings.create(u1,request(s2,"10:00","11:00")),"id");
-        long waiting=Store.id(bookings.join(u2,new Requests.Wait(room,"2026-10-30","10:00","11:00","quiet",true,true)),"id");
-        bookings.tick();assertEquals("waiting",db.one("SELECT status FROM waitlist WHERE id=?",waiting).get("status"));
-        bookings.action(u1,held,"cancel");bookings.tick();bookings.tick();
-        assertEquals("promoted",db.one("SELECT status FROM waitlist WHERE id=?",waiting).get("status"));
-        var res=db.one("SELECT * FROM reservations WHERE user_id=?",u2);assertEquals(s2,Store.id(res,"seat_id"));
-        assertEquals(1,db.count("SELECT count(*) FROM reservations WHERE user_id=?",u2));
+        long waiting=db.insert("INSERT INTO waitlist(user_id,room_id,res_date,start_time,end_time,zone,has_power,near_window) VALUES(?,?,'2026-10-30','10:00','11:00','quiet',true,true)",u2,room);
+        assertEquals(410,assertThrows(Api.Failure.class,()->bookings.join(u2,new Requests.Wait(room,"2026-10-30","10:00","11:00","quiet",true,true))).status);
+        bookings.tick();bookings.action(u1,held,"cancel");bookings.tick();bookings.tick();
+        var row=bookings.waitMine(u2).get(0);assertEquals("waiting",row.get("status"));assertEquals("quiet",row.get("zone"));assertEquals(true,row.get("has_power"));
+        assertEquals(0,db.count("SELECT count(*) FROM reservations WHERE user_id=?",u2));
+        bookings.cancelWait(u2,waiting);assertEquals("cancelled",db.one("SELECT status FROM waitlist WHERE id=?",waiting).get("status"));
+        assertEquals(409,assertThrows(Api.Failure.class,()->bookings.cancelWait(u2,waiting)).status);
     }
     @Test void blockedUserAndMaintenanceSeatCannotBeBooked() {
         db.update("UPDATE users SET credit_banned_until=TIMESTAMP '2026-11-01 00:00:00' WHERE id=?",u1);
