@@ -29,6 +29,14 @@ export function listUsers() {
   return request.get('/admin/users')
 }
 
-export function setUserStatus(id, status) {
-  return request.put(`/admin/users/${id}/status`, { status })
+export function setUserStatus(id, status, reason) {
+  return request.put(`/admin/users/${id}/status`, { status, reason })
+}
+
+export function createUser(data) {
+  return request.post('/admin/users', data)
+}
+
+export function updateUser(id, data) {
+  return request.put(`/admin/users/${id}`, data)
 }

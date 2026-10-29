@@ -17,3 +17,7 @@ export function logout(token) {
 export function fetchProfile() {
   return request.get('/auth/profile')
 }
+
+export function updateProfile(data) {
+  return request.patch('/auth/profile', data)
+}

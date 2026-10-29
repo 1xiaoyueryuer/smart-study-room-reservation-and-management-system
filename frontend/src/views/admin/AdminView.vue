@@ -1,11 +1,11 @@
 <script setup>
-import { ROLE_LABELS } from '../../stores/auth'
+import UserManagement from '../../components/admin/UserManagement.vue'
 import PageHelp from '../../components/PageHelp.vue'
 import { ref, onMounted, computed } from 'vue'
 import { message, confirmDialog, promptDialog } from '../../components/ui/feedback'
 import { getRooms, getSeatMap } from '../../api/room'
 import {
-  createRoom, updateRoom, deleteRoom, batchGenSeats, updateSeat, listUsers, setUserStatus
+  createRoom, updateRoom, deleteRoom, batchGenSeats, updateSeat
 } from '../../api/admin'
 import AppIcon from '../../components/AppIcon.vue'
 import SButton from '../../components/ui/SButton.vue'
@@ -127,35 +127,16 @@ async function toggleSeatStatus(s) {
   message.success(`${s.seat_no} 已${next === 'available' ? '恢复可用' : '进入维护'}`)
 }
 
-// ---------- 用户管理 ----------
-const users = ref([])
-async function loadUsers() {
-  const resp = await listUsers()
-  users.value = resp.data || []
-}
-async function toggleUser(u) {
-  const next = u.status === 'active' ? 'disabled' : 'active'
-  await setUserStatus(u.id, next)
-  u.status = next
-  message.success(`${u.username} 已${next === 'active' ? '启用' : '禁用'}`)
-}
-
-// ---------- 左栏统计 ----------
-const userStats = ref({ total: 0, active: 0, disabled: 0, admin: 0, student: 0 })
-function refreshStats() {
-  const total = users.value.length || 0
-  const active = users.value.filter((u) => u.status === 'active').length
-  const disabled = total - active
-  const admin = users.value.filter((u) => u.role === 'admin').length
-  userStats.value = { total, active, disabled, admin, student: total - admin }
-}
+// 用户管理及人数均由同一个组件的真实列表维护。
+const userManagement = ref(null)
+const userStats = ref(null)
+function refreshUsers() { userManagement.value?.loadUsers() }
 const roomStats = computed(() => ({
   total: rooms.value.length,
   seats: rooms.value.reduce((s, r) => s + (r.seat_rows * r.seat_cols || 0), 0)
 }))
 onMounted(async () => {
-  await loadRooms(); await loadUsers()
-  refreshStats()
+  await loadRooms()
 })
 
 const tabs = [
@@ -163,11 +144,6 @@ const tabs = [
   { key: 'users', label: '用户管理',   icon: 'users' }
 ]
 
-function creditColor(s) {
-  if (s < 60) return 'var(--red-strong)'
-  if (s < 80) return 'var(--amber-strong)'
-  return 'var(--green-strong)'
-}
 </script>
 
 <template>
@@ -178,7 +154,7 @@ function creditColor(s) {
     </div><PageHelp title="管理须知"><ul class="tips">
           <li>批量生成座位会<b>追加</b>而非覆盖现有座位</li>
           <li>维护中座位普通用户端不可预约，不计入统计</li>
-          <li>管理员账号<b>无法禁用</b>，防止误操作锁死</li>
+          <li>当前管理员<b>不能自行禁用或降级</b>，账号变更须填写理由</li>
         </ul></PageHelp></header>
     <div class="split admin-split">
     <!-- 左栏：导航 + 统计 + 快速操作 -->
@@ -214,11 +190,11 @@ function creditColor(s) {
             <div class="kpi-label">座位规模</div>
           </div>
           <div class="kpi">
-            <div class="kpi-num">{{ userStats.total }}</div>
-            <div class="kpi-label">注册用户</div>
+            <div class="kpi-num">{{ userStats?.total ?? '—' }}</div>
+            <div class="kpi-label">校园账号</div>
           </div>
           <div class="kpi kpi-bad">
-            <div class="kpi-num">{{ userStats.disabled }}</div>
+            <div class="kpi-num">{{ userStats?.disabled ?? '—' }}</div>
             <div class="kpi-label">已禁用</div>
           </div>
         </div>
@@ -230,7 +206,7 @@ function creditColor(s) {
           <SButton v-if="activeTab === 'rooms'" variant="primary" block @click="openCreate">
             <AppIcon name="add" :size="16" />新建自习室
           </SButton>
-          <SButton variant="secondary" block @click="loadRooms(); loadUsers(); refreshStats()">
+          <SButton variant="secondary" block @click="loadRooms(); refreshUsers()">
             <AppIcon name="refresh" :size="16" />刷新数据
           </SButton>
         </div>
@@ -282,68 +258,7 @@ function creditColor(s) {
         </div>
       </section>
 
-      <!-- 用户管理 -->
-      <section v-if="activeTab === 'users'" class="card">
-        <div class="card-title-row">
-          <h3>用户管理</h3>
-          <SButton variant="secondary" size="sm" @click="loadUsers(); refreshStats()">
-            <AppIcon name="refresh" :size="14" />刷新
-          </SButton>
-        </div>
-        <div class="table-wrap">
-          <div class="table-scroll" tabindex="0" aria-label="用户管理表格，可左右滑动">
-            <table class="table users-table">
-              <thead>
-                <tr>
-                  <th style="width:44px" class="num-col">ID</th>
-                  <th style="width:108px">用户名</th>
-                  <th style="width:96px">姓名</th>
-                  <th style="width:112px">学号</th>
-                  <th style="width:88px">角色</th>
-                  <th style="width:88px">信用分</th>
-                  <th style="width:90px">状态</th>
-                  <th style="width:96px">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="row in users" :key="row.id">
-                  <td class="num cell-dim num-col">{{ row.id }}</td>
-                  <td class="cell-strong">{{ row.username }}</td>
-                  <td>{{ row.real_name }}</td>
-                  <td class="num">{{ row.student_no }}</td>
-                  <td>
-                    <STag :type="row.role === 'admin' ? 'danger' : 'primary'">
-                      {{ ROLE_LABELS[row.role] || '未知角色' }}
-                    </STag>
-                  </td>
-                  <td class="num-col">
-                    <span class="credit-num" :style="{ color: creditColor(row.credit_score) }">
-                      {{ row.credit_score }}
-                    </span>
-                  </td>
-                  <td>
-                    <STag :type="row.status === 'active' ? 'success' : 'neutral'" dot>
-                      {{ row.status === 'active' ? '正常' : '禁用' }}
-                    </STag>
-                  </td>
-                  <td>
-                    <SButton
-                      v-if="row.role !== 'admin'"
-                      size="sm"
-                      :variant="row.status === 'active' ? 'soft-danger' : 'soft-success'"
-                      @click="toggleUser(row)"
-                    >
-                      {{ row.status === 'active' ? '禁用' : '启用' }}
-                    </SButton>
-                    <span v-else class="cell-dim">—</span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-            <SEmpty v-if="!users.length" description="暂无用户" />
-          </div>
-        </div>
-      </section>
+      <UserManagement ref="userManagement" v-show="activeTab === 'users'" @summary="userStats = $event" />
     </div>
   </div>
 
@@ -449,7 +364,6 @@ function creditColor(s) {
 <style scoped>
 
 .rooms-table { min-width: 760px; }
-.users-table { min-width: 770px; }
 .seats-table { min-width: 620px; }
 
 .quick-actions {
@@ -464,11 +378,7 @@ function creditColor(s) {
   text-align: center;
 }
 
-.credit-num {
-  font-weight: 700;
-  font-size: var(--fs-body);
-  font-variant-numeric: tabular-nums;
-}
+
 
 .zone-chip {
   display: inline-block;

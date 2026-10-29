@@ -16,9 +16,10 @@ public class ApiController {
     private final BookingService bookings;
     private final StatsService stats;
     private final Store db;
+    private final UserService users;
     private final StringRedisTemplate redis;
-    public ApiController(AuthService auth,ResourceService resources,BookingService bookings,StatsService stats,Store db,StringRedisTemplate redis) {
-        this.auth=auth;this.resources=resources;this.bookings=bookings;this.stats=stats;this.db=db;this.redis=redis;
+    public ApiController(AuthService auth,ResourceService resources,BookingService bookings,StatsService stats,Store db,StringRedisTemplate redis,UserService users) {
+        this.auth=auth;this.resources=resources;this.bookings=bookings;this.stats=stats;this.db=db;this.redis=redis;this.users=users;
     }
     @GetMapping("/health") Object health() {
         db.count("SELECT count(*) FROM booking_mutex");redis.hasKey("studyroom-java:health");
@@ -28,6 +29,7 @@ public class ApiController {
     @PostMapping("/auth/register") Object register(@Valid @RequestBody Requests.Register req) { return ok(auth.register(req)); }
     @PostMapping("/auth/logout") Object logout(HttpServletRequest req) { auth.logout((String)req.getAttribute("token"));return ok(Map.of("logged_out",true)); }
     @GetMapping("/auth/profile") Object profile(HttpServletRequest req) { return ok(auth.profile(uid(req))); }
+    @PatchMapping("/auth/profile") Object updateProfile(HttpServletRequest req,@RequestBody Map<String,Object> body) { return ok(users.updateContacts(uid(req),body)); }
     @GetMapping("/rooms") Object rooms() { return ok(resources.rooms()); }
     @GetMapping("/rooms/{id}/seats") Object seats(@PathVariable long id,@RequestParam String date,@RequestParam String start,@RequestParam String end) { return ok(resources.seatMap(id,date,start,end)); }
     @PostMapping("/reservations") Object create(HttpServletRequest req,@Valid @RequestBody Requests.Reservation body) { return ok(bookings.create(uid(req),body)); }
@@ -62,6 +64,8 @@ public class ApiController {
     @PostMapping("/admin/rooms/{id}/seats/batch") Object batch(@PathVariable long id,@Valid @RequestBody Requests.Batch body) { return ok(Map.of("room_id",id,"created",resources.batch(id,body))); }
     @PutMapping("/admin/seats/{id}") Object updateSeat(@PathVariable long id,@Valid @RequestBody Requests.Seat body) { resources.updateSeat(id,body);return ok(Map.of("updated",id)); }
     @DeleteMapping("/admin/seats/{id}") Object deleteSeat(@PathVariable long id) { resources.deleteSeat(id);return ok(Map.of("deleted",id)); }
-    @GetMapping("/admin/users") Object users() { return ok(db.list("SELECT id,username,real_name,student_no,role,credit_score,credit_banned_until,status,created_at FROM users ORDER BY id")); }
-    @PutMapping("/admin/users/{id}/status") Object status(HttpServletRequest req,@PathVariable long id,@Valid @RequestBody Requests.Status body) { bookings.setUserStatus(uid(req),id,body.status());return ok(Map.of("updated",id)); }
+    @GetMapping("/admin/users") Object users(HttpServletRequest req) { return ok(users.list(uid(req))); }
+    @PostMapping("/admin/users") Object createUser(HttpServletRequest req,@Valid @RequestBody Requests.UserChange body) { return ok(users.save(uid(req),null,body)); }
+    @PutMapping("/admin/users/{id}") Object updateUser(HttpServletRequest req,@PathVariable long id,@Valid @RequestBody Requests.UserChange body) { return ok(users.save(uid(req),id,body)); }
+    @PutMapping("/admin/users/{id}/status") Object status(HttpServletRequest req,@PathVariable long id,@Valid @RequestBody Requests.Status body) { return ok(users.setStatus(uid(req),id,body)); }
 }

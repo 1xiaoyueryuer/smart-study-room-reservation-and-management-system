@@ -167,10 +167,6 @@ public class BookingService {
             }
         }
     }
-    public void setUserStatus(long actor,long uid,String status) {
-        db.lockBookings();Api.require(actor!=uid,400,"不能禁用当前登录账号");
-        db.one("SELECT id FROM users WHERE id=?",uid);db.update("UPDATE users SET status=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",status,uid);
-    }
     private void requireOrdinary(long uid) {
         Api.require(AuthService.isOrdinary(db.one("SELECT role FROM users WHERE id=?",uid).get("role")),403,"仅学生和教职工可操作本人预约或候补");
     }

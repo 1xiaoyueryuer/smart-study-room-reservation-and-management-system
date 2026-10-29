@@ -113,7 +113,7 @@ class PermissionIntegrationTest {
         http.perform(post("/api/auth/logout").header("Authorization","Bearer "+student)).andExpect(status().isOk());
         http.perform(get("/api/auth/profile").header("Authorization","Bearer "+student)).andExpect(status().isUnauthorized());
         String staff=token("staff"), admin=token("admin");
-        http.perform(put("/api/admin/users/"+ids.get("staff")+"/status").header("Authorization","Bearer "+admin).contentType("application/json").content("{\"status\":\"disabled\"}"))
+        http.perform(put("/api/admin/users/"+ids.get("staff")+"/status").header("Authorization","Bearer "+admin).contentType("application/json").content("{\"status\":\"disabled\",\"reason\":\"测试禁用\"}"))
             .andExpect(status().isOk());
         http.perform(get("/api/auth/profile").header("Authorization","Bearer "+staff)).andExpect(status().isUnauthorized());
         http.perform(from(post("/api/auth/login").contentType("application/json").content(json.writeValueAsString(Map.of("username","s02_staff","password",PASSWORD)))))

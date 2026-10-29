@@ -50,7 +50,7 @@ public class AuthService {
         if(!ttl.isNegative()&&!ttl.isZero()) redis.opsForValue().set(revokedKey(token),"1",ttl);
     }
     public Map<String,Object> profile(long id) {
-        return db.one("SELECT id,username,real_name,student_no,role,credit_score,credit_banned_until,status,created_at FROM users WHERE id=?",id);
+        return db.one("SELECT id,username,real_name,student_no,campus_id,phone,email,role,credit_score,credit_banned_until,status,created_at FROM users WHERE id=?",id);
     }
     public static boolean isOrdinary(Object role) { return "student".equals(role)||"staff".equals(role); }
     static String blankNull(String s) { return s==null||s.isBlank()?null:s.trim(); }

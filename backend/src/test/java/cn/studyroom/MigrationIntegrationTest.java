@@ -55,18 +55,20 @@ class MigrationIntegrationTest {
     }
     @Test void emptyInstallationAndRepeatedStartup() throws Exception {
         var f=flyway(); DatabaseMigrations.migrate(f,false); DatabaseMigrations.migrate(f,false);
-        assertEquals(3,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(4,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".booking_mutex WHERE id=1"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".audit_events"));
         assertThrows(FlywayException.class,f::clean);
     }
     @Test void legacyRequiresExplicitAdoptionAndPreservesData() throws Exception {
-        legacy(); var f=flyway();
+        legacy(); execute("INSERT INTO "+schema+".users(username,password_hash,student_no) VALUES('known-campus','hash','OLD-01')"); var f=flyway();
         assertThrows(IllegalStateException.class,()->DatabaseMigrations.migrate(f,false));
         DatabaseMigrations.migrate(f,true); DatabaseMigrations.migrate(f,false);
+        assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE username='legacy' AND campus_id IS NULL AND phone IS NULL AND email IS NULL"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE username='legacy' AND password_hash='hash'"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".reservations WHERE user_id=1 AND seat_id=1 AND status='pending'"));
-        assertEquals(3,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(4,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE username='known-campus' AND campus_id='OLD-01' AND student_no='OLD-01'"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE type='BASELINE'"));
     }
     @Test void unknownStructureRejectedWithoutBaseline() throws Exception {
@@ -83,6 +85,6 @@ class MigrationIntegrationTest {
         var error=assertThrows(FlywayException.class,()->DatabaseMigrations.migrate(broken,false));
         assertTrue(error.getMessage().contains("V9999__broken.sql"));
         assertEquals(0,count("SELECT count(*) FROM information_schema.tables WHERE table_schema='"+schema+"' AND table_name='rollback_probe'"));
-        assertEquals(3,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(4,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
     }
 }

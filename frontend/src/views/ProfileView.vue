@@ -2,6 +2,10 @@
 import { usePagination } from '../composables/usePagination'
 import SPagination from '../components/ui/SPagination.vue'
 import { ref, computed, onMounted } from 'vue'
+import { fetchProfile, updateProfile } from '../api/auth'
+import { contactPayload } from '../components/admin/userForm.js'
+import SInput from '../components/ui/SInput.vue'
+import SButton from '../components/ui/SButton.vue'
 import { useAuthStore } from '../stores/auth'
 import { getCreditOverview } from '../api/credit'
 import SEmpty from '../components/ui/SEmpty.vue'
@@ -10,6 +14,45 @@ import SBanner from '../components/ui/SBanner.vue'
 
 const auth = useAuthStore()
 const overview = ref(null)
+const contacts = ref({ phone: '', email: '' })
+const profileLoading = ref(false)
+const profileError = ref('')
+const contactError = ref('')
+const contactSuccess = ref('')
+const savingContacts = ref(false)
+async function loadProfile() {
+  if (profileLoading.value) return
+  profileLoading.value = true
+  profileError.value = ''
+  try {
+    const response = await fetchProfile()
+    auth.setUser(response.data)
+    contacts.value = { phone: response.data.phone || '', email: response.data.email || '' }
+  } catch (failure) {
+    profileError.value = failure.message
+  } finally {
+    profileLoading.value = false
+  }
+}
+async function saveContacts() {
+  if (savingContacts.value) return
+  contactError.value = ''
+  contactSuccess.value = ''
+  let data
+  try { data = contactPayload(contacts.value) }
+  catch (failure) { contactError.value = failure.message; return }
+  savingContacts.value = true
+  try {
+    const response = await updateProfile(data)
+    auth.setUser(response.data)
+    contacts.value = { phone: response.data.phone || '', email: response.data.email || '' }
+    contactSuccess.value = '联系方式已保存'
+  } catch (failure) {
+    contactError.value = failure.message
+  } finally {
+    savingContacts.value = false
+  }
+}
 
 const scoreColor = computed(() => {
   const s = overview.value?.score ?? 100
@@ -24,6 +67,7 @@ const banned = computed(() => {
 })
 
 onMounted(async () => {
+  await loadProfile()
   if (!auth.isOrdinary) return
   const resp = await getCreditOverview()
   overview.value = resp.data
@@ -59,9 +103,23 @@ const { page, pages, pageItems } = usePagination(creditLogs, null)
         <div class="card-title-row"><h3>基本信息</h3></div>
         <div class="info-row"><span>姓名</span><b>{{ auth.user?.real_name || '—' }}</b></div>
         <div class="info-row"><span>用户名</span><b>{{ auth.user?.username || '—' }}</b></div>
-        <div v-if="auth.isOrdinary" class="info-row"><span>{{ auth.user?.role === 'staff' ? '工号' : '学号' }}</span><b>{{ auth.user?.student_no || '—' }}</b></div>
+        <div class="info-row"><span>校园编号</span><b>{{ auth.user?.campus_id || '未登记' }}</b></div>
         <div class="info-row"><span>角色</span><b>{{ auth.roleLabel }}</b></div>
         <div class="info-row"><span>账号状态</span><b :class="{ 'status-off': auth.user?.status !== 'active' }">{{ auth.user?.status === 'active' ? '正常' : '已禁用' }}</b></div>
+      </section>
+
+      <section class="card responsive-compact">
+        <div class="card-title-row"><h3>本人联系方式</h3></div>
+        <p v-if="profileLoading" class="muted" role="status">正在读取最新资料…</p>
+        <SBanner v-else-if="profileError" type="error" :title="profileError"><SButton size="sm" @click="loadProfile">重试读取</SButton></SBanner>
+        <form v-else class="contact-form" @submit.prevent="saveContacts">
+          <p class="muted">校园身份由管理员维护；您只能修改本人的联系电话和邮箱。</p>
+          <label>联系电话<SInput v-model="contacts.phone" type="tel" maxlength="30" autocomplete="tel" /></label>
+          <label>邮箱<SInput v-model="contacts.email" type="email" maxlength="254" autocomplete="email" /></label>
+          <p v-if="contactError" role="alert" class="contact-error">{{ contactError }}</p>
+          <p v-if="contactSuccess" role="status">{{ contactSuccess }}</p>
+          <SButton type="submit" variant="primary" :loading="savingContacts">保存联系方式</SButton>
+        </form>
       </section>
 
       <!-- 信用卡 -->
@@ -131,6 +189,10 @@ const { page, pages, pageItems } = usePagination(creditLogs, null)
 </template>
 
 <style scoped>
+.contact-form { display: grid; gap: 14px; }
+.contact-form label { display: grid; gap: 7px; font-size: var(--fs-caption); color: var(--text-2); }
+.contact-error { color: var(--red-strong); }
+
 
 .credit-table { min-width: 640px; }
 
