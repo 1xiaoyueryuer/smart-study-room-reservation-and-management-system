@@ -166,7 +166,7 @@ public class BookingService {
         String reason=type.equals("no_show")?"签到期限到达仍未签到":"预约开始后主动放弃且未签到";
         db.update("UPDATE reservations SET status='unused_ended',ended_at=?,termination_reason=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",Timestamp.valueOf(occurred),type,reservation);
         long violation=violations.recordUnused(uid,reservation,type,occurred,now,reason);
-        notify(uid,"violation","未使用预约已结束",reason+"，已释放时段并登记一条独立违规，可在本人违规记录查看。");
+        violations.notifyUnused(uid,violation,reason,now);
         auditReservation(type.equals("abandon")?uid:null,"reservation.unused_end",res,reason);
         audit.record(type.equals("abandon")?uid:null,"violation.register","violation",Long.toString(violation),reason,Map.of(),Map.of("reservation_id",reservation,"user_id",uid,"type",type,"occurred_at",occurred.toString(),"registered_at",now.toString(),"source","automatic","status","active"));
     }

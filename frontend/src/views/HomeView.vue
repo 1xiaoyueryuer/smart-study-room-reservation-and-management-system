@@ -275,7 +275,7 @@ const cardToneClass = {
           </div>
           <div class="intro-cell">
             <div class="intro-label">独立违规记录</div>
-            <div class="intro-text">本人查询自动未使用违约明细及有效性；历史信用流水另行只读保留，不按分数换算违规。</div>
+            <div class="intro-text">本人查询自动或核实登记的违规明细及有效性；历史信用流水另行只读保留，不按分数换算违规。</div>
           </div>
         </div>
         <div v-else class="intro-grid">

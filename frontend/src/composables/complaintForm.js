@@ -1,6 +1,6 @@
 export const complaintTypes = { occupation: '座位被占求助', service: '一般服务投诉' }
 export const complaintStatuses = { submitted:'待受理', processing:'处理中',awaiting_confirmation:'待确认反馈',closed:'已结案',withdrawn:'已撤回' }
-export const verificationOutcomes = { cooperated:'已配合纠正并提醒（不计违规）',identity_pending:'身份待核',unsubstantiated:'未查实',verified_refusal:'核实拒不配合（本次未登记违规）',service_verified:'服务事实已核实' }
+export const verificationOutcomes = { cooperated:'已配合纠正并提醒（不计违规）',identity_pending:'身份待核',unsubstantiated:'未查实',verified_refusal:'核实拒不配合（核实动作不自动登记）',service_verified:'服务事实已核实' }
 export const reservationStatuses = { pending:'待签到',checked_in:'使用中',completed:'已结束',cancelled:'已取消',unused_ended:'未使用结束',violation:'旧违约状态（历史）',temp_leave:'旧暂离状态（历史）' }
 export function positiveId(value) {
   if (value === null || value === undefined || value === '') return null

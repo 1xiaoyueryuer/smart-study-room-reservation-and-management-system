@@ -89,6 +89,7 @@ def main():
             check('本人取消释放座位',call('POST',f'/reservations/{res_id}/cancel',{},student)[0] == 200)
     status, body = call('GET','/violations/mine',token=student)
     check('本人独立违规明细',status == 200 and isinstance(body['data'],list))
+    check('违规通知时间只来自可靠关联且不公开核实私有资料',all('notified_at' in item and 'notification_id' in item and not any(key in item for key in ('source_event_id','complaint_id','reporter','private_note','identity_basis')) and (item['source'] != 'manual' or item['reservation_id'] is None) for item in body['data']))
     check('开始前取消未登记独立违规',all(v['reservation_id'] != res_id for v in body['data']))
     complaint_req = {'type':'occupation','reservation_id':res_id,'description':'API工程模拟：关联本人取消历史留证，不延期或复活预约','attachment_ids':[],'operation_id':str(uuid.uuid4())}
     check('不能关联他人预约求助',call('POST','/complaints',{**complaint_req,'operation_id':str(uuid.uuid4())},other)[0] == 403)
@@ -120,6 +121,9 @@ def main():
     verification = {'version':accepted['data']['complaint']['version'],'operation_id':str(uuid.uuid4()),'outcome':'service_verified','occurred_at':datetime.now(timezone(timedelta(hours=8))).isoformat(timespec='microseconds'),'public_note':'API工程模拟：服务情况已核实，尚待后续反馈','private_note':'API_PRIVATE_VERIFICATION_TEST_ONLY','facts_confirmed':True}
     status, verified = call('POST',f'/admin/complaints/{service_id}/verifications',verification,admin)
     check('无预约服务问题可核实且仍处理中',status == 200 and verified['data']['complaint']['status'] == 'processing')
+    manual_path = f"/admin/complaint-events/{verified['data']['event_id']}/violations"
+    check('一般服务核实事件不能登记拒不配合违规',call('POST',manual_path,{'operation_id':str(uuid.uuid4()),'reason':'API工程模拟：不合格来源必须拒绝，不实际处罚'},admin)[0] == 400)
+    check('普通用户不能手动登记违规',call('POST',manual_path,{'operation_id':str(uuid.uuid4()),'reason':'API工程模拟越权拒绝'},student)[0] == 403)
     status, verified_again = call('POST',f'/admin/complaints/{service_id}/verifications',verification,admin)
     check('核实原操作重试不重复事件',status == 200 and verified_again['data']['replayed'] is True)
     status, public_progress = call('GET',f'/complaints/{service_id}',token=student)

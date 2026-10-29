@@ -21,7 +21,7 @@ const typeMeta = {
   reservation_cancelled:{ text:'预约取消', color:'var(--text-3)', bg:'var(--surface-3)' },
   management_cancelled:{ text:'资源管理取消', color:'var(--text-3)', bg:'var(--surface-3)', category:'reservation_cancelled' },
   checkin_reminder:   { text: '签到提醒', color: 'var(--primary-active)', bg: 'var(--primary-weak)' },
-  violation:          { text: '违约警告', color: 'var(--red-strong)', bg: 'var(--red-weak)' },
+  violation:          { text: '违规通知', color: 'var(--red-strong)', bg: 'var(--red-weak)' },
   credit_change:      { text: '历史信用变动', color: 'var(--amber-strong)', bg: 'var(--amber-weak)' },
   waitlist_promoted:  { text: '候补递补', color: 'var(--violet-strong)', bg: 'var(--violet-weak)' },
   complaint_feedback:{ text:'投诉反馈',color:'var(--primary-active)',bg:'var(--primary-weak)' },
@@ -55,6 +55,7 @@ async function onMarkAll() {
   load()
 }
 
+function violationTarget(n) { return n.type === 'violation' && Number.isSafeInteger(n.violation_id) && n.violation_id > 0 ? {path:'/profile',query:{violation_id:n.violation_id},hash:'#violations'} : null }
 function complaintTarget(n) { return ['complaint_feedback','complaint_auto_closed'].includes(n.type) && Number.isSafeInteger(n.complaint_id) && n.complaint_id > 0 ? `/complaints/${n.complaint_id}` : null }
 
 function fmtTime(t) {
@@ -106,11 +107,11 @@ const { page, pages, pageItems } = usePagination(filtered, filterType)
   <div v-reveal class="page-view">
     <header class="view-heading has-page-help"><div class="heading-copy" data-page-title>
       <h1>消息中心</h1>
-      <p class="heading-sub">预约结果、违约警告与历史通知</p>
+      <p class="heading-sub">预约结果、违规通知与历史通知</p>
     </div><PageHelp title="使用提示">
         <ul class="tips">
           <li>点击消息条目将其标记为<b>已读</b></li>
-          <li>历史候补递补、违约警告等<b>已发生事件</b>可在此追溯</li>
+          <li>历史候补递补、违规通知等<b>已发生事件</b>可在此追溯</li>
           <li>每 60 秒自动刷新未读数量（顶部铃铛）</li>
         </ul>
       </PageHelp></header>
@@ -178,6 +179,7 @@ const { page, pages, pageItems } = usePagination(filtered, filterType)
             </div>
             <span class="msg-time">{{ fmtTime(n.created_at) }}</span>
           </button>
+          <RouterLink v-if="violationTarget(n)" class="complaint-link" :to="violationTarget(n)">查看本人关联违规记录</RouterLink>
           <RouterLink v-if="complaintTarget(n)" class="complaint-link" :to="complaintTarget(n)">查看关联投诉详情</RouterLink>
           </div>
         </div>

@@ -35,7 +35,7 @@ class ResourceIntegrationTest {
     static final String PASSWORD="S02-test-only-password";
     @BeforeEach void fixture() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"));
-        for(String table:List.of("notifications","complaint_target_events","complaint_targets","reminders","complaint_attachments","complaint_events","complaints","resource_change_operations","usage_records","seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("notifications","violations","complaint_target_events","complaint_targets","reminders","complaint_attachments","complaint_events","complaints","resource_change_operations","usage_records","seat_codes","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         ids=new LinkedHashMap<>();remote="s05-test-"+UUID.randomUUID();String hash=new BCryptPasswordEncoder().encode(PASSWORD);
         for(String role:List.of("student","staff","admin")) ids.put(role,db.insert("INSERT INTO users(username,password_hash,real_name,campus_id,role) VALUES(?,?,?,?,?)","s05_"+role,hash,"S05模拟"+role,"S05-"+role,role));
         room=db.insert("INSERT INTO rooms(name,building,floor,location,seat_rows,seat_cols) VALUES('S05模拟空间','模拟楼','B1','东侧',2,3)");

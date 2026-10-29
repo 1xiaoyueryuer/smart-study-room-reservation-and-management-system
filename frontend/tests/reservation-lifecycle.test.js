@@ -83,7 +83,7 @@ test('legacy terminal state is explained without fabricating an independent viol
 })
 async function violations(loader) {
   return script('../src/components/ViolationsPanel.vue',{
-    vue:{ref,computed,onMounted(){}},'../api/violation':{listMyViolations:loader}
+    vue:{ref,computed,onMounted(){},onBeforeUnmount(){},watch(){},nextTick:async()=>{}},'vue-router':{useRoute:()=>({query:{}})},'../api/violation':{listMyViolations:loader}
   },'items,error,loading,loaded,activeCount,refresh')
 }
 test('independent effective count uses record status and preserves revoked records',async()=>{

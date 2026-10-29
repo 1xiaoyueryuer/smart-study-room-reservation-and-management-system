@@ -58,4 +58,5 @@ public final class Requests {
             @JsonProperty("valid_reservation_confirmed") Boolean validReservationConfirmed) {}
     public record ComplaintFeedback(Long version,@JsonProperty("operation_id") String operationId,String result,String basis) {}
     public record ComplaintResponse(Long version,@JsonProperty("operation_id") String operationId,String description) {}
+    public record ManualViolation(@JsonProperty("operation_id") String operationId,String reason) {}
 }
