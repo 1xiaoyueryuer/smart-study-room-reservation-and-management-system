@@ -51,6 +51,7 @@ const menus = computed(() => {
     : [
         { index: '/booking', title: '座位预约', icon: 'booking' },
         { index: '/mine', title: '我的预约', icon: 'reservations' },
+        { index: '/complaints', title: '求助与投诉', icon: 'ticket' },
         { index: '/waitlist', title: '历史候补', icon: 'waitlist' },
         { index: '/notifications', title: '消息中心', icon: unread.value > 0 ? 'notification' : 'notification-empty' }
       ]

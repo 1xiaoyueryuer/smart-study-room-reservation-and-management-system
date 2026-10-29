@@ -25,7 +25,7 @@ async function mine(overrides={}) {
     '../composables/usePagination':{usePagination:items=>({page:ref(1),pages:computed(()=>1),pageItems:items})},
     '../components/ui/feedback':{message:{success(){}},confirmDialog:overrides.confirmDialog|| (async text=>{confirmations.push(text)})},
     '../api/reservation':api
-  },'list,loading,error,actionError,busyId,violations,actionsOf,doAction,refreshAll,terminationLabels,statusBuckets')
+  },'list,loading,error,actionError,busyId,violations,actionsOf,doAction,refreshAll,terminationLabels,statusBuckets,requestOccupationHelp')
   page.violations.value={refresh:async()=>{calls.push('violations')}}
   return{...page,calls,confirmations}
 }
@@ -187,4 +187,11 @@ test('managed cancellation exposes immutable public reason and preserves usage e
   const source=await readFile(new URL('../src/views/MyReservationsView.vue',import.meta.url),'utf8')
   assert.match(source,/admin_resource_change:'资源管理取消（不记用户违约）'/);assert.match(source,/当次公开管理原因：\{\{ row.termination_note \}\}/)
   assert.match(source,/<td><UsageRecordSummary :record="row.usage_record"/);assert.doesNotMatch(source,/coordination\.note|room\.resource_reason/)
+})
+
+test('all historical reservation rows can open occupation help without invoking lifecycle actions',async()=>{
+  const page=await mine()
+  for(const status of ['pending','checked_in','completed','cancelled','unused_ended']) await page.requestOccupationHelp({id:42,status,allowed_actions:[]})
+  assert.equal(page.calls.length,5)
+  assert.equal(page.calls.every(item=>item.name==='complaints'&&item.query.reservation_id==='42'&&item.query.type==='occupation'),true)
 })

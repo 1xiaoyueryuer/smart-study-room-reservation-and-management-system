@@ -72,6 +72,7 @@ async function refreshAll() {
   await load()
   await violations.value?.refresh()
 }
+function requestOccupationHelp(row) { if (!loading.value && !error.value && busyId.value === null) return router.push({name:'complaints',query:{type:'occupation',reservation_id:String(row.id)}}) }
 async function doAction(row, key) {
   if (loading.value || error.value || busyId.value !== null || !actionsOf(row).some(action=>action.key===key)) return
   if (key === 'checkin') { await router.push({ name: 'checkin', params: { id: row.id } }); return }
@@ -227,7 +228,7 @@ const { page, pages, pageItems } = usePagination(filtered, filterStatus)
                       >
                         {{ a.label }}
                       </SButton>
-                      <span v-if="!actionsOf(row).length" class="cell-dim">—</span>
+                      <SButton size="sm" variant="soft" :disabled="loading || !!error || busyId !== null" @click="requestOccupationHelp(row)">座位被占求助</SButton>
                     </span>
                   </td>
                 </tr>

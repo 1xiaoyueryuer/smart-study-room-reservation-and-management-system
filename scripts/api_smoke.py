@@ -1,4 +1,4 @@
-"""仅对studyroom_java_test专用服务验证API；模拟预约最终取消。"""
+"""仅对studyroom_java_test专用服务验证API；模拟预约最终取消，投诉保留测试历史。"""
 import json
 import os
 import sys
@@ -89,6 +89,20 @@ def main():
     status, body = call('GET','/violations/mine',token=student)
     check('本人独立违规明细',status == 200 and isinstance(body['data'],list))
     check('开始前取消未登记独立违规',all(v['reservation_id'] != res_id for v in body['data']))
+    complaint_req = {'type':'occupation','reservation_id':res_id,'description':'API工程模拟：关联本人取消历史留证，不延期或复活预约','attachment_ids':[],'operation_id':str(uuid.uuid4())}
+    check('不能关联他人预约求助',call('POST','/complaints',{**complaint_req,'operation_id':str(uuid.uuid4())},other)[0] == 403)
+    status, submitted = call('POST','/complaints',complaint_req,student)
+    check('本人历史求助提交后仅待受理',status == 200 and submitted['data']['status'] == 'submitted' and submitted['data']['reservation_id'] == res_id and submitted['data']['attachment_count'] == 0)
+    complaint_id = submitted['data']['id']
+    status, repeated = call('POST','/complaints',complaint_req,student)
+    check('同操作重试不重复投诉',status == 200 and repeated['data']['id'] == complaint_id and repeated['data']['replayed'] is True)
+    status, detail = call('GET',f'/complaints/{complaint_id}',token=student)
+    check('本人详情保留提交事件',status == 200 and any(event['type'] == 'submitted' for event in detail['data']['events']))
+    check('他人不能读投诉详情',call('GET',f'/complaints/{complaint_id}',token=other)[0] == 403)
+    status, complaints = call('GET','/complaints/mine',token=student)
+    check('刷新仍能查到本人投诉',status == 200 and any(item['id'] == complaint_id for item in complaints['data']))
+    status, service = call('POST','/complaints',{'type':'service','description':'API工程模拟：无预约的一般服务投诉','attachment_ids':[],'operation_id':str(uuid.uuid4())},student)
+    check('一般服务投诉可无预约或图片',status == 200 and service['data']['reservation_id'] is None and service['data']['attachment_count'] == 0)
     status, body = call('GET','/credit',token=student)
     check('只读历史信用及流水',status == 200 and body['data']['history_only'] is True and 'score' in body['data'] and isinstance(body['data']['logs'],list))
     status, body = call('GET','/notifications',token=student)

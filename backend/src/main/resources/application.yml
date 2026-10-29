@@ -18,6 +18,10 @@ spring:
     password: ${STUDYROOM_REDIS_PASSWORD:}
     database: ${STUDYROOM_REDIS_DATABASE:3}
     timeout: 2s
+  servlet:
+    multipart:
+      max-file-size: 6MB
+      max-request-size: 7MB
   jackson:
     deserialization:
       accept-float-as-int: false

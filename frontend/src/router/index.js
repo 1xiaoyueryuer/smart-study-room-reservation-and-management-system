@@ -40,6 +40,19 @@ const routes = [
         meta: { title: '扫码签到', requiresAuth: true, allowedRoles: ['student', 'staff'] }
       },
       {
+        path: '/complaints',
+        name: 'complaints',
+        component: () => import('../views/ComplaintsView.vue'),
+        meta: { title: '求助与投诉', requiresAuth: true, allowedRoles: ['student', 'staff'] }
+      },
+      {
+        path: '/complaints/:id',
+        name: 'complaint-detail',
+        component: () => import('../views/ComplaintDetailView.vue'),
+        props: true,
+        meta: { title: '求助与投诉详情', requiresAuth: true, allowedRoles: ['student', 'staff'] }
+      },
+      {
         path: '/waitlist',
         name: 'waitlist',
         component: () => import('../views/WaitlistView.vue'),

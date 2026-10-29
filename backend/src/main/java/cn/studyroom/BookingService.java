@@ -12,7 +12,7 @@ import static cn.studyroom.Store.*;
 @Transactional
 public class BookingService {
     private static final String ACTIVE="('pending','checked_in')";
-    private static final String VIEW="SELECT rv.*,s.seat_no,s.zone,s.has_power,s.room_id,r.name AS room_name,u.username,u.real_name FROM reservations rv JOIN seats s ON s.id=rv.seat_id JOIN rooms r ON r.id=s.room_id JOIN users u ON u.id=rv.user_id ";
+    private static final String VIEW="SELECT rv.*,s.seat_no,s.zone,s.has_power,s.room_id,r.name AS room_name,r.building,r.floor,r.location,u.username,u.real_name FROM reservations rv JOIN seats s ON s.id=rv.seat_id JOIN rooms r ON r.id=s.room_id JOIN users u ON u.id=rv.user_id ";
     private final Store db;
     private final Clock clock;
     private final OpeningScheduleService opening;

@@ -1,0 +1,24 @@
+package cn.studyroom;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.*;
+import javax.servlet.http.HttpServletRequest;
+import org.springframework.http.*;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.*;
+
+@RestController
+@RequestMapping("/api")
+public class ComplaintController {
+    private final ComplaintService complaints;private final AttachmentService attachments;private final ObjectMapper json;
+    public ComplaintController(ComplaintService complaints,AttachmentService attachments,ObjectMapper json) { this.complaints=complaints;this.attachments=attachments;this.json=json; }
+    @PostMapping("/complaint-attachments") Object upload(HttpServletRequest req,@RequestPart("file") MultipartFile file) {
+        Api.require(req instanceof MultipartHttpServletRequest,400,"材料必须以单文件表单上传");var multipart=(MultipartHttpServletRequest)req;Api.require(multipart.getMultiFileMap().keySet().equals(Set.of("file"))&&multipart.getMultiFileMap().get("file").size()==1&&req.getParameterMap().isEmpty(),400,"每次只接受一个file，不接受路径或其他字段");return Api.ok(attachments.upload(WebSecurity.uid(req),file));
+    }
+    @GetMapping("/complaint-attachments/{id}/content") ResponseEntity<byte[]> content(HttpServletRequest req,@PathVariable String id) { var file=attachments.content(WebSecurity.uid(req),id);return ResponseEntity.ok().contentType(MediaType.parseMediaType(file.contentType())).contentLength(file.bytes().length).cacheControl(CacheControl.noStore()).header("X-Content-Type-Options","nosniff").header("Content-Disposition",ContentDisposition.inline().filename(file.displayName()).build().toString()).body(file.bytes()); }
+    @PostMapping("/complaints") Object create(HttpServletRequest req,@RequestBody Map<String,Object> body) {
+        Api.require(Set.of("type","reservation_id","room_id","description","attachment_ids","operation_id").containsAll(body.keySet())&&body.keySet().containsAll(Set.of("type","description","operation_id")),400,"投诉仅接受类型、本人关联、说明、材料编号和操作标识");Api.require(body.get("description") instanceof String&&body.get("type") instanceof String,400,"投诉类型和说明须为文本");Requests.Complaint request;try { request=json.convertValue(body,Requests.Complaint.class); } catch(IllegalArgumentException e) { throw Api.fail(400,"投诉参数格式错误"); }return Api.ok(complaints.create(WebSecurity.uid(req),request));
+    }
+    @GetMapping("/complaints/mine") Object mine(HttpServletRequest req) { return Api.ok(complaints.mine(WebSecurity.uid(req))); }
+    @GetMapping("/complaints/{id}") Object detail(HttpServletRequest req,@PathVariable long id) { return Api.ok(complaints.detail(WebSecurity.uid(req),id)); }
+}

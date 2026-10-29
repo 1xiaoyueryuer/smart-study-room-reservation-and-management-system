@@ -43,7 +43,7 @@ for (const role of ['student', 'staff']) {
     assert.equal(store.isAdmin, false)
     assert.equal(store.roleLabel, role === 'staff' ? '教职工' : '学生')
     const navigation = await router(store)
-    for (const name of ['home', 'booking', 'mine', 'waitlist', 'notifications', 'profile']) {
+    for (const name of ['home', 'booking', 'mine', 'waitlist', 'notifications', 'complaints', 'complaint-detail', 'profile']) {
       const route = navigation.route(name)
       assert.equal(navigation.guard({ ...route, fullPath: route.path }), undefined)
     }
@@ -60,6 +60,8 @@ test('administrator has management routes and cannot enter ordinary booking rout
   assert.equal(navigation.guard(navigation.route('admin')), undefined)
   assert.equal(navigation.guard(navigation.route('analytics')), undefined)
   assert.equal(navigation.guard(navigation.route('booking')), '/admin')
+  assert.equal(navigation.guard(navigation.route('complaints')), '/admin')
+  assert.equal(navigation.guard(navigation.route('complaint-detail')), '/admin')
 })
 test('unknown identity is removed rather than treated as an ordinary user', async () => {
   const store = await auth('unknown')

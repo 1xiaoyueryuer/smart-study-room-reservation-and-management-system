@@ -5,6 +5,8 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 public final class Requests {
     private Requests() {}
+    public record Complaint(@NotBlank @Pattern(regexp="occupation|service") String type,@JsonProperty("reservation_id") @Positive Long reservationId,@JsonProperty("room_id") @Positive Long roomId,
+                            @NotBlank @Size(max=2000) String description,@JsonProperty("attachment_ids") java.util.List<String> attachmentIds,@JsonProperty("operation_id") @NotBlank String operationId) {}
     public record ResourceChangeProposal(@JsonProperty("change_type") @NotBlank String changeType,@JsonProperty("target_id") @NotNull @Positive Long targetId,@NotNull java.util.Map<String,Object> payload) {}
     public record Coordination(Boolean confirmed,String note) {}
     public record ResourceChangeConfirm(@javax.validation.Valid @NotNull ResourceChangeProposal proposal,@JsonProperty("impact_hash") @NotBlank String impactHash,@JsonProperty("operation_id") @NotBlank String operationId,Coordination coordination) {}

@@ -90,6 +90,7 @@ public class ResourceService {
         db.lockBookings();requireAdmin(actor);validate(req);var before=room(id);version(before,req.version());
         Api.require(db.count("SELECT count(*) FROM reservations rv JOIN seats s ON s.id=rv.seat_id WHERE s.room_id=?",id)==0&&db.count("SELECT count(*) FROM waitlist WHERE room_id=?",id)==0,409,"空间存在历史记录，不能删除");
         Api.require(db.count("SELECT count(*) FROM resource_unavailability WHERE room_id=?",id)==0,409,"空间存在停用历史，请保留资源");
+        Api.require(db.count("SELECT count(*) FROM complaints WHERE room_id=?",id)==0,409,"空间存在投诉记录，请保留资源");
         db.update("DELETE FROM seats WHERE room_id=?",id);db.update("DELETE FROM rooms WHERE id=?",id);record(actor,"room.delete","room",id,req.reason(),before,Map.of(),ROOM_FIELDS);
     }
     private Map<String,Object> seat(long id) { return db.one("SELECT * FROM seats WHERE id=?",id); }
