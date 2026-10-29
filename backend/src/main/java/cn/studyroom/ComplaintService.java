@@ -9,12 +9,12 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 import javax.validation.Validator;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.*;
 
-/** S14只建立本人submitted投诉与提交事实，不核实材料、不推进处理或预约状态。 */
+/** 本人提交事实与公开进度的唯一投影；管理私有核实不进入公开DTO。 */
 @Service
 public class ComplaintService {
-    private static final String BASIC="SELECT c.id,c.operation_id,c.type,c.status,c.description,c.reservation_id,c.room_id,c.context_snapshot,c.submitted_at,count(a.id) AS attachment_count FROM complaints c LEFT JOIN complaint_attachments a ON a.complaint_id=c.id ";
+    private static final String BASIC="SELECT c.id,c.operation_id,c.type,c.status,c.description,c.reservation_id,c.room_id,c.context_snapshot,c.submitted_at,c.version,c.accepted_at,(SELECT COALESCE(NULLIF(h.real_name,''),h.username) FROM users h WHERE h.id=c.handler_id) AS handler_name,count(a.id) AS attachment_count FROM complaints c LEFT JOIN complaint_attachments a ON a.complaint_id=c.id ";
     private final Store db;private final AttachmentService attachments;private final AuditService audit;private final ObjectMapper json;private final Validator validator;private final Clock clock;
     public ComplaintService(Store db,AttachmentService attachments,AuditService audit,ObjectMapper json,Validator validator,Clock clock) { this.db=db;this.attachments=attachments;this.audit=audit;this.json=json;this.validator=validator;this.clock=clock; }
     @Transactional
@@ -31,12 +31,14 @@ public class ComplaintService {
     }
     @Transactional(readOnly=true)
     public List<Map<String,Object>> mine(long actor) { attachments.requireOrdinary(actor);return db.list(BASIC+"WHERE c.user_id=? GROUP BY c.id ORDER BY c.submitted_at DESC,c.id DESC",actor).stream().map(this::basic).toList(); }
-    @Transactional(readOnly=true)
+    @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
     public Map<String,Object> detail(long actor,long complaint) { attachments.requireOrdinary(actor);Api.require(Store.id(db.one("SELECT user_id FROM complaints WHERE id=?",complaint),"user_id")==actor,403,"无权读取他人的投诉");return detailInternal(complaint); }
-    private Map<String,Object> detailInternal(long complaint) {
-        var result=basic(db.one(BASIC+"WHERE c.id=? GROUP BY c.id",complaint));result.put("attachments",attachments.boundMetadata(complaint));var events=db.list("SELECT id,event_type AS type,created_at,source FROM complaint_events WHERE complaint_id=? ORDER BY created_at,id",complaint);for(var event:events) event.put("created_at",AttachmentService.offset(event.get("created_at")));result.put("events",events);return result;
+    Map<String,Object> summaryInternal(long id) {return basic(db.one(BASIC+"WHERE c.id=? GROUP BY c.id",id));}
+    List<Map<String,Object>> summariesInternal(String where,Object...args) {return db.list(BASIC+where+" GROUP BY c.id ORDER BY c.submitted_at DESC,c.id DESC",args).stream().map(this::basic).toList();}
+    Map<String,Object> detailInternal(long complaint) {
+        var result=summaryInternal(complaint);result.put("attachments",attachments.boundMetadata(complaint));var events=db.list("SELECT e.id,e.event_type AS type,e.created_at,e.occurred_at,e.outcome,e.public_note,e.source,CASE WHEN e.source='admin_self_report' THEN COALESCE(NULLIF(u.real_name,''),u.username) END AS actor_display_name FROM complaint_events e JOIN users u ON u.id=e.actor_id WHERE e.complaint_id=? ORDER BY e.created_at,e.id",complaint);for(var event:events) { event.put("created_at",AttachmentService.offset(event.get("created_at")));event.put("occurred_at",AttachmentService.offset(event.get("occurred_at"))); }result.put("events",events);return result;
     }
-    private Map<String,Object> basic(Map<String,Object> row) { row.put("operation_id",row.get("operation_id").toString());row.put("submitted_at",AttachmentService.offset(row.get("submitted_at")));row.put("context_snapshot",row.get("context_snapshot")==null?null:read(row.get("context_snapshot").toString()));return row; }
+    private Map<String,Object> basic(Map<String,Object> row) { row.put("accepted_at",AttachmentService.offset(row.get("accepted_at")));Object handler=row.remove("handler_name");row.put("handler",handler==null?null:Map.of("display_name",handler)); row.put("operation_id",row.get("operation_id").toString());row.put("submitted_at",AttachmentService.offset(row.get("submitted_at")));row.put("context_snapshot",row.get("context_snapshot")==null?null:read(row.get("context_snapshot").toString()));return row; }
     private Requests.Complaint normalize(Requests.Complaint request,String operation) {
         String type=request.type()==null?null:request.type().trim(),description=request.description()==null?null:request.description().trim();var ids=new ArrayList<String>();if(request.attachmentIds()!=null) for(String id:request.attachmentIds()) ids.add(AttachmentService.uuid(id,"材料编号"));Api.require(ids.size()<=3&&new HashSet<>(ids).size()==ids.size(),400,"每条投诉最多3个不重复材料");
         var result=new Requests.Complaint(type,request.reservationId(),request.roomId(),description,List.copyOf(ids),operation);var errors=validator.validate(result);Api.require(errors.isEmpty(),400,errors.stream().map(error->error.getPropertyPath()+": "+error.getMessage()).sorted().findFirst().orElse("投诉参数错误"));Api.require(!"occupation".equals(type)||result.reservationId()!=null,400,"被占求助必须关联本人预约");return result;

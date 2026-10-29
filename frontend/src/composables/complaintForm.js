@@ -1,4 +1,6 @@
 export const complaintTypes = { occupation: '座位被占求助', service: '一般服务投诉' }
+export const complaintStatuses = { submitted:'待受理', processing:'处理中' }
+export const verificationOutcomes = { cooperated:'已配合纠正并提醒（不计违规）',identity_pending:'身份待核',unsubstantiated:'未查实',verified_refusal:'核实拒不配合（本次未登记违规）',service_verified:'服务事实已核实' }
 export const reservationStatuses = { pending:'待签到',checked_in:'使用中',completed:'已结束',cancelled:'已取消',unused_ended:'未使用结束',violation:'旧违约状态（历史）',temp_leave:'旧暂离状态（历史）' }
 export function positiveId(value) {
   if (value === null || value === undefined || value === '') return null
@@ -29,4 +31,23 @@ export async function validateEvidenceFile(file, { urls = URL, ImageClass = Imag
       image.src = url
     })
   } finally { urls.revokeObjectURL(url) }
+}
+
+export function verificationPayload(form, detail) {
+  const outcome = form.outcome
+  if (!Object.hasOwn(verificationOutcomes,outcome)) throw new Error('请选择核实结果')
+  const public_note = form.public_note.trim(), private_note = form.private_note.trim()
+  if (!public_note || public_note.length > 1000 || !private_note || private_note.length > 2000) throw new Error('公开说明须1至1000字，私有核实事实须1至2000字')
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?$/.test(form.occurred_at)) throw new Error('请填写事实发生时刻（校园时间，精度不超过微秒）')
+  const occurred_at = form.occurred_at + (form.occurred_at.length === 16 ? ':00' : '') + '+08:00'
+  const subject_user_id = positiveId(form.subject_user_id)
+  const identity_basis = form.identity_basis.trim()
+  const occupancy = ['cooperated','verified_refusal'].includes(outcome)
+  if (occupancy && (detail.type !== 'occupation' || !detail.reservation_id || !form.facts_confirmed || !form.valid_reservation_confirmed)) throw new Error('占座处置须有关联预约，并由管理员明确核实事实及发生时刻的有效预约使用权')
+  if (occupancy && subject_user_id === detail.reporter?.id) throw new Error('投诉人不能被当作本次占座处置对象，请核对真实身份')
+  if (outcome === 'identity_pending' && (subject_user_id || form.identity_confirmed)) throw new Error('身份待核结果不得关联账号或声称身份已核实')
+  if (subject_user_id && (!form.identity_confirmed || !identity_basis || identity_basis.length > 1000)) throw new Error('关联账号须明确核实身份并填写1至1000字身份依据，不能仅凭账号选择认定身份')
+  if (outcome === 'verified_refusal' && !subject_user_id) throw new Error('核实拒不配合必须明确关联已核实身份的账号')
+  if (outcome === 'service_verified' && (detail.type !== 'service' || !form.facts_confirmed)) throw new Error('服务事实核实仅用于一般服务投诉，且须明确核实事实')
+  return {outcome,occurred_at,public_note,private_note,subject_user_id,identity_confirmed:!!form.identity_confirmed,identity_basis:subject_user_id?identity_basis:null,facts_confirmed:!!form.facts_confirmed,valid_reservation_confirmed:!!form.valid_reservation_confirmed}
 }

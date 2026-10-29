@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { readFile } from 'node:fs/promises'
 import { ref, computed } from 'vue'
-import { complaintPayload, validateEvidenceFile, positiveId, complaintTypes, reservationStatuses } from '../src/composables/complaintForm.js'
+import { complaintPayload, validateEvidenceFile, positiveId, complaintTypes, complaintStatuses, reservationStatuses } from '../src/composables/complaintForm.js'
 const tick=()=>new Promise(resolve=>setImmediate(resolve))
 async function script(file,mocks,exports,extra={}) {
   const context=vm.createContext({defineExpose(){},...extra}),source=(await readFile(new URL(file,import.meta.url),'utf8')).split('<script setup>')[1].split('</script>')[0],module=new vm.SourceTextModule(source+`\nexport {${exports}}`,{context})
@@ -17,7 +17,7 @@ async function form(overrides={}) {
   const page=await script('../src/components/ComplaintForm.vue',{
     vue:{ref,computed,onMounted(){},onBeforeUnmount:handler=>cleanup.push(handler),watch:(source,callback)=>callback()},
     '../api/complaint':api,'../api/room':{getRooms:async()=>({data:[]})},'../api/reservation':{getReservation:overrides.getReservation|| (async id=>({data:{id,room_name:'模拟空间',seat_no:'A1',res_date:'2026-10-29',start_time:'08:00',end_time:'09:00',status:'completed'}})),listMyReservations:async()=>({data:[]})},
-    '../composables/complaintForm.js':{complaintPayload,positiveId,complaintTypes,reservationStatuses,validateEvidenceFile:overrides.validateEvidenceFile|| (async()=>{})}
+    '../composables/complaintForm.js':{complaintPayload,positiveId,complaintTypes,complaintStatuses,reservationStatuses,validateEvidenceFile:overrides.validateEvidenceFile|| (async()=>{})}
   },'type,description,useReservation,reservationId,roomId,context,contextError,choices,reservationOptions,items,uploading,submitting,uncertain,error,receipt,record,readError,locked,submit,selectFiles,uploadItem,removeItem,selectReservation,reset,refreshCreated',{defineProps:()=>({initialType:'service',initialReservationId:null}),defineEmits:()=>()=>{},crypto:{randomUUID:()=>`00000000-0000-4000-8000-${String(++uuid).padStart(12,'0')}`}})
   page.description.value='工程模拟：一般服务情况';return{...page,calls,cleanup}
 }
@@ -98,7 +98,7 @@ test('successful receipt omitting a chosen photo stays unknown instead of claimi
 })
 test('own list distinguishes not-yet-read, failed and verified empty responses',async()=>{
   let fail=true
-  const page=await script('../src/views/ComplaintsView.vue',{vue:{ref,onMounted(){},onBeforeUnmount(){}},'vue-router':{useRoute:()=>({query:{}})},'../api/complaint':{listMyComplaints:async()=>{if(fail)throw new Error('本人列表失败');return{data:[]}}},'../composables/complaintForm.js':{complaintTypes}},'load,items,loaded,loading,error')
+  const page=await script('../src/views/ComplaintsView.vue',{vue:{ref,onMounted(){},onBeforeUnmount(){}},'vue-router':{useRoute:()=>({query:{}})},'../api/complaint':{listMyComplaints:async()=>{if(fail)throw new Error('本人列表失败');return{data:[]}}},'../composables/complaintForm.js':{complaintTypes,complaintStatuses}},'load,items,loaded,loading,error')
   assert.equal(page.loaded.value,false);await page.load();assert.equal(page.loaded.value,false);assert.match(page.error.value,/列表失败/)
   fail=false;await page.load();assert.equal(page.loaded.value,true);assert.equal(page.items.value.length,0);assert.equal(page.error.value,'')
 })
@@ -108,4 +108,10 @@ test('independent detail query ignores an older response and never reads detail 
   const old=page.load();props.id='2';const latest=page.load()
   pending[1].resolve({data:{id:2,attachments:[],events:[]}});await latest;pending[0].resolve({data:{id:1,attachments:[],events:[]}});await old
   assert.equal(page.record.value.id,2)
+})
+
+test('creation replay of an already processing complaint confirms original operation instead of freezing as a malformed receipt',async()=>{
+  let saved
+  const page=await form({createComplaint:async body=>{saved={...detail(body),replayed:true,status:'processing'};return{data:saved}},getComplaint:async()=>({data:saved})})
+  await page.submit();assert.equal(page.uncertain.value,false);assert.equal(page.receipt.value.status,'processing');assert.equal(page.record.value.status,'processing')
 })

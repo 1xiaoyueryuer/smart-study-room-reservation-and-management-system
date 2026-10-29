@@ -50,4 +50,10 @@ public final class Requests {
                              @JsonProperty("top_n") @Min(0) @Max(10) int topN,@JsonProperty("auto_book") boolean autoBook) {}
     public record Wait(@JsonProperty("room_id") @Positive long roomId,@NotBlank String date,@JsonProperty("start_time") @NotBlank String startTime,@JsonProperty("end_time") @NotBlank String endTime,
                        @Pattern(regexp="|quiet|regular|discussion|computer") String zone,@JsonProperty("has_power") Boolean hasPower,@JsonProperty("near_window") Boolean nearWindow) {}
+    public record ComplaintAccept(Long version,@JsonProperty("operation_id") String operationId) {}
+    public record ComplaintVerification(Long version,@JsonProperty("operation_id") String operationId,String outcome,
+            @JsonProperty("occurred_at") String occurredAt,@JsonProperty("public_note") String publicNote,@JsonProperty("private_note") String privateNote,
+            @JsonProperty("subject_user_id") Long subjectUserId,@JsonProperty("identity_confirmed") Boolean identityConfirmed,
+            @JsonProperty("identity_basis") String identityBasis,@JsonProperty("facts_confirmed") Boolean factsConfirmed,
+            @JsonProperty("valid_reservation_confirmed") Boolean validReservationConfirmed) {}
 }

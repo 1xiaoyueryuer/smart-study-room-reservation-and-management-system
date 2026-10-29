@@ -1,0 +1,92 @@
+package cn.studyroom;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.sql.Timestamp;
+import java.time.*;
+import java.time.temporal.ChronoUnit;
+import java.util.*;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.*;
+
+/** 管理核实只登记管理员自报事实，不识别现场身份、不产生违规或代替后续反馈关闭。 */
+@Service
+public class ComplaintManagementService {
+    private static final Set<String> OUTCOMES=Set.of("cooperated","identity_pending","unsubstantiated","verified_refusal","service_verified");
+    private static final String REMINDER_NOTE="管理员记录已配合纠正并给予提醒，本记录不计违规";
+    private final Store db;private final AuthService auth;private final ComplaintService complaints;private final AttachmentService attachments;private final OpeningScheduleService opening;private final UsageService usage;private final AuditService audit;private final ObjectMapper json;private final Clock clock;
+    public ComplaintManagementService(Store db,AuthService auth,ComplaintService complaints,AttachmentService attachments,OpeningScheduleService opening,UsageService usage,AuditService audit,ObjectMapper json,Clock clock) { this.db=db;this.auth=auth;this.complaints=complaints;this.attachments=attachments;this.opening=opening;this.usage=usage;this.audit=audit;this.json=json;this.clock=clock; }
+    @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
+    public List<Map<String,Object>> list(long actor,String status,String type,Long room) {
+        requireAdmin(actor);Api.require(status==null||Set.of("submitted","processing").contains(status),400,"投诉状态筛选错误");Api.require(type==null||Set.of("occupation","service").contains(type),400,"投诉类型筛选错误");Api.require(room==null||room>0,400,"空间编号须为正整数");
+        var where=new StringBuilder("WHERE 1=1");var args=new ArrayList<Object>();if(status!=null) {where.append(" AND c.status=?");args.add(status);}if(type!=null) {where.append(" AND c.type=?");args.add(type);}if(room!=null) {where.append(" AND c.room_id=?");args.add(room);}
+        var result=complaints.summariesInternal(where.toString(),args.toArray());if(result.isEmpty()) return result;
+        var ids=result.stream().map(item->item.get("id")).toArray();String marks=String.join(",",Collections.nCopies(ids.length,"?"));var people=new HashMap<Long,Map<String,Object>>();for(var row:db.list("SELECT c.id,u.id AS reporter_id,u.username,u.real_name,u.campus_id,c.handler_id,COALESCE(NULLIF(h.real_name,''),h.username) AS handler_name FROM complaints c JOIN users u ON u.id=c.user_id LEFT JOIN users h ON h.id=c.handler_id WHERE c.id IN ("+marks+")",ids)) people.put(Store.id(row,"id"),row);
+        for(var item:result) {var row=people.get(Store.id(item,"id"));var reporter=new LinkedHashMap<String,Object>();reporter.put("id",row.get("reporter_id"));for(String key:List.of("username","real_name","campus_id")) reporter.put(key,row.get(key));item.put("reporter",reporter);if(row.get("handler_id")!=null) item.put("handler",Map.of("id",row.get("handler_id"),"display_name",row.get("handler_name")));}return result;
+    }
+    @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
+    public Map<String,Object> detail(long actor,long id) { requireAdmin(actor);return detailInternal(id,now()); }
+    @Transactional
+    public Map<String,Object> accept(long actor,long id,Requests.ComplaintAccept request) {
+        db.lockBookings();requireAdmin(actor);Api.require(request!=null,400,"受理参数必填");String operation=AttachmentService.uuid(request.operationId(),"operation_id");var intent=new TreeMap<String,Object>();intent.put("version",request.version());String hash=hash(actor,id,"accepted",intent);var replay=replay(actor,id,"accepted",operation,hash);if(replay!=null) return replay;
+        var complaint=required(id);version(complaint,request.version());Api.require("submitted".equals(complaint.get("status")),409,"仅待受理投诉可受理，受理不代表核实或解决");var now=now();
+        db.update("UPDATE complaints SET status='processing',handler_id=?,accepted_at=?,version=version+1 WHERE id=?",actor,Timestamp.valueOf(now),id);
+        long event=db.insert("INSERT INTO complaint_events(complaint_id,actor_id,event_type,source,created_at,operation_id,request_hash,public_note) VALUES(?,?,'accepted','admin_self_report',?,CAST(? AS UUID),?,?)",id,actor,Timestamp.valueOf(now),operation,hash,"管理员已受理，正在核查；受理不代表核实或解决");
+        audit.record(actor,"complaint.accept","complaint",Long.toString(id),"管理员受理投诉，尚未核实或解决",Map.of("status","submitted","version",request.version()),Map.of("status","processing","handler_id",actor,"event_id",event,"version",request.version()+1));return receipt(id,event,operation,false,now);
+    }
+    @Transactional
+    public Map<String,Object> verify(long actor,long id,Requests.ComplaintVerification request) {
+        db.lockBookings();requireAdmin(actor);Api.require(request!=null,400,"核实记录必填");String operation=AttachmentService.uuid(request.operationId(),"operation_id");var existing=db.list("SELECT id FROM complaint_events WHERE operation_id=CAST(? AS UUID)",operation);Requests.ComplaintVerification normalized;
+        try { normalized=normalize(request,operation); } catch(Api.Failure failure) { if(!existing.isEmpty()) throw Api.fail(409,"操作标识已用于其他内容，请按原请求重试");throw failure; }
+        var intent=new TreeMap<String,Object>();intent.put("version",normalized.version());intent.put("outcome",normalized.outcome());intent.put("occurred_at",normalized.occurredAt());intent.put("public_note",normalized.publicNote());intent.put("private_note",normalized.privateNote());intent.put("subject_user_id",normalized.subjectUserId());intent.put("identity_confirmed",normalized.identityConfirmed());intent.put("identity_basis",normalized.identityBasis());intent.put("facts_confirmed",normalized.factsConfirmed());intent.put("valid_reservation_confirmed",normalized.validReservationConfirmed());
+        String hash=hash(actor,id,"verification",intent);var replay=replay(actor,id,"verification",operation,hash);if(replay!=null) return replay;var complaint=required(id);version(complaint,normalized.version());Api.require("processing".equals(complaint.get("status")),409,"必须先受理，再追加核实记录");
+        var now=now();var occurred=OffsetDateTime.parse(normalized.occurredAt()).atZoneSameInstant(BookingPolicy.CAMPUS_ZONE).toLocalDateTime();Api.require(!occurred.isAfter(now),400,"事实发生时刻不能在未来");validateFacts(complaint,normalized,occurred);
+        long event=db.insert("INSERT INTO complaint_events(complaint_id,actor_id,event_type,source,created_at,operation_id,request_hash,occurred_at,outcome,public_note,private_note,subject_user_id,identity_confirmed,identity_basis,facts_confirmed,valid_reservation_confirmed) VALUES(?,?,'verification','admin_self_report',?,CAST(? AS UUID),?,?,?,?,?,?,?,?,?,?)",id,actor,Timestamp.valueOf(now),operation,hash,Timestamp.valueOf(occurred),normalized.outcome(),normalized.publicNote(),normalized.privateNote(),normalized.subjectUserId(),normalized.identityConfirmed(),normalized.identityBasis(),normalized.factsConfirmed(),normalized.validReservationConfirmed());
+        if("cooperated".equals(normalized.outcome())) db.update("INSERT INTO reminders(event_id,subject_user_id,actor_id,occurred_at,registered_at) VALUES(?,?,?,?,?)",event,normalized.subjectUserId(),actor,Timestamp.valueOf(occurred),Timestamp.valueOf(now));
+        db.update("UPDATE complaints SET version=version+1 WHERE id=?",id);var evidence=new LinkedHashMap<String,Object>(intent);evidence.put("event_id",event);evidence.put("source","admin_self_report");evidence.remove("public_note");evidence.remove("private_note");evidence.remove("identity_basis");
+        audit.record(actor,"complaint.verify","complaint",Long.toString(id),"管理员追加不可覆盖的核实自报记录，不自动登记违规",Map.of("version",normalized.version()),evidence);return receipt(id,event,operation,false,now);
+    }
+    @Transactional(readOnly=true)
+    public List<Map<String,Object>> reminders(long actor) {
+        attachments.requireOrdinary(actor);var rows=db.list("SELECT id,occurred_at,registered_at FROM reminders WHERE subject_user_id=? ORDER BY registered_at DESC,id DESC",actor);for(var row:rows) {row.put("occurred_at",AttachmentService.offset(row.get("occurred_at")));row.put("registered_at",AttachmentService.offset(row.get("registered_at")));row.put("outcome","cooperated");row.put("public_note",REMINDER_NOTE);row.put("counts_as_violation",false);}return rows;
+    }
+    private Requests.ComplaintVerification normalize(Requests.ComplaintVerification r,String operation) {
+        String outcome=text(r.outcome(),30,true,"核实结果"),publicNote=text(r.publicNote(),1000,true,"公开进度"),privateNote=text(r.privateNote(),2000,true,"私有事实说明"),basis=text(r.identityBasis(),1000,false,"身份核实依据");Api.require(OUTCOMES.contains(outcome),400,"核实结果无效");
+        OffsetDateTime occurred;try { occurred=OffsetDateTime.parse(r.occurredAt()).atZoneSameInstant(BookingPolicy.CAMPUS_ZONE).toOffsetDateTime(); } catch(Exception e) { throw Api.fail(400,"事实发生时刻须为含明确时区偏移的ISO时间"); }Api.require(occurred.getNano()%1000==0,400,"事实发生时刻最多支持微秒精度");
+        return new Requests.ComplaintVerification(r.version(),operation,outcome,occurred.toString(),publicNote,privateNote,r.subjectUserId(),Boolean.TRUE.equals(r.identityConfirmed()),basis,Boolean.TRUE.equals(r.factsConfirmed()),Boolean.TRUE.equals(r.validReservationConfirmed()));
+    }
+    private void validateFacts(Map<String,Object> complaint,Requests.ComplaintVerification r,LocalDateTime occurred) {
+        if(r.subjectUserId()==null) Api.require(!r.identityConfirmed()&&r.identityBasis()==null,400,"未知对象不能声明已核实身份或填写身份依据");
+        else {Api.require(r.subjectUserId()>0&&r.identityConfirmed()&&r.identityBasis()!=null,400,"已知对象必须明确选择账号并确认身份及依据");db.one("SELECT id FROM users WHERE id=?",r.subjectUserId());}
+        if("identity_pending".equals(r.outcome())) Api.require(r.subjectUserId()==null&&!r.identityConfirmed(),400,"待核身份不能登记已知对象");
+        boolean positive=Set.of("cooperated","verified_refusal").contains(r.outcome());
+        if(positive) {
+            Api.require("occupation".equals(complaint.get("type"))&&complaint.get("reservation_id")!=null&&r.factsConfirmed()&&r.validReservationConfirmed(),400,"配合纠正或拒不配合须核实占用本人有效预约的事实与权利");
+            var reservation=db.one("SELECT res_date,start_time,end_time FROM reservations WHERE id=?",complaint.get("reservation_id"));var date=LocalDate.parse(Store.text(reservation,"res_date"));Api.require(!occurred.isBefore(Slot.endpoint(date,Store.text(reservation,"start_time")))&&occurred.isBefore(Slot.endpoint(date,Store.text(reservation,"end_time"))),400,"占用事实发生时刻须在关联预约原时段内");
+            Api.require(r.subjectUserId()==null||r.subjectUserId()!=Store.id(complaint,"user_id"),400,"不能把预约权利人登记为占用其本人预约的第三方");
+        }
+        if("verified_refusal".equals(r.outcome())) Api.require(r.subjectUserId()!=null,400,"拒不配合须核实真实对象身份");
+        if("service_verified".equals(r.outcome())) Api.require("service".equals(complaint.get("type"))&&r.factsConfirmed(),400,"服务问题核实结果仅适用于已核实事实的服务投诉");
+    }
+    private Map<String,Object> detailInternal(long id,LocalDateTime now) {
+        var result=complaints.detailInternal(id);addPeople(result);var events=db.list("SELECT e.id,e.event_type AS type,e.created_at,e.occurred_at,e.outcome,e.public_note,e.source,e.actor_id,COALESCE(NULLIF(a.real_name,''),a.username) AS actor_display_name,e.subject_user_id,e.private_note,e.identity_confirmed,e.identity_basis,e.facts_confirmed,e.valid_reservation_confirmed,e.operation_id FROM complaint_events e JOIN users a ON a.id=e.actor_id WHERE e.complaint_id=? ORDER BY e.created_at,e.id",id);
+        for(var event:events) {for(String key:List.of("created_at","occurred_at")) event.put(key,AttachmentService.offset(event.get(key)));if(event.get("operation_id")!=null) event.put("operation_id",event.get("operation_id").toString());event.put("subject",event.get("subject_user_id")==null?null:person(((Number)event.get("subject_user_id")).longValue()));}result.put("admin_events",events);result.put("current_context",current(required(id),now));return result;
+    }
+    private Map<String,Object> current(Map<String,Object> complaint,LocalDateTime now) {
+        var result=new LinkedHashMap<String,Object>();result.put("observed_at",now.atZone(BookingPolicy.CAMPUS_ZONE).toOffsetDateTime().toString());result.put("room",complaint.get("room_id")==null?null:db.one("SELECT id AS room_id,name AS room_name,building,floor,location FROM rooms WHERE id=?",complaint.get("room_id")));result.put("reservation",null);if(complaint.get("reservation_id")==null) return result;
+        var row=db.one("SELECT rv.*,s.room_id,s.seat_no,r.name AS room_name,r.building,r.floor,r.location FROM reservations rv JOIN seats s ON s.id=rv.seat_id JOIN rooms r ON r.id=s.room_id WHERE rv.id=?",complaint.get("reservation_id"));var date=LocalDate.parse(Store.text(row,"res_date"));var day=opening.calendar(Store.id(row,"room_id"),date).day(date,Store.id(row,"seat_id"));var record=usage.view(Store.id(row,"id"),now);UsageService.requireReservationState(Store.text(row,"status"),record,now);
+        var reservation=new LinkedHashMap<String,Object>();for(String key:List.of("id","room_id","seat_id","room_name","seat_no","building","floor","location","start_time","end_time","status","termination_reason","termination_note")) reservation.put(key,row.get(key));reservation.put("ended_at",AttachmentService.offset(row.get("ended_at")));reservation.put("date",date.toString());reservation.put("checkin_deadline",ReservationDeadline.at(row).atZone(BookingPolicy.CAMPUS_ZONE).toOffsetDateTime().toString());reservation.put("deadline_passed",!now.isBefore(ReservationDeadline.at(row)));reservation.put("scheduled_end_passed",!now.isBefore(Slot.endpoint(date,Store.text(row,"end_time"))));var remaining=OpeningScheduleService.remaining(row,now);reservation.put("remaining_start",remaining==null?null:remaining.start().atZone(BookingPolicy.CAMPUS_ZONE).toOffsetDateTime().toString());reservation.put("remaining_resource_legal",remaining!=null&&day.contains(date,remaining.start(),remaining.end()));reservation.put("opening_windows",day.view());reservation.put("closed_reasons",day.closedReasons());reservation.put("usage_record",record);result.put("reservation",reservation);return result;
+    }
+    private void addPeople(Map<String,Object> result) {var row=required(Store.id(result,"id"));result.put("reporter",person(Store.id(row,"user_id")));if(row.get("handler_id")!=null) {long handler=Store.id(row,"handler_id");var person=person(handler);result.put("handler",Map.of("id",handler,"display_name",display(person)));}}
+    private Map<String,Object> person(long id) {return db.one("SELECT id,username,real_name,campus_id FROM users WHERE id=?",id);}
+    private String display(Map<String,Object> user) {return AuthService.blankNull((String)user.get("real_name"))==null?Store.text(user,"username"):Store.text(user,"real_name");}
+    private Map<String,Object> required(long id) {return db.one("SELECT * FROM complaints WHERE id=?",id);}
+    private Map<String,Object> replay(long actor,long id,String type,String operation,String hash) {var rows=db.list("SELECT id,actor_id,complaint_id,event_type,request_hash FROM complaint_events WHERE operation_id=CAST(? AS UUID)",operation);if(rows.isEmpty()) return null;var row=rows.get(0);Api.require(Store.id(row,"actor_id")==actor&&Store.id(row,"complaint_id")==id&&type.equals(row.get("event_type"))&&hash.equals(row.get("request_hash")),409,"操作标识已用于其他内容，请按原请求重试");return receipt(id,Store.id(row,"id"),operation,true,now());}
+    private Map<String,Object> receipt(long id,long event,String operation,boolean replayed,LocalDateTime now) {return Map.of("operation_id",operation,"event_id",event,"replayed",replayed,"complaint",detailInternal(id,now));}
+    private void version(Map<String,Object> complaint,Long expected) {Api.require(expected!=null&&expected>0,400,"投诉版本必填且须为正整数");Api.require(Store.id(complaint,"version")==expected,409,"投诉已被其他管理员更新，请刷新后重试");}
+    private void requireAdmin(long actor) {var user=auth.profile(actor);Api.require("admin".equals(user.get("role"))&&"active".equals(user.get("status")),403,"需要启用的管理员权限");}
+    private String text(String value,int max,boolean required,String label) {String text=AuthService.blankNull(value==null?null:value.trim());Api.require((!required||text!=null)&&(text==null||text.length()<=max),400,label+"必填或长度不合要求");return text;}
+    private String hash(long actor,long id,String type,Map<String,Object> request) {var intent=new TreeMap<String,Object>();intent.put("actor_id",actor);intent.put("complaint_id",id);intent.put("action",type);intent.put("request",request);try {return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(json.writeValueAsString(intent).getBytes(StandardCharsets.UTF_8)));}catch(Exception e) {throw new IllegalStateException("核实请求无法规范化",e);}}
+    private LocalDateTime now() {return LocalDateTime.ofInstant(clock.instant(),BookingPolicy.CAMPUS_ZONE).truncatedTo(ChronoUnit.MICROS);}
+}

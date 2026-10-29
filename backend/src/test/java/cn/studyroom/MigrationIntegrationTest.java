@@ -55,7 +55,7 @@ class MigrationIntegrationTest {
     }
     @Test void emptyInstallationAndRepeatedStartup() throws Exception {
         var f=flyway(); DatabaseMigrations.migrate(f,false); DatabaseMigrations.migrate(f,false);
-        assertEquals(11,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(12,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".booking_mutex WHERE id=1"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".audit_events"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"));
@@ -73,7 +73,7 @@ class MigrationIntegrationTest {
         assertEquals(1,count("SELECT count(*) FROM "+schema+".seats WHERE version=1 AND resource_reason IS NULL"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".reservations WHERE user_id=1 AND seat_id=1 AND status='pending'"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"),"历史座位不能被伪造成已经配置真实贴码");
-        assertEquals(11,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(12,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE username='known-campus' AND campus_id='OLD-01' AND student_no='OLD-01'"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE type='BASELINE'"));
     }
@@ -141,6 +141,17 @@ class MigrationIntegrationTest {
         assertEquals(0,count("SELECT count(*) FROM information_schema.tables WHERE table_schema='"+schema+"' AND table_name='usage_records'"));assertEquals(8,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         try(var c=source.getConnection();var q=c.createStatement();var result=q.executeQuery("SELECT row_to_json(r)::text FROM "+schema+".reservations r")) { result.next();assertEquals(raw,result.getString(1)); }
     }
+    @Test void submittedComplaintUpgradePreservesOriginalFactsAndDoesNotInventAcceptanceOrReminder() throws Exception {
+        var previous=Flyway.configure().dataSource(source).defaultSchema(schema).schemas(schema).cleanDisabled(true).baselineOnMigrate(false).target("11").locations("classpath:db/migration").load();DatabaseMigrations.migrate(previous,false);
+        execute("INSERT INTO "+schema+".users(username,password_hash) VALUES('s14-owner','hash'); INSERT INTO "+schema+".complaints(user_id,operation_id,request_hash,type,status,description,submitted_at) VALUES(1,'55555555-5555-4555-8555-555555555555','s14-saved-hash','service','submitted','S14 historical fact',TIMESTAMP '2026-10-29 09:01:02.123456'); INSERT INTO "+schema+".complaint_events(complaint_id,actor_id,event_type,source,created_at) VALUES(1,1,'submitted','user_submit',TIMESTAMP '2026-10-29 09:01:02.123456')");
+        DatabaseMigrations.migrate(flyway(),false);assertEquals(1,count("SELECT count(*) FROM "+schema+".complaints WHERE description='S14 historical fact' AND request_hash='s14-saved-hash' AND status='submitted' AND version=1 AND handler_id IS NULL AND accepted_at IS NULL AND submitted_at=TIMESTAMP '2026-10-29 09:01:02.123456'"));assertEquals(1,count("SELECT count(*) FROM "+schema+".complaint_events WHERE event_type='submitted' AND source='user_submit' AND operation_id IS NULL AND occurred_at IS NULL AND subject_user_id IS NULL AND private_note IS NULL AND NOT identity_confirmed AND NOT facts_confirmed AND NOT valid_reservation_confirmed"));assertEquals(0,count("SELECT count(*) FROM "+schema+".reminders"));assertEquals(0,count("SELECT count(*) FROM "+schema+".audit_events"));
+    }
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"identity_basis_null","outcome_null"})
+    void verificationDatabaseConstraintsRejectUnknownNullTruthValues(String field) throws Exception {
+        DatabaseMigrations.migrate(flyway(),false);execute("INSERT INTO "+schema+".users(username,password_hash,role) VALUES('admin','hash','admin'),('owner','hash','student'),('subject','hash','staff'); INSERT INTO "+schema+".complaints(user_id,operation_id,request_hash,type,status,description,submitted_at,handler_id,accepted_at) VALUES(2,'66666666-6666-4666-8666-666666666666','intent','service','processing','engineering simulation',TIMESTAMP '2026-10-29 09:00',1,TIMESTAMP '2026-10-29 09:01')");
+        String outcome=field.equals("outcome_null")?"NULL":"'cooperated'",subject=field.equals("identity_basis_null")?"3":"NULL",identity=field.equals("identity_basis_null")?"true":"false";
+        assertThrows(SQLException.class,()->execute("INSERT INTO "+schema+".complaint_events(complaint_id,actor_id,event_type,source,created_at,operation_id,request_hash,occurred_at,outcome,public_note,private_note,subject_user_id,identity_confirmed,identity_basis) VALUES(1,1,'verification','admin_self_report',TIMESTAMP '2026-10-29 09:02','77777777-7777-4777-8777-777777777777','intent',TIMESTAMP '2026-10-29 09:00',"+outcome+",'public','private',"+subject+","+identity+",NULL)"));assertEquals(0,count("SELECT count(*) FROM "+schema+".complaint_events"));
+    }
     @Test void failedMigrationIsDiagnosticAndTransactional() throws Exception {
         var f=flyway(); DatabaseMigrations.migrate(f,false);
         Files.writeString(scripts.resolve("V9999__broken.sql"),"CREATE TABLE rollback_probe(id bigint); INSERT INTO missing_table VALUES(1);");
@@ -148,6 +159,6 @@ class MigrationIntegrationTest {
         var error=assertThrows(FlywayException.class,()->DatabaseMigrations.migrate(broken,false));
         assertTrue(error.getMessage().contains("V9999__broken.sql"));
         assertEquals(0,count("SELECT count(*) FROM information_schema.tables WHERE table_schema='"+schema+"' AND table_name='rollback_probe'"));
-        assertEquals(11,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(12,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
     }
 }

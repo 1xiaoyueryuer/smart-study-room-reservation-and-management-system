@@ -4,6 +4,7 @@ import os
 import sys
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 import urllib.request
 import urllib.error
 
@@ -101,8 +102,29 @@ def main():
     check('他人不能读投诉详情',call('GET',f'/complaints/{complaint_id}',token=other)[0] == 403)
     status, complaints = call('GET','/complaints/mine',token=student)
     check('刷新仍能查到本人投诉',status == 200 and any(item['id'] == complaint_id for item in complaints['data']))
-    status, service = call('POST','/complaints',{'type':'service','description':'API工程模拟：无预约的一般服务投诉','attachment_ids':[],'operation_id':str(uuid.uuid4())},student)
+    service_req = {'type':'service','description':'API工程模拟：无预约的一般服务投诉','attachment_ids':[],'operation_id':str(uuid.uuid4())}
+    status, service = call('POST','/complaints',service_req,student)
     check('一般服务投诉可无预约或图片',status == 200 and service['data']['reservation_id'] is None and service['data']['attachment_count'] == 0)
+    service_id = service['data']['id']
+    check('普通用户不能读管理投诉',call('GET',f'/admin/complaints/{service_id}',token=student)[0] == 403)
+    status, managed = call('GET',f'/admin/complaints/{service_id}',token=admin)
+    check('管理员读取待受理服务投诉',status == 200 and managed['data']['status'] == 'submitted')
+    acceptance = {'version':managed['data']['version'],'operation_id':str(uuid.uuid4())}
+    status, accepted = call('POST',f'/admin/complaints/{service_id}/accept',acceptance,admin)
+    check('受理只转处理中并保留处理人',status == 200 and accepted['data']['complaint']['status'] == 'processing' and accepted['data']['complaint']['handler'] is not None)
+    status, accepted_again = call('POST',f'/admin/complaints/{service_id}/accept',acceptance,admin)
+    check('受理原操作重试不重复',status == 200 and accepted_again['data']['replayed'] is True)
+    verification = {'version':accepted['data']['complaint']['version'],'operation_id':str(uuid.uuid4()),'outcome':'service_verified','occurred_at':datetime.now(timezone(timedelta(hours=8))).isoformat(timespec='microseconds'),'public_note':'API工程模拟：服务情况已核实，尚待后续反馈','private_note':'API_PRIVATE_VERIFICATION_TEST_ONLY','facts_confirmed':True}
+    status, verified = call('POST',f'/admin/complaints/{service_id}/verifications',verification,admin)
+    check('无预约服务问题可核实且仍处理中',status == 200 and verified['data']['complaint']['status'] == 'processing')
+    status, verified_again = call('POST',f'/admin/complaints/{service_id}/verifications',verification,admin)
+    check('核实原操作重试不重复事件',status == 200 and verified_again['data']['replayed'] is True)
+    status, public_progress = call('GET',f'/complaints/{service_id}',token=student)
+    check('本人只读公开核实进度',status == 200 and any(event.get('outcome') == 'service_verified' and event.get('public_note') == verification['public_note'] for event in public_progress['data']['events']) and verification['private_note'] not in json.dumps(public_progress,ensure_ascii=False))
+    status, replayed_service = call('POST','/complaints',service_req,student)
+    check('已受理后原提交重放返回真实进度',status == 200 and replayed_service['data']['replayed'] is True and replayed_service['data']['status'] == 'processing')
+    status, reminders = call('GET','/reminders/mine',token=student)
+    check('本人提醒明确不计违规且不泄投诉来源',status == 200 and all(item['counts_as_violation'] is False and not any(key in item for key in ('complaint_id','reporter','private_note','identity_basis')) for item in reminders['data']))
     status, body = call('GET','/credit',token=student)
     check('只读历史信用及流水',status == 200 and body['data']['history_only'] is True and 'score' in body['data'] and isinstance(body['data']['logs'],list))
     status, body = call('GET','/notifications',token=student)

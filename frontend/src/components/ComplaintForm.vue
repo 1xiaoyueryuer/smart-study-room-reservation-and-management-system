@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createComplaint, getComplaint, uploadComplaintAttachment } from '../api/complaint'
 import { getRooms } from '../api/room'
 import { getReservation, listMyReservations } from '../api/reservation'
-import { complaintTypes, reservationStatuses, positiveId, complaintPayload, validateEvidenceFile } from '../composables/complaintForm.js'
+import { complaintTypes, complaintStatuses, reservationStatuses, positiveId, complaintPayload, validateEvidenceFile } from '../composables/complaintForm.js'
 import ProtectedAttachment from './ProtectedAttachment.vue'
 import ComplaintRecord from './ComplaintRecord.vue'
 import SInput from './ui/SInput.vue'
@@ -91,7 +91,7 @@ async function submit() {
     const response=await createComplaint(JSON.parse(JSON.stringify(frozenBody)))
     if(!alive||ticket!==scope)return
     const value=response.data
-    if(!value?.id || value.operation_id!==frozenBody.operation_id || value.status!=='submitted' || !Array.isArray(value.attachments) || !Array.isArray(value.events) || value.attachment_count!==frozenBody.attachment_ids.length || value.attachments.length!==frozenBody.attachment_ids.length || value.attachments.some(item=>!frozenBody.attachment_ids.includes(item.id)))throw new Error('提交回执不完整，结果需以原操作ID核对')
+    if(!value?.id || value.operation_id!==frozenBody.operation_id || !(value.status==='submitted' || (value.replayed===true && Object.hasOwn(complaintStatuses,value.status))) || !Array.isArray(value.attachments) || !Array.isArray(value.events) || value.attachment_count!==frozenBody.attachment_ids.length || value.attachments.length!==frozenBody.attachment_ids.length || value.attachments.some(item=>!frozenBody.attachment_ids.includes(item.id)))throw new Error('提交回执不完整，结果需以原操作ID核对')
     uncertain.value=false;receipt.value=value;record.value=null;emit('created',value.id)
     await refreshCreated()
   }catch(failure){if(alive&&ticket===scope){uncertain.value=failure.status==null||failure.status===408||failure.status>=500;error.value=uncertain.value?'提交结果尚未确认。原文字、材料ID和操作ID已锁定，请主动以原操作ID重试核对，不要重复创建。':failure.status===409?`请求冲突：${failure.message}。请核对本人列表和材料状态，未确认创建新记录。`:failure.message}}
@@ -123,7 +123,7 @@ onBeforeUnmount(()=>{alive=false;scope++;contextSequence++;readSequence++})
         <SButton type="submit" variant="primary" :loading="submitting" :disabled="uploading || (!uncertain && items.some(item=>item.phase!=='uploaded'))">{{ uncertain ? '以原操作ID重试提交核对' : '提交，等待受理' }}</SButton>
       </form>
     </template>
-    <template v-else><SBanner type="success" :title="`#${receipt.id} 已提交，待受理${receipt.replayed?'（原请求幂等回执）':''}`" /><p v-if="reading" role="status">正在读取已保存详情…</p><SBanner v-if="readError" type="error" :title="readError"><SButton :loading="reading" @click="refreshCreated">重试读取详情</SButton></SBanner><ComplaintRecord :record="record || receipt" /><div class="actions"><RouterLink :to="`/complaints/${receipt.id}`">独立查看详情</RouterLink><SButton :disabled="reading" @click="reset">另起一条新提交</SButton></div></template>
+    <template v-else><SBanner type="success" :title="`#${receipt.id} 已提交，当前${complaintStatuses[receipt.status] || receipt.status}${receipt.replayed?'（原请求幂等回执）':''}`" /><p v-if="reading" role="status">正在读取已保存详情…</p><SBanner v-if="readError" type="error" :title="readError"><SButton :loading="reading" @click="refreshCreated">重试读取详情</SButton></SBanner><ComplaintRecord :record="record || receipt" /><div class="actions"><RouterLink :to="`/complaints/${receipt.id}`">独立查看详情</RouterLink><SButton :disabled="reading" @click="reset">另起一条新提交</SButton></div></template>
   </section>
 </template>
 <style scoped>.complaint-form,.fields{display:grid;gap:14px;min-width:0}.fields label{display:grid;gap:7px;font-size:var(--fs-caption)}.fields input[type=file]{max-width:100%;min-width:0}.context,.file-item{padding:12px;background:var(--surface-2);border-radius:var(--r-md);overflow-wrap:anywhere}.actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.operation-key{overflow-wrap:anywhere}</style>
