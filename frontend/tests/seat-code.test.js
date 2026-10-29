@@ -161,3 +161,9 @@ test('network unknown is not resolved from legacy top-level checkin timestamp wi
   const page=await checkin({getReservation:async()=>({data:{status:++reads===1?'pending':'checked_in',checkin_at:'2026-10-30T08:00:00',checkout_at:null,usage_record:null,allowed_actions:reads===1?['checkin']:[]}}),checkinReservation:async()=>{throw{status:null}}})
   await page.submitCode(code);assert.equal(page.success.value,false);assert.match(page.scanError.value,/结果尚未确认/)
 })
+
+test('checkin detail can display subsequent management cancellation without hiding true usage or private coordination',async()=>{
+  let reads=0
+  const page=await checkin({getReservation:async()=>({data:{status:++reads===1?'pending':'cancelled',allowed_actions:reads===1?['checkin']:[],termination_reason:reads===1?null:'admin_resource_change',termination_note:'工程模拟：当次公开检修原因',usage_record:reads===1?null:{...usage,ended_at:'2026-10-30T08:01:00.125+08:00',end_reason:'admin_resource_change',duration_seconds:60}}})})
+  await page.submitCode(code);assert.equal(page.success.value,false);assert.match(page.scanNotice.value,/资源管理取消/);assert.equal(page.reservation.value.usage_record.duration_seconds,60);assert.equal(page.reservation.value.termination_note,'工程模拟：当次公开检修原因')
+})

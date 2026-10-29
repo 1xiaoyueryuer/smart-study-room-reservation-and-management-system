@@ -149,6 +149,18 @@ public class BookingService {
             else if("checked_in".equals(row.get("status"))&&!now.isBefore(ends(row))) complete(row,ends(row),"auto_end",null,now);
         }
     }
+    @Transactional(propagation=org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public Map<String,Object> cancelForResource(long actor,long reservation,String publicReason,LocalDateTime snapshot) {
+        db.lockBookings();var admin=db.one("SELECT role,status FROM users WHERE id=?",actor);Api.require("admin".equals(admin.get("role"))&&"active".equals(admin.get("status")),403,"需要管理员权限");
+        var before=db.one("SELECT * FROM reservations WHERE id=?",reservation);Api.require(OpeningScheduleService.remaining(before,snapshot)!=null,409,"预约状态已变化，请重新预览");before.put("usage_record",usage.view(reservation,snapshot));
+        UsageService.requireReservationState(Store.text(before,"status"),usage.view(reservation,snapshot),snapshot);
+        if("checked_in".equals(before.get("status"))) usage.finish(reservation,ends(before),snapshot,"admin_resource_change",snapshot);
+        LocalDateTime end=snapshot.isBefore(ends(before))?snapshot:ends(before);
+        db.update("UPDATE reservations SET status='cancelled',ended_at=?,termination_reason='admin_resource_change',termination_note=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",Timestamp.valueOf(end),publicReason,reservation);
+        notify(id(before,"user_id"),"management_cancelled","预约因资源管理已取消","管理原因："+publicReason+"。受影响预约已立即取消，已用时长按实际确认时刻结算，本次不登记用户违规或信用奖惩。");
+        auditReservation(actor,"reservation.admin_cancel",before,publicReason);
+        var result=db.one("SELECT id AS reservation_id,status,termination_reason,termination_note,ended_at FROM reservations WHERE id=?",reservation);result.put("usage_record",usage.view(reservation,snapshot));return result;
+    }
     private void endUnused(Map<String,Object> res,String type,LocalDateTime now) {
         long reservation=id(res,"id"),uid=id(res,"user_id");LocalDateTime occurred=type.equals("no_show")?ReservationDeadline.at(res):now;
         String reason=type.equals("no_show")?"签到期限到达仍未签到":"预约开始后主动放弃且未签到";
@@ -176,7 +188,7 @@ public class BookingService {
         audit.record(actor,action,"reservation",Long.toString(id(before,"id")),reason,reservationSnapshot(before),reservationSnapshot(after));
     }
     private Map<String,Object> reservationSnapshot(Map<String,Object> row) {
-        var result=new LinkedHashMap<String,Object>();for(String field:List.of("user_id","seat_id","res_date","start_time","end_time","source","status","checkin_at","checkout_at","leave_at","ended_at","termination_reason","usage_record")) result.put(field,row.get(field));return result;
+        var result=new LinkedHashMap<String,Object>();for(String field:List.of("user_id","seat_id","res_date","start_time","end_time","source","status","checkin_at","checkout_at","leave_at","ended_at","termination_reason","termination_note","usage_record")) result.put(field,row.get(field));return result;
     }
     void notify(long uid,String type,String title,String content) {
         db.update("INSERT INTO notifications(user_id,type,title,content) VALUES(?,?,?,?)",uid,type,title,content);

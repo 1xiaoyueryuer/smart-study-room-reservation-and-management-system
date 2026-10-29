@@ -20,8 +20,8 @@ async function schedule(overrides = {}) {
   }
   const context = vm.createContext({ defineProps: () => ({ roomId: 1 }), defineEmits: () => () => {} })
   const source = (await readFile(new URL('../src/components/admin/OpeningManagement.vue', import.meta.url), 'utf8')).split('<script setup>')[1].split('</script>')[0]
-  const module = new vm.SourceTextModule(source + '\nexport { loadAll, mode, weekday, date, windows, scheduleReason, saveSchedule, formError, error, version, editBlock, blockId, blockForm, saveBlock, blocks, openCancellation, cancellation, cancelReason, cancelBlock }', { context })
-  const mocks = { vue: { ref, computed, onMounted() {} }, '../../api/admin': api, './userForm.js': { operationReason } }
+  const module = new vm.SourceTextModule(source + '\nexport { loadAll, mode, weekday, date, windows, scheduleReason, saveSchedule, formError, error, version, editBlock, blockId, blockForm, saveBlock, blocks, openCancellation, cancellation, cancelReason, cancelBlock, changeConfirm, success }', { context })
+  const mocks = { vue: { ref, computed, onMounted() {}, onBeforeUnmount() {} }, '../../api/admin': api, './userForm.js': { operationReason } }
   await module.link(specifier => {
     const values = mocks[specifier] || (specifier.endsWith('.vue') ? { default: {} } : null)
     assert.ok(values, specifier)
@@ -29,6 +29,7 @@ async function schedule(overrides = {}) {
   })
   await module.evaluate()
   const page = module.namespace
+  page.changeConfirm.value = {run:overrides.confirmChange || (async proposal=>{calls.push(['change',proposal]);return{operation_id:'test-operation',cancelled_count:0}})}
   await page.loadAll()
   return { ...page, calls }
 }
@@ -37,26 +38,26 @@ test('date exception with empty windows explicitly closes day; deleting it uses 
   page.mode.value = 'date'; page.date.value = '2026-11-01'; page.windows.value = []
   page.scheduleReason.value = '教学闭馆'
   await page.saveSchedule(false)
-  assert.equal(page.calls[0][2].date, '2026-11-01')
-  assert.equal(page.calls[0][2].windows.length, 0)
-  assert.equal('weekday' in page.calls[0][2], false)
-  assert.equal(page.calls[0][2].version, 7)
+  assert.equal(page.calls[0][1].payload.date, '2026-11-01')
+  assert.equal(page.calls[0][1].payload.windows.length, 0)
+  assert.equal('weekday' in page.calls[0][1].payload, false)
+  assert.equal(page.calls[0][1].payload.version, 7)
   page.scheduleReason.value = '恢复星期安排'
   await page.saveSchedule(true)
-  assert.equal(page.calls[1][0], 'deleteException')
-  assert.equal(page.calls[1][2].reason, '恢复星期安排')
+  assert.equal(page.calls[1][1].change_type, 'opening.delete_exception')
+  assert.equal(page.calls[1][1].payload.reason, '恢复星期安排')
 })
 test('weekly input sends segments unchanged for backend normalization and displays normalized response', async () => {
   const page = await schedule()
   page.windows.value = [{start:'08:00',end:'10:00'},{start:'10:00',end:'12:00'}]
   page.scheduleReason.value = '分段安排'
   await page.saveSchedule(false)
-  assert.equal(page.calls[0][2].windows.length, 2)
+  assert.equal(page.calls[0][1].payload.windows.length, 2)
   assert.equal(page.windows.value.length, 1)
   assert.equal(page.windows.value[0].end, '12:00')
 })
 test('schedule conflict keeps requested segments and reason without inventing a successful change', async () => {
-  const page = await schedule({ saveRoomSchedule: async () => { throw {status:409,message:'开放窗口重叠'} } })
+  const page = await schedule({ confirmChange: async () => { throw {status:409,message:'开放窗口重叠'} } })
   page.windows.value = [{start:'08:00',end:'12:00'},{start:'10:00',end:'24:00'}]
   page.scheduleReason.value = '测试重叠'
   await page.saveSchedule(false)
@@ -70,11 +71,11 @@ test('cross-day seat unavailability remains campus-local and cancelled records r
   page.blockForm.value = {seat_id:2,start_at:'2026-11-01T22:00',end_at:'2026-11-02T09:00',reason:'跨日设备维护'}
   await page.saveBlock()
   const call = page.calls[0]
-  assert.equal(call[0], 'createBlock')
-  assert.equal(call[2].seat_id, 2)
-  assert.equal(call[2].start_at, '2026-11-01T22:00')
-  assert.equal(call[2].end_at, '2026-11-02T09:00')
-  assert.equal(call[2].version, 7)
+  assert.equal(call[1].change_type, 'block.create');assert.equal(call[1].target_id,1)
+  assert.equal(call[1].payload.seat_id, 2)
+  assert.equal(call[1].payload.start_at, '2026-11-01T22:00')
+  assert.equal(call[1].payload.end_at, '2026-11-02T09:00')
+  assert.equal(call[1].payload.version, 7)
   assert.equal(page.blocks.value[0].cancelled, true)
   assert.equal(page.blockForm.value.start_at, '')
 })
@@ -83,9 +84,9 @@ test('cancelling one unavailability submits only its identifier and preserves ot
   page.openCancellation({id:99})
   page.cancelReason.value = '只恢复该条记录'
   await page.cancelBlock()
-  assert.equal(page.calls[0][0], 'cancelBlock')
-  assert.equal(page.calls[0][2], 99)
-  assert.equal(page.calls[0][3].version, 7)
+  assert.equal(page.calls[0][1].change_type, 'block.cancel')
+  assert.equal(page.calls[0][1].target_id, 99)
+  assert.equal(page.calls[0][1].payload.version, 7)
   assert.equal(page.blocks.value.length, 1)
 })
 test('mixed management read versions are rejected rather than blessing stale edits', async () => {
@@ -110,4 +111,22 @@ test('opening API adapters preserve selector exclusivity and cancellation reason
   assert.equal(calls[1][2].data.date, '2026-11-01')
   assert.equal(calls[2][1], '/admin/rooms/1/unavailability/9')
   assert.equal(calls[2][2].data.reason, '撤销本条')
+})
+
+test('all opening mutation types pass frozen typed proposals into the shared confirmation and cancellation preserves inputs',async()=>{
+  const proposals=[]
+  const page=await schedule({confirmChange:async proposal=>{proposals.push(proposal);return false}})
+  page.scheduleReason.value='工程模拟：每周闭馆';await page.saveSchedule();assert.equal(page.scheduleReason.value,'工程模拟：每周闭馆')
+  page.mode.value='date';page.date.value='2026-11-02';await page.saveSchedule(true)
+  page.blockForm.value={seat_id:2,start_at:'2026-11-01T08:00',end_at:'2026-11-01T12:00',reason:'工程模拟：临停'};await page.saveBlock()
+  page.editBlock({id:8,seat_id:2,start_at:'2026-11-01T08:00',end_at:'2026-11-01T12:00'});page.blockForm.value.reason='工程模拟：改临停';await page.saveBlock()
+  page.openCancellation({id:8});page.cancelReason.value='工程模拟：撤销';await page.cancelBlock()
+  assert.deepEqual(proposals.map(value=>value.change_type),['opening.save','opening.delete_exception','block.create','block.update','block.cancel'])
+  assert.equal(proposals[3].target_id,8);assert.equal(proposals[4].target_id,8);assert.equal(page.cancellation.value.id,8)
+})
+test('confirmed schedule write with failed reads keeps acknowledgement distinct from a failed write',async()=>{
+  let broken=false,confirmations=0
+  const page=await schedule({getRoomSchedule:async()=>{if(broken)throw new Error('重读失败');return{data:{room_version:7,weekly:[],exceptions:[]}}},confirmChange:async()=>{confirmations++;broken=true;return{cancelled_count:0}}})
+  page.scheduleReason.value='工程模拟：调整';await page.saveSchedule()
+  assert.equal(confirmations,1);assert.match(page.success.value,/已确认写入/);assert.match(page.success.value,/不要再次确认/);assert.match(page.error.value,/重读失败/)
 })

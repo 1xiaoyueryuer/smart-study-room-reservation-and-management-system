@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 const props = defineProps({ record: { type: Object, default: null } })
 const originLabels = { seat_code: '座位码签到', legacy: '历史迁移', demo_seed: '演示模拟（非到场证据）' }
-const reasonLabels = { early_checkout: '提前签退', auto_end: '到期自动结束', temp_leave_timeout: '旧暂离流程结束（历史）', legacy_unclassified: '历史结束，具体方式未记录', demo_completed: '演示模拟结束' }
+const reasonLabels = { admin_resource_change: '资源管理取消', early_checkout: '提前签退', auto_end: '到期自动结束', temp_leave_timeout: '旧暂离流程结束（历史）', legacy_unclassified: '历史结束，具体方式未记录', demo_completed: '演示模拟结束' }
 const durationText = computed(() => {
   const value = props.record?.duration_seconds
   return value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value)) && Number(value) >= 0 ? `${value}秒` : '时长未登记'

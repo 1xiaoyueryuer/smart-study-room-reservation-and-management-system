@@ -37,6 +37,10 @@ public class UsageService {
         if(end.isBefore(start)) throw new IllegalStateException("使用记录存在反向时长，拒绝伪造显示");
         Duration duration=Duration.between(start,end);result.put("duration_seconds",BigDecimal.valueOf(duration.getSeconds()).add(BigDecimal.valueOf(duration.getNano(),9)));result.put("observed_at",now.atZone(BookingPolicy.CAMPUS_ZONE).toOffsetDateTime().toString());return result;
     }
+    static void requireReservationState(String status,Map<String,Object> record,LocalDateTime now) {
+        boolean checked="checked_in".equals(status);
+        if(checked&&(record==null||record.get("checkin_at")==null||record.get("ended_at")!=null||LocalDateTime.parse(record.get("checkin_at").toString()).isAfter(now))||"pending".equals(status)&&record!=null) throw new IllegalStateException("预约状态与真实使用事实缺失或矛盾，请核查数据");
+    }
     private LocalDateTime micros(LocalDateTime value) { return value.truncatedTo(java.time.temporal.ChronoUnit.MICROS); }
     private Map<String,Object> required(long reservation) { var rows=db.list("SELECT * FROM usage_records WHERE reservation_id=?",reservation);if(rows.isEmpty()) throw new IllegalStateException("使用中的预约缺少使用记录，请核查数据");return rows.get(0); }
 }

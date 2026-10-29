@@ -28,6 +28,8 @@ public class OpeningScheduleService {
         private final List<Schedule> schedules;
         private final List<Map<String,Object>> blocks;
         Calendar(Map<String,Object> room,List<Map<String,Object>> seats,List<Schedule> schedules,List<Map<String,Object>> blocks) { this.room=room;this.seats=seats;this.schedules=schedules;this.blocks=blocks; }
+        Calendar withRoom(Map<String,Object> candidate) { return new Calendar(candidate,seats,schedules,blocks); }
+        Calendar withSeat(Map<String,Object> candidate) { return new Calendar(room,seats.stream().map(seat->Store.id(seat,"id")==Store.id(candidate,"id")?candidate:seat).toList(),schedules,blocks); }
         public Day day(LocalDate date,Long seatId) {
             var reasons=new LinkedHashSet<String>();
             if(!Boolean.TRUE.equals(room.get("enabled"))) return new Day(List.of(),List.of(nonblank(room.get("resource_reason"),"空间已停用")));
@@ -68,7 +70,7 @@ public class OpeningScheduleService {
         for(var row:records) { long id=Store.id(row,"id");heads.put(id,row);groups.computeIfAbsent(id,k->new ArrayList<>());if(row.get("start_minute")!=null) groups.get(id).add(new Window(((Number)row.get("start_minute")).intValue(),((Number)row.get("end_minute")).intValue())); }
         List<Schedule> schedules=new ArrayList<>();
         for(var entry:heads.entrySet()) { var row=entry.getValue();schedules.add(new Schedule(row.get("weekday")==null?null:((Number)row.get("weekday")).intValue(),row.get("schedule_date")==null?null:LocalDate.parse(Store.text(row,"schedule_date")),Store.text(row,"reason"),List.copyOf(groups.get(entry.getKey())))); }
-        String blockSql="SELECT seat_id,start_at,end_at,reason FROM resource_unavailability WHERE room_id=? AND NOT cancelled";
+        String blockSql="SELECT id,room_id,seat_id,start_at,end_at,reason,version,cancelled FROM resource_unavailability WHERE room_id=? AND NOT cancelled";
         var blocks=date==null?db.list(blockSql+" ORDER BY id",roomId):db.list(blockSql+" AND start_at<? AND end_at>? ORDER BY id",roomId,Timestamp.valueOf(date.plusDays(1).atStartOfDay()),Timestamp.valueOf(date.atStartOfDay()));
         return new Calendar(room,seats,schedules,blocks);
     }
@@ -97,6 +99,7 @@ public class OpeningScheduleService {
         db.lockBookings();requireAdmin(actor);validate(req);version(roomId,req.version());
         Api.require((req.weekday()==null)!=(req.date()==null),400,"weekday与date必须且只能提供一个");
         if(req.weekday()!=null) Api.require(req.weekday()>=1&&req.weekday()<=7,400,"weekday须为ISO星期1至7");
+        projectSave(calendar(roomId),req);
         LocalDate date=req.date()==null?null:date(req.date());List<Window> windows=normalize(req.windows());
         var before=management(roomId);var protectedUses=protectedUses(roomId);
         var existing=req.weekday()!=null?db.list("SELECT id FROM opening_schedules WHERE room_id=? AND weekday=?",roomId,req.weekday()):db.list("SELECT id FROM opening_schedules WHERE room_id=? AND schedule_date=?",roomId,java.sql.Date.valueOf(date));
@@ -108,7 +111,7 @@ public class OpeningScheduleService {
         var after=management(roomId);audit.record(actor,"opening.update","room",Long.toString(roomId),req.reason().trim(),before,after);return after;
     }
     @Transactional public Map<String,Object> deleteException(long actor,long roomId,Requests.OpeningDelete req) {
-        db.lockBookings();requireAdmin(actor);validate(req);version(roomId,req.version());LocalDate day=date(req.date());
+        db.lockBookings();requireAdmin(actor);validate(req);version(roomId,req.version());projectDelete(calendar(roomId),req);LocalDate day=date(req.date());
         var before=management(roomId);var protectedUses=protectedUses(roomId);
         var record=db.one("SELECT id FROM opening_schedules WHERE room_id=? AND schedule_date=?",roomId,java.sql.Date.valueOf(day));
         db.update("DELETE FROM opening_schedules WHERE id=?",Store.id(record,"id"));
@@ -120,6 +123,7 @@ public class OpeningScheduleService {
     }
     @Transactional public Map<String,Object> saveBlock(long actor,long roomId,Long id,Requests.Unavailability req) {
         db.lockBookings();requireAdmin(actor);validate(req);version(roomId,req.version());
+        projectBlock(calendar(roomId),id,req);
         LocalDateTime start=local(req.startAt()),end=local(req.endAt());Api.require(start.isBefore(end),400,"停用结束必须晚于开始");
         if(req.seatId()!=null) db.one("SELECT id FROM seats WHERE id=? AND room_id=?",req.seatId(),roomId);
         var before=id==null?Map.<String,Object>of():db.one("SELECT id,seat_id,start_at,end_at,reason,version,cancelled FROM resource_unavailability WHERE id=? AND room_id=?",id,roomId);
@@ -133,25 +137,57 @@ public class OpeningScheduleService {
     }
     @Transactional public Map<String,Object> cancelBlock(long actor,long roomId,long id,Requests.ResourceDelete req) {
         db.lockBookings();requireAdmin(actor);validate(req);version(roomId,req.version());
+        projectCancelBlock(calendar(roomId),id,req);
         var before=db.one("SELECT id,seat_id,start_at,end_at,reason,version,cancelled FROM resource_unavailability WHERE id=? AND room_id=?",id,roomId);Api.require(!Boolean.TRUE.equals(before.get("cancelled")),409,"该停用记录已解除");
         db.update("UPDATE resource_unavailability SET cancelled=true,cancel_reason=?,cancelled_at=?,actor_id=?,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",req.reason().trim(),Timestamp.valueOf(LocalDateTime.now(clock)),actor,id);bump(roomId);
         var after=db.one("SELECT id,seat_id,start_at,end_at,reason,version,cancelled,cancel_reason,cancelled_at FROM resource_unavailability WHERE id=?",id);
         audit.record(actor,"unavailability.cancel","resource_unavailability",Long.toString(id),req.reason().trim(),before,after);return blocks(roomId);
     }
-    private record ProtectedUse(long seatId,LocalDate date,LocalDateTime start,LocalDateTime end) {}
-    private List<ProtectedUse> protectedUses(long roomId) {
-        LocalDateTime now=LocalDateTime.now(clock);var calendar=calendar(roomId);List<ProtectedUse> result=new ArrayList<>();
-        for(var booking:db.list("SELECT rv.* FROM reservations rv JOIN seats s ON s.id=rv.seat_id WHERE s.room_id=? AND rv.status IN ('pending','checked_in')",roomId)) {
-            LocalDate day=LocalDate.parse(Store.text(booking,"res_date"));LocalDateTime start=Slot.endpoint(day,Store.text(booking,"start_time")),end=Slot.endpoint(day,Store.text(booking,"end_time"));
-            if(!end.isAfter(now)||ReservationDeadline.expiredPending(booking,now)) continue;if(!"pending".equals(booking.get("status"))&&start.isBefore(now)) start=now;
-            long seat=Store.id(booking,"seat_id");
-            for(Window window:calendar.day(day,seat).windows()) {
-                LocalDateTime a=day.atStartOfDay().plusMinutes(window.startMinute()),b=day.atStartOfDay().plusMinutes(window.endMinute());if(a.isBefore(start)) a=start;if(b.isAfter(end)) b=end;
-                if(a.isBefore(b)) result.add(new ProtectedUse(seat,day,a,b));
-            }
+    record ProtectedUse(long seatId,LocalDate date,LocalDateTime start,LocalDateTime end) {}
+    static ProtectedUse remaining(Map<String,Object> booking,LocalDateTime now) {
+        if(!Set.of("pending","checked_in").contains(Store.text(booking,"status"))||ReservationDeadline.expiredPending(booking,now)) return null;
+        LocalDate date=LocalDate.parse(Store.text(booking,"res_date"));LocalDateTime start=Slot.endpoint(date,Store.text(booking,"start_time")),end=Slot.endpoint(date,Store.text(booking,"end_time"));
+        if(!end.isAfter(now)) return null;if(start.isBefore(now)) start=now;return new ProtectedUse(Store.id(booking,"seat_id"),date,start,end);
+    }
+    static List<ProtectedUse> remainingUses(Calendar calendar,Map<String,Object> booking,LocalDateTime now) {
+        var remaining=remaining(booking,now);if(remaining==null) return List.of();var result=new ArrayList<ProtectedUse>();
+        for(Window window:calendar.day(remaining.date(),remaining.seatId()).windows()) {
+            var start=remaining.date().atStartOfDay().plusMinutes(window.startMinute());var end=remaining.date().atStartOfDay().plusMinutes(window.endMinute());
+            if(start.isBefore(remaining.start())) start=remaining.start();if(end.isAfter(remaining.end())) end=remaining.end();if(start.isBefore(end)) result.add(new ProtectedUse(remaining.seatId(),remaining.date(),start,end));
         }
         return result;
     }
+    static boolean affected(Calendar before,Calendar after,Map<String,Object> booking,LocalDateTime now,boolean moved) {
+        if(remaining(booking,now)==null) return false;if(moved) return true;
+        return remainingUses(before,booking,now).stream().anyMatch(use->!after.day(use.date(),use.seatId()).contains(use.date(),use.start(),use.end()));
+    }
+    private List<ProtectedUse> protectedUses(long roomId) {
+        LocalDateTime now=LocalDateTime.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MICROS);var calendar=calendar(roomId);var result=new ArrayList<ProtectedUse>();
+        for(var booking:db.list("SELECT rv.* FROM reservations rv JOIN seats s ON s.id=rv.seat_id WHERE s.room_id=? AND rv.status IN ('pending','checked_in')",roomId)) result.addAll(remainingUses(calendar,booking,now));return result;
+    }
+    Calendar projectSave(Calendar before,Requests.OpeningChange req) {
+        validate(req);projectVersion(before,req.version());Api.require((req.weekday()==null)!=(req.date()==null),400,"weekday与date必须且只能提供一个");
+        if(req.weekday()!=null) Api.require(req.weekday()>=1&&req.weekday()<=7,400,"weekday须为ISO星期1至7");LocalDate date=req.date()==null?null:date(req.date());
+        var schedules=new ArrayList<Schedule>();for(var schedule:before.schedules) if(!(req.weekday()!=null?Objects.equals(req.weekday(),schedule.weekday()):Objects.equals(date,schedule.date()))) schedules.add(schedule);
+        schedules.add(new Schedule(req.weekday(),date,req.reason().trim(),normalize(req.windows())));return new Calendar(before.room,before.seats,schedules,before.blocks);
+    }
+    Calendar projectDelete(Calendar before,Requests.OpeningDelete req) {
+        validate(req);projectVersion(before,req.version());LocalDate date=date(req.date());Api.require(before.schedules.stream().anyMatch(schedule->date.equals(schedule.date())),404,"日期例外不存在");
+        return new Calendar(before.room,before.seats,before.schedules.stream().filter(schedule->!date.equals(schedule.date())).toList(),before.blocks);
+    }
+    Calendar projectBlock(Calendar before,Long blockId,Requests.Unavailability req) {
+        validate(req);projectVersion(before,req.version());var start=local(req.startAt());var end=local(req.endAt());Api.require(start.isBefore(end),400,"停用结束必须晚于开始");
+        if(req.seatId()!=null) Api.require(before.seats.stream().anyMatch(seat->Store.id(seat,"id")==req.seatId()),404,"座位不属于该空间");if(blockId!=null) activeBlock(before,blockId);
+        var blocks=new ArrayList<Map<String,Object>>();for(var block:before.blocks) if(blockId==null||Store.id(block,"id")!=blockId) blocks.add(block);
+        var block=new LinkedHashMap<String,Object>();block.put("id",blockId==null?0L:blockId);block.put("room_id",before.room.get("id"));block.put("seat_id",req.seatId());block.put("start_at",start.toString());block.put("end_at",end.toString());block.put("reason",req.reason().trim());blocks.add(block);return new Calendar(before.room,before.seats,before.schedules,blocks);
+    }
+    Calendar projectCancelBlock(Calendar before,long blockId,Requests.ResourceDelete req) {
+        validate(req);projectVersion(before,req.version());activeBlock(before,blockId);return new Calendar(before.room,before.seats,before.schedules,before.blocks.stream().filter(block->Store.id(block,"id")!=blockId).toList());
+    }
+    private void activeBlock(Calendar before,long id) {
+        var block=db.one("SELECT cancelled FROM resource_unavailability WHERE id=? AND room_id=?",id,Store.id(before.room,"id"));Api.require(!Boolean.TRUE.equals(block.get("cancelled")),409,"该停用记录已解除");
+    }
+    private void projectVersion(Calendar before,Long expected) { Api.require(expected!=null&&expected>0,400,"资源版本必填");Api.require(Store.id(before.room,"version")==expected,409,"空间已变化，请刷新后重试"); }
     private void ensureProtected(long roomId,List<ProtectedUse> protectedUses) {
         var calendar=calendar(roomId);
         for(var use:protectedUses) Api.require(calendar.day(use.date(),use.seatId()).contains(use.date(),use.start(),use.end()),409,"变更影响有效预约的剩余开放时段，请先处理预约");

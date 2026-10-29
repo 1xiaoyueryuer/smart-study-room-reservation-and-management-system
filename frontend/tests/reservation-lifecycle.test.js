@@ -182,3 +182,9 @@ test('current UI removes temporary leave navigation and adapters while retaining
   const api=await readFile(new URL('../src/api/reservation.js',import.meta.url),'utf8');assert.doesNotMatch(api,/leaveReservation|returnReservation/)
   const home=await readFile(new URL('../src/views/HomeView.vue',import.meta.url),'utf8');assert.doesNotMatch(home,/临时离开/)
 })
+
+test('managed cancellation exposes immutable public reason and preserves usage even though reservation is cancelled',async()=>{
+  const source=await readFile(new URL('../src/views/MyReservationsView.vue',import.meta.url),'utf8')
+  assert.match(source,/admin_resource_change:'资源管理取消（不记用户违约）'/);assert.match(source,/当次公开管理原因：\{\{ row.termination_note \}\}/)
+  assert.match(source,/<td><UsageRecordSummary :record="row.usage_record"/);assert.doesNotMatch(source,/coordination\.note|room\.resource_reason/)
+})

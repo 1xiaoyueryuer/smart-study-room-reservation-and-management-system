@@ -7,7 +7,8 @@ const props = defineProps({
   title: { type: String, default: '' },
   width: { type: String, default: '480px' },
   closeOnClickModal: { type: Boolean, default: true },
-  showClose: { type: Boolean, default: true }
+  showClose: { type: Boolean, default: true },
+  closeOnEscape: { type: Boolean, default: true }
 })
 
 const emit = defineEmits(['update:modelValue', 'close'])
@@ -28,7 +29,7 @@ function onKeydown(e) {
   trap(e)
   if (e.key === 'Escape' && props.modelValue) {
     e.stopPropagation()
-    close()
+    if (props.closeOnEscape) close()
   }
 }
 

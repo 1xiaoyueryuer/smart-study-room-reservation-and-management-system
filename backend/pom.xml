@@ -22,6 +22,14 @@
       <resource><directory>src/main/resources</directory></resource>
       <resource><directory>../frontend/dist</directory><targetPath>static</targetPath></resource>
     </resources>
-    <plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins>
+    <plugins>
+      <plugin>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <!-- 多个缓存Spring测试上下文不预热各自12条空闲连接；保留真实并发容量。 -->
+          <systemPropertyVariables><spring.datasource.hikari.minimum-idle>0</spring.datasource.hikari.minimum-idle></systemPropertyVariables>
+        </configuration>
+      </plugin>
+      <plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins>
   </build>
 </project>

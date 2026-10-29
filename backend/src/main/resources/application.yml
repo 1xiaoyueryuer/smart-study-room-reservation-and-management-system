@@ -19,6 +19,8 @@ spring:
     database: ${STUDYROOM_REDIS_DATABASE:3}
     timeout: 2s
   jackson:
+    deserialization:
+      accept-float-as-int: false
     property-naming-strategy: SNAKE_CASE
     time-zone: Asia/Shanghai
   flyway:

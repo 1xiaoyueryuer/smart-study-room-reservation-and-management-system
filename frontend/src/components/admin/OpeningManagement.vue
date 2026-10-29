@@ -1,6 +1,7 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
-import { getRoomSchedule, saveRoomSchedule, deleteDateException, listUnavailability, createUnavailability, updateUnavailability, cancelUnavailability, listRoomSeats } from '../../api/admin'
+import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
+import ResourceChangeConfirm from './ResourceChangeConfirm.vue'
+import { getRoomSchedule, listUnavailability, listRoomSeats } from '../../api/admin'
 import { operationReason } from './userForm.js'
 import SButton from '../ui/SButton.vue'
 import SInput from '../ui/SInput.vue'
@@ -13,24 +14,28 @@ const loading = ref(false), error = ref(''), formError = ref(''), success = ref(
 const version = ref(null), weekly = ref([]), exceptions = ref([]), blocks = ref([]), seats = ref([])
 const mode = ref('weekday'), weekday = ref(1), date = ref(''), windows = ref([]), scheduleReason = ref('')
 const blockId = ref(null), blockForm = ref({ seat_id: null, start_at: '', end_at: '', reason: '' })
-const cancellation = ref(null), cancelReason = ref('')
+const cancellation = ref(null), cancelReason = ref(''), changeConfirm = ref(null)
+let loadSequence = 0, alive = true
 const weekdays = Array.from({ length: 7 }, (_, index) => ({ value: index + 1, label: `星期${['一','二','三','四','五','六','日'][index]}` }))
 const scopes = computed(() => [{ value: null, label: '整个空间' }, ...seats.value.map(seat => ({ value: seat.id, label: `座位 ${seat.seat_no}` }))])
 const existingException = computed(() => exceptions.value.some(item => item.date === date.value))
 function failureText(failure) { return failure.status === 409 ? `${failure.message}。输入保留，请重新加载版本并核对影响后再提交。` : failure.status === 403 ? `无管理权限：${failure.message}` : failure.message }
 async function loadAll() {
+  const ticket = ++loadSequence
   loading.value = true
   error.value = ''
   try {
     const [schedule, unavailability, resources] = await Promise.all([getRoomSchedule(props.roomId), listUnavailability(props.roomId), listRoomSeats(props.roomId)])
+    if (!alive || ticket !== loadSequence) return false
     if (new Set([schedule.data.room_version, unavailability.data.room_version, resources.data.room.version]).size !== 1) throw new Error('读取期间资源版本已变化，请重新加载核对')
     version.value = resources.data.room.version
     weekly.value = schedule.data.weekly
     exceptions.value = schedule.data.exceptions
     blocks.value = unavailability.data.items
     seats.value = resources.data.seats
-  } catch (failure) { error.value = failureText(failure) }
-  finally { loading.value = false }
+    return true
+  } catch (failure) { if (alive && ticket === loadSequence) error.value = failureText(failure); return false }
+  finally { if (alive && ticket === loadSequence) loading.value = false }
 }
 function loadSelection() {
   const selected = mode.value === 'weekday' ? weekly.value.find(item => item.weekday === weekday.value) : exceptions.value.find(item => item.date === date.value)
@@ -40,8 +45,10 @@ function loadSelection() {
 }
 function addWindow() { windows.value.push({ start: '08:00', end: '22:00' }) }
 async function afterWrite() {
-  await loadAll()
+  const refreshed = await loadAll()
   emit('changed')
+  if (!refreshed) success.value = '变更已确认写入，重新读取安排失败，结果待刷新核对；请重试读取，不要再次确认同一变更。'
+  return refreshed
 }
 async function saveSchedule(remove = false) {
   if (saving.value) return
@@ -52,8 +59,9 @@ async function saveSchedule(remove = false) {
   saving.value = true
   try {
     const target = mode.value === 'weekday' ? { weekday: weekday.value } : { date: date.value }
-    if (remove) await deleteDateException(props.roomId, { date: date.value, version: version.value, reason })
-    else await saveRoomSchedule(props.roomId, { ...target, windows: windows.value.map(window => ({ start: window.start, end: window.end })), version: version.value, reason })
+    const payload = remove ? {date:date.value,version:version.value,reason} : {...target,windows:windows.value.map(window=>({start:window.start,end:window.end})),version:version.value,reason}
+    const result = await changeConfirm.value.run({change_type:remove?'opening.delete_exception':'opening.save',target_id:props.roomId,payload})
+    if (!result) return
     success.value = remove ? '日期例外已删除，恢复星期安排' : '开放安排已保存'
     await afterWrite()
     if (!error.value) loadSelection()
@@ -75,8 +83,8 @@ async function saveBlock() {
   saving.value = true
   try {
     const body = { ...blockForm.value, version: version.value, reason }
-    if (blockId.value === null) await createUnavailability(props.roomId, body)
-    else await updateUnavailability(props.roomId, blockId.value, body)
+    const result = await changeConfirm.value.run({change_type:blockId.value===null?'block.create':'block.update',target_id:blockId.value===null?props.roomId:blockId.value,payload:body})
+    if (!result) return
     success.value = '停用区间已保存'
     await afterWrite()
     if (!error.value) { blockId.value = null; blockForm.value = { seat_id: null, start_at: '', end_at: '', reason: '' } }
@@ -91,18 +99,20 @@ async function cancelBlock() {
   try { reason = operationReason(cancelReason.value) } catch (failure) { formError.value = failure.message; return }
   saving.value = true
   try {
-    await cancelUnavailability(props.roomId, cancellation.value.id, { version: version.value, reason })
+    const result = await changeConfirm.value.run({change_type:'block.cancel',target_id:cancellation.value.id,payload:{version:version.value,reason}})
+    if (!result) return
     cancellation.value = null
     success.value = '该停用记录已撤销，其他重叠停用记录保持生效'
     await afterWrite()
   } catch (failure) { formError.value = failureText(failure) }
   finally { saving.value = false }
 }
+onBeforeUnmount(() => { alive = false; loadSequence++ })
 onMounted(async () => { await loadAll(); if (!error.value) loadSelection() })
 </script>
 <template>
   <section class="schedule-management">
-    <p class="muted">统一使用校园时区 Asia/Shanghai。开放窗口不扣预约，不代表连续空档；有影响的变更会拒绝，不自动取消预约。版本：{{ version ?? '—' }}。</p>
+    <p class="muted">统一使用校园时区 Asia/Shanghai。开放窗口不扣预约，不代表连续空档；保存前统一预览影响；确认后立即管理取消受影响预约，使用中须管理员自报已现场协调。版本：{{ version ?? '—' }}。</p>
     <SButton size="sm" :loading="loading" :disabled="saving" @click="loadAll">重新加载安排和版本</SButton>
     <p v-if="loading" role="status">正在读取开放安排及停用记录…</p><SBanner v-if="error" type="error" :title="error" />
     <SBanner v-if="formError" type="error" :title="formError" /><SBanner v-if="success" type="success" :title="success" />
@@ -127,6 +137,7 @@ onMounted(async () => { await loadAll(); if (!error.value) loadSelection() })
       <h4>{{ blockId===null ? '新增停用区间' : '编辑停用区间' }}</h4><SButton v-if="blockId!==null" size="sm" :disabled="saving" @click="editBlock()">改为新增</SButton>
       <form class="schedule-form" @submit.prevent="saveBlock"><label class="full-width">停用对象<SSelect v-model="blockForm.seat_id" :options="scopes" :disabled="saving" /></label><label>停用开始（Asia/Shanghai）<SInput v-model="blockForm.start_at" type="datetime-local" required :disabled="saving" /></label><label>停用结束（Asia/Shanghai）<SInput v-model="blockForm.end_at" type="datetime-local" required :disabled="saving" /></label><label class="full-width">停用理由（公开，不含个人信息）<SInput v-model="blockForm.reason" type="textarea" required maxlength="1000" :disabled="saving" /></label><SButton type="submit" variant="primary" :loading="saving">保存停用区间</SButton></form>
     </div>
+    <ResourceChangeConfirm ref="changeConfirm" />
   </section>
 </template>
 <style scoped>

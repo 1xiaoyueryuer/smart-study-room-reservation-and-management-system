@@ -1,9 +1,10 @@
 <script setup>
 import { onMounted, ref } from 'vue'
+import ResourceChangeConfirm from './ResourceChangeConfirm.vue'
 import OpeningManagement from './OpeningManagement.vue'
 import SeatCodePanel from './SeatCodePanel.vue'
 import { getRooms } from '../../api/room'
-import { createRoom, updateRoom, deleteRoom, batchGenSeats, listRoomSeats, createSeat, updateSeat, deleteSeat } from '../../api/admin'
+import { createRoom, deleteRoom, batchGenSeats, listRoomSeats, createSeat, deleteSeat } from '../../api/admin'
 import { operationReason } from './userForm.js'
 import { message } from '../ui/feedback'
 import SButton from '../ui/SButton.vue'
@@ -25,7 +26,7 @@ const seatsDialog = ref(false), seatRoom = ref(null), seats = ref([]), seatLoadi
 const seatDialog = ref(false), editingSeat = ref(null), seatForm = ref({})
 const batchDialog = ref(false), batchForm = ref({})
 const deleteDialog = ref(false), deleteForm = ref({}), deletingSeat = ref(false)
-const saving = ref(false), formError = ref('')
+const saving = ref(false), formError = ref(''), writeNotice = ref(''), changeConfirm = ref(null)
 const zoneLabels = { quiet: '静音区', regular: '普通区', discussion: '研讨区', computer: '机房区' }
 const stateLabels = { available: '可用', maintenance: '维护中', disabled: '停用' }
 const zones = Object.entries(zoneLabels).map(([value, label]) => ({ value, label }))
@@ -44,10 +45,12 @@ async function loadRooms() {
     if (sequence !== loadSequence) return
     rooms.value = response.data
     emit('summary', { total: rooms.value.length, seats: rooms.value.reduce((sum, room) => sum + room.seat_count, 0), capacity: rooms.value.reduce((sum, room) => sum + room.bookable_capacity, 0) })
+    return true
   } catch (failure) {
     if (sequence !== loadSequence) return
     error.value = failureText(failure)
     emit('summary', null)
+    return false
   } finally { if (sequence === loadSequence) loading.value = false }
 }
 function openCreate() {
@@ -72,13 +75,19 @@ async function saveRoom() {
   const { name, building, floor, location, enabled, seat_rows, seat_cols, description, version } = roomForm.value
   if (!name.trim()) { formError.value = '请填写空间名称'; return }
   saving.value = true
+  writeNotice.value = ''
   try {
     const body = { name: name.trim(), building, floor, location, enabled, seat_rows, seat_cols, description, version, reason }
     if (editingRoom.value === null) await createRoom(body)
-    else await updateRoom(editingRoom.value, body)
+    else {
+      const result = await changeConfirm.value.run({change_type:'room.update',target_id:editingRoom.value,payload:body})
+      if (!result) return
+      writeNotice.value = `资源变更已确认完成，管理取消${result.cancelled_count}条预约${result.replayed ? '（原操作幂等回执）' : ''}。`
+    }
     roomDialog.value = false
     message.success('空间已保存')
-    await loadRooms()
+    const refreshed = await loadRooms()
+    if (!refreshed) writeNotice.value = '操作已确认写入，资源列表读取失败，当前结果待刷新核对；请重试读取，不要重复提交同一变更。'
   } catch (failure) { formError.value = failureText(failure) }
   finally { saving.value = false }
 }
@@ -92,7 +101,8 @@ async function loadSeats() {
     if (sequence !== seatSequence) return
     seatRoom.value = response.data.room
     seats.value = response.data.seats
-  } catch (failure) { if (sequence === seatSequence) seatError.value = failureText(failure) }
+    return true
+  } catch (failure) { if (sequence === seatSequence) seatError.value = failureText(failure); return false }
   finally { if (sequence === seatSequence) seatLoading.value = false }
 }
 async function openSeats(room) {
@@ -115,14 +125,20 @@ async function saveSeat() {
   try { reason = operationReason(seatForm.value.reason) } catch (failure) { formError.value = failure.message; return }
   const { seat_no, row_no, col_no, zone, has_power, near_window, status, version } = seatForm.value
   if (!seat_no.trim()) { formError.value = '请填写座位编号'; return }
+  writeNotice.value = ''
   saving.value = true
   try {
     const body = { seat_no: seat_no.trim(), row_no, col_no, zone, has_power, near_window, status, version, reason }
     if (editingSeat.value === null) await createSeat(seatRoom.value.id, body)
-    else await updateSeat(editingSeat.value, body)
+    else {
+      const result = await changeConfirm.value.run({change_type:'seat.update',target_id:editingSeat.value,payload:body})
+      if (!result) return
+      writeNotice.value = `资源变更已确认完成，管理取消${result.cancelled_count}条预约${result.replayed ? '（原操作幂等回执）' : ''}。`
+    }
     seatDialog.value = false
     message.success('座位已保存')
-    await Promise.all([loadRooms(), loadSeats()])
+    const refreshed = await Promise.all([loadRooms(), loadSeats()])
+    if (refreshed.some(value => !value)) writeNotice.value = '操作已确认写入，资源或座位列表读取失败，当前结果待刷新核对；请重试读取，不要重复提交同一变更。'
   } catch (failure) { formError.value = failureText(failure) }
   finally { saving.value = false }
 }
@@ -179,6 +195,7 @@ defineExpose({ loadRooms, openCreate })
 <template>
   <section class="card">
     <div class="card-title-row"><h3>自习室管理</h3><div class="row-actions"><SButton size="sm" :loading="loading" @click="loadRooms">刷新资源</SButton><SButton size="sm" variant="primary" @click="openCreate">新建自习室</SButton></div></div>
+    <SBanner v-if="writeNotice" type="info" :title="writeNotice" />
     <p v-if="loading" role="status">正在加载空间…</p>
     <SBanner v-if="error" type="error" :title="error"><SButton size="sm" @click="loadRooms">重试</SButton></SBanner>
     <div v-if="!loading && !error" class="table-wrap"><div class="table-scroll" tabindex="0" aria-label="资源管理列表，可左右滑动"><table class="table resource-table"><thead><tr><th>空间 / 位置</th><th>开放安排</th><th>真实座位 / 有效容量 / 可约容量</th><th>布局范围</th><th>状态 / 原因</th><th>版本</th><th>操作</th></tr></thead><tbody><tr v-for="room in rooms" :key="room.id"><td><b>{{ room.name }}</b><div>{{ room.building || '楼栋未登记' }} · {{ room.floor || '楼层未登记' }}</div><div>{{ room.location || '详细位置未登记' }}</div></td><td><SButton size="sm" @click="openSchedule(room)">开放安排</SButton></td><td>{{ room.seat_count }} / {{ room.capacity }} / {{ room.bookable_capacity }}</td><td>{{ room.seat_rows }}行 × {{ room.seat_cols }}列</td><td>{{ room.enabled ? '启用' : '停用' }}<div>{{ room.resource_reason || '—' }}</div></td><td>{{ room.version }}</td><td><div class="row-actions"><SButton size="sm" @click="openEdit(room)">编辑空间</SButton><SButton size="sm" @click="openSeats(room)">座位维护</SButton><SButton v-if="room.seat_count === 0" size="sm" @click="openBatch(room)">生成座位</SButton><SButton size="sm" :disabled="saving" @click="removeResource(room)">删除空间</SButton></div></td></tr></tbody></table><SEmpty v-if="!rooms.length" description="暂无空间，可新建自习室" /></div></div>
@@ -189,12 +206,12 @@ defineExpose({ loadRooms, openCreate })
         <label>空间名称<SInput v-model="roomForm.name" required maxlength="100" /></label><label>楼栋<SInput v-model="roomForm.building" maxlength="100" placeholder="未知可留空" /></label><label>楼层<SInput v-model="roomForm.floor" maxlength="30" placeholder="如B1，未知可留空" /></label><label>详细位置<SInput v-model="roomForm.location" maxlength="200" /></label>
         <p v-if="editingRoom===null" class="muted full-width">新空间默认每天08:00—22:00开放；创建后可通过“开放安排”维护每周分段、日期例外与临时停用。</p><label>布局行数<SInputNumber v-model="roomForm.seat_rows" :min="1" :max="30" /></label><label>布局列数<SInputNumber v-model="roomForm.seat_cols" :min="1" :max="30" /></label>
         <label><span><input v-model="roomForm.enabled" type="checkbox" /> 启用空间</span></label><label>说明<SInput v-model="roomForm.description" type="textarea" maxlength="5000" /></label>
-        <label class="full-width">资源原因（将展示给普通用户，请勿填写个人信息）<SInput v-model="roomForm.reason" type="textarea" required maxlength="1000" /></label><p class="muted full-width">容量由实际有效座位计算，布局行列不是座位数量。有有效预约的影响性变更会被拒绝，不会自动取消预约。</p>
+        <label class="full-width">资源原因（将展示给普通用户，请勿填写个人信息）<SInput v-model="roomForm.reason" type="textarea" required maxlength="1000" /></label><p class="muted full-width">容量由实际有效座位计算，布局行列不是座位数量。编辑需先核对影响预览，确认后立即管理取消受影响预约，使用中须自报现场协调。</p>
       </form><template #footer><SButton :disabled="saving" @click="roomDialog=false">取消</SButton><SButton type="submit" form="room-editor" variant="primary" :loading="saving">保存空间</SButton></template>
     </SDialog>
 
     <SDialog v-model="seatsDialog" :title="`座位维护 - ${seatRoom?.name || ''}`" width="1000px">
-      <p class="muted">{{ seatRoom?.building || '楼栋未登记' }} · {{ seatRoom?.floor || '楼层未登记' }} · {{ seatRoom?.location || '位置未登记' }}。实际座位{{ seatRoom?.seat_count }}，有效容量{{ seatRoom?.capacity }}；布局{{ seatRoom?.seat_rows }}行×{{ seatRoom?.seat_cols }}列。</p>
+      <SBanner v-if="writeNotice" type="info" :title="writeNotice" /><p class="muted">{{ seatRoom?.building || '楼栋未登记' }} · {{ seatRoom?.floor || '楼层未登记' }} · {{ seatRoom?.location || '位置未登记' }}。实际座位{{ seatRoom?.seat_count }}，有效容量{{ seatRoom?.capacity }}；布局{{ seatRoom?.seat_rows }}行×{{ seatRoom?.seat_cols }}列。</p>
       <div class="row-actions"><SButton size="sm" :loading="seatLoading" @click="loadSeats">刷新座位</SButton><SButton size="sm" variant="primary" :disabled="seatLoading || !!seatError" @click="editSeat()">新增单座位</SButton></div>
       <p v-if="seatLoading" role="status">正在加载全部座位…</p><SBanner v-if="seatError" type="error" :title="seatError"><SButton size="sm" @click="loadSeats">重试</SButton></SBanner>
       <div v-if="!seatLoading && !seatError" class="table-wrap"><div class="table-scroll" tabindex="0" aria-label="管理座位列表，可左右滑动"><table class="table resource-table"><thead><tr><th>编号</th><th>行 / 列</th><th>区域</th><th>电源 / 靠窗</th><th>状态 / 原因</th><th>版本</th><th>操作</th></tr></thead><tbody><tr v-for="seat in seats" :key="seat.id"><td>{{ seat.seat_no }}</td><td>{{ seat.row_no }} / {{ seat.col_no }}</td><td>{{ zoneLabels[seat.zone] }}</td><td>{{ seat.has_power ? '有电源' : '无电源' }} / {{ seat.near_window ? '靠窗' : '非靠窗' }}</td><td>{{ stateLabels[seat.status] }}<div>{{ seat.resource_reason || '—' }}</div></td><td>{{ seat.version }}</td><td><div class="row-actions"><SButton size="sm" @click="editSeat(seat)">编辑座位</SButton><SButton size="sm" @click="openSeatCode(seat)">座位码</SButton><SButton size="sm" :disabled="saving" @click="removeResource(seat,true)">删除座位</SButton></div></td></tr></tbody></table><SEmpty v-if="!seats.length" description="尚无座位，可新增单座位或在空房批量生成" /></div></div>
@@ -205,6 +222,7 @@ defineExpose({ loadRooms, openCreate })
 
     <SDialog v-model="batchDialog" title="空房批量生成座位" width="480px" :show-close="!saving"><form id="batch-editor" class="resource-form" @submit.prevent="saveBatch"><p v-if="formError" role="alert" class="form-error">{{ formError }}</p><label>行数<SInputNumber v-model="batchForm.seat_rows" :min="1" :max="30" /></label><label>列数<SInputNumber v-model="batchForm.seat_cols" :min="1" :max="30" /></label><label class="full-width">资源原因（公开，请勿填写个人信息）<SInput v-model="batchForm.reason" type="textarea" required maxlength="1000" /></label><p class="muted full-width">仅空房可生成，编号与布局位置均由后端校验；不覆盖现有座位。</p></form><template #footer><SButton :disabled="saving" @click="batchDialog=false">取消</SButton><SButton type="submit" form="batch-editor" variant="primary" :loading="saving">确认生成</SButton></template></SDialog>
     <SDialog v-model="deleteDialog" title="删除资源" width="480px" :show-close="!saving" :close-on-click-modal="!saving"><form id="resource-delete" class="resource-form" @submit.prevent="saveDelete"><p class="full-width">确认删除「{{ deleteForm.label }}」？有历史记录的资源禁止删除，失败不会清理历史或取消预约。</p><p v-if="formError" role="alert" class="form-error">{{ formError }}</p><label class="full-width">删除操作理由<SInput v-model="deleteForm.reason" type="textarea" required maxlength="1000" /></label></form><template #footer><SButton :disabled="saving" @click="deleteDialog=false">取消</SButton><SButton type="submit" form="resource-delete" variant="soft-danger" :loading="saving">确认删除资源</SButton></template></SDialog>
+    <ResourceChangeConfirm ref="changeConfirm" />
   </section>
 </template>
 <style scoped>

@@ -18,13 +18,14 @@ async function load() {
     const result = await getReservation(reservationId)
     if (ticket === loadSequence && scope === reservationScope && !disposed) {
       reservation.value = result.data
+      const managedCancellation = reservation.value?.status === 'cancelled' && reservation.value?.termination_reason === 'admin_resource_change'
       const usageConfirmed = ['checked_in', 'completed'].includes(reservation.value?.status) && !!reservation.value?.usage_record?.checkin_at
-      if (uncertainResult.value && usageConfirmed) {
-        scanError.value = ''; scanNotice.value = reservation.value.status === 'completed' ? '原签到请求未收到确认；查询确认已登记签到并结束使用，无需重试。' : '原签到请求未收到确认；查询确认当前已签到，无需重试。'; uncertainResult.value = false
+      if (uncertainResult.value && (usageConfirmed || managedCancellation)) {
+        scanError.value = ''; scanNotice.value = managedCancellation ? '查询确认预约已因资源管理取消，请查看当次公开原因及使用记录；无需再次签到。' : reservation.value.status === 'completed' ? '原签到请求未收到确认；查询确认已登记签到并结束使用，无需重试。' : '原签到请求未收到确认；查询确认当前已签到，无需重试。'; uncertainResult.value = false
       }
       if (accepted.value) {
         success.value = usageConfirmed
-        scanNotice.value = usageConfirmed ? '' : '签到请求已接收，尚未查得可核对的使用记录，请刷新核对。'
+        scanNotice.value = managedCancellation ? '预约已因资源管理取消，请查看当次公开原因及使用记录；当前不能再次签到。' : usageConfirmed ? '' : '签到请求已接收，尚未查得可核对的使用记录，请刷新核对。'
       }
     }
   }
@@ -83,7 +84,7 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; scanner.stop() })
       <div class="card-title-row"><h3>预约信息</h3><SButton :disabled="submitting || decoding" :loading="loading" @click="refresh">刷新预约</SButton></div>
       <p v-if="loading" role="status">正在核对本人预约及签到权限…</p>
       <SBanner v-if="detailError" type="error" :title="detailError"><SButton :disabled="submitting || decoding" @click="refresh">重试查询</SButton></SBanner>
-      <template v-if="reservation && !loading && !detailError"><p>{{ reservation.room_name }} · {{ reservation.seat_no }} · {{ reservation.res_date }} {{ reservation.start_time }}—{{ reservation.end_time }}</p><p v-if="!canCheckin && !success" role="status">当前预约不可签到（{{ reservation.status === 'unused_ended' ? '未使用结束' : reservation.status === 'checked_in' ? '使用中' : reservation.status === 'completed' ? '已结束' : '请以我的预约当前操作为准' }}）。<RouterLink to="/mine">返回我的预约</RouterLink></p><UsageRecordSummary :record="reservation.usage_record" /></template>
+      <template v-if="reservation && !loading && !detailError"><p>{{ reservation.room_name }} · {{ reservation.seat_no }} · {{ reservation.res_date }} {{ reservation.start_time }}—{{ reservation.end_time }}</p><p v-if="!canCheckin && !success" role="status">当前预约不可签到（{{ reservation.status === 'unused_ended' ? '未使用结束' : reservation.status === 'checked_in' ? '使用中' : reservation.status === 'completed' ? '已结束' : reservation.status === 'cancelled' ? '已取消' : '请以我的预约当前操作为准' }}）。<RouterLink to="/mine">返回我的预约</RouterLink></p><p v-if="reservation.termination_reason === 'admin_resource_change'">资源管理取消（不记用户违约），当次公开原因：{{ reservation.termination_note || '未提供' }}</p><UsageRecordSummary :record="reservation.usage_record" /></template>
       <SBanner v-if="success" type="success" title="签到及使用记录已确认，请查看当前预约状态。"><RouterLink to="/mine">返回我的预约</RouterLink></SBanner>
       <SBanner v-if="scanNotice" type="info" :title="scanNotice" />
       <SBanner v-if="scanError" type="error" :title="scanError" />

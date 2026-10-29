@@ -53,10 +53,8 @@ public class ResourceService {
                 req.name().trim(),value(req.location()),req.seatRows(),req.seatCols(),value(req.description()),value(req.building()),value(req.floor()),req.enabled(),req.reason().trim());
             opening.initializeDefaults(id);
         } else {
-            before=room(id);version(before,req.version());
-            boolean moved=!same(before,"building",req.building())||!same(before,"floor",req.floor())||!same(before,"location",req.location());
-            if(!req.enabled()||moved) ensureNoActive("rv.seat_id IN (SELECT id FROM seats WHERE room_id=?)",id);
-            Api.require(db.count("SELECT count(*) FROM seats WHERE room_id=? AND (row_no>? OR col_no>?)",id,req.seatRows(),req.seatCols())==0,409,"布局不能小于现有座位范围");
+            var calendar=opening.calendar(id);var projection=projectRoom(calendar,req);before=projection.before();
+            ensureNoActive("rv.seat_id IN (SELECT id FROM seats WHERE room_id=?)",id,calendar,calendar.withRoom(projection.after()),projection.moved());
             db.update("UPDATE rooms SET name=?,location=?,seat_rows=?,seat_cols=?,description=?,building=?,floor=?,enabled=?,resource_reason=?,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",
                 req.name().trim(),value(req.location()),req.seatRows(),req.seatCols(),value(req.description()),value(req.building()),value(req.floor()),req.enabled(),req.reason().trim(),id);
         }
@@ -76,10 +74,8 @@ public class ResourceService {
         bumpRoom(roomId);var after=seat(id);record(actor,"seat.create","seat",id,req.reason(),Map.of(),after,SEAT_FIELDS);return after;
     }
     @Transactional public Map<String,Object> updateSeat(long actor,long id,Requests.Seat req) {
-        db.lockBookings();requireAdmin(actor);validate(req);var before=seat(id);version(before,req.version());
-        long roomId=Store.id(before,"room_id");bounds(room(roomId),req);
-        boolean moved=!same(before,"seat_no",req.seatNo())||((Number)before.get("row_no")).intValue()!=req.rowNo()||((Number)before.get("col_no")).intValue()!=req.colNo();
-        if(!req.status().equals("available")||moved) ensureNoActive("rv.seat_id=?",id);
+        db.lockBookings();requireAdmin(actor);var existing=seat(id);long roomId=Store.id(existing,"room_id");var calendar=opening.calendar(roomId);var projection=projectSeat(calendar,id,req);var before=projection.before();
+        ensureNoActive("rv.seat_id=?",id,calendar,calendar.withSeat(projection.after()),projection.moved());
         db.update("UPDATE seats SET seat_no=?,row_no=?,col_no=?,zone=?,has_power=?,near_window=?,status=?,resource_reason=?,version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",
             req.seatNo().trim(),req.rowNo(),req.colNo(),req.zone(),req.hasPower(),req.nearWindow(),req.status(),req.reason().trim(),id);
         bumpRoom(roomId);var after=seat(id);record(actor,"seat.update","seat",id,req.reason(),before,after,SEAT_FIELDS);return after;
@@ -99,9 +95,23 @@ public class ResourceService {
     private Map<String,Object> seat(long id) { return db.one("SELECT * FROM seats WHERE id=?",id); }
     private void bumpRoom(long id) { db.update("UPDATE rooms SET version=version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",id); }
     private void bounds(Map<String,Object> room,Requests.Seat req) { Api.require(req.rowNo()<=((Number)room.get("seat_rows")).intValue()&&req.colNo()<=((Number)room.get("seat_cols")).intValue(),400,"座位行列超出空间布局范围"); }
-    private void ensureNoActive(String condition,long id) {
-        LocalDateTime now=LocalDateTime.now(clock);
-        boolean blocked=db.list("SELECT rv.* FROM reservations rv WHERE "+condition+" AND rv.status IN "+ACTIVE,id).stream().anyMatch(row->!ReservationDeadline.expiredPending(row,now)&&Slot.endpoint(LocalDate.parse(Store.text(row,"res_date")),Store.text(row,"end_time")).isAfter(now));
+    record Projection(Map<String,Object> before,Map<String,Object> after,boolean moved) {}
+    Projection projectRoom(OpeningScheduleService.Calendar calendar,Requests.Room req) {
+        validate(req);Api.require(req.openTime()==null&&req.closeTime()==null,400,"每日时间字段已退出，请使用开放安排入口维护");var before=calendar.room;version(before,req.version());long id=Store.id(before,"id");
+        Api.require(calendar.seats.stream().noneMatch(seat->((Number)seat.get("row_no")).intValue()>req.seatRows()||((Number)seat.get("col_no")).intValue()>req.seatCols()),409,"布局不能小于现有座位范围");
+        Api.require(db.count("SELECT count(*) FROM rooms WHERE name=? AND id<>?",req.name().trim(),id)==0,409,"空间名称已存在");
+        boolean moved=!same(before,"building",req.building())||!same(before,"floor",req.floor())||!same(before,"location",req.location());var after=new LinkedHashMap<>(before);
+        after.put("name",req.name().trim());after.put("building",value(req.building()));after.put("floor",value(req.floor()));after.put("location",value(req.location()));after.put("enabled",req.enabled());after.put("seat_rows",req.seatRows());after.put("seat_cols",req.seatCols());after.put("description",value(req.description()));after.put("resource_reason",req.reason().trim());return new Projection(before,after,moved);
+    }
+    Projection projectSeat(OpeningScheduleService.Calendar calendar,long id,Requests.Seat req) {
+        validate(req);var before=calendar.seats.stream().filter(seat->Store.id(seat,"id")==id).findFirst().orElseThrow(()->Api.fail(404,"座位不存在"));version(before,req.version());bounds(calendar.room,req);String number=req.seatNo().trim();
+        Api.require(calendar.seats.stream().noneMatch(seat->Store.id(seat,"id")!=id&&(number.equals(seat.get("seat_no"))||((Number)seat.get("row_no")).intValue()==req.rowNo()&&((Number)seat.get("col_no")).intValue()==req.colNo())),409,"座位编号或行列位置已存在");
+        boolean moved=!same(before,"seat_no",number)||((Number)before.get("row_no")).intValue()!=req.rowNo()||((Number)before.get("col_no")).intValue()!=req.colNo();var after=new LinkedHashMap<>(before);
+        after.put("seat_no",number);after.put("row_no",req.rowNo());after.put("col_no",req.colNo());after.put("zone",req.zone());after.put("has_power",req.hasPower());after.put("near_window",req.nearWindow());after.put("status",req.status());after.put("resource_reason",req.reason().trim());return new Projection(before,after,moved);
+    }
+    private void ensureNoActive(String condition,long id,OpeningScheduleService.Calendar before,OpeningScheduleService.Calendar after,boolean moved) {
+        LocalDateTime now=LocalDateTime.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
+        boolean blocked=db.list("SELECT rv.* FROM reservations rv WHERE "+condition+" AND rv.status IN "+ACTIVE,id).stream().anyMatch(row->OpeningScheduleService.affected(before,after,row,now,moved));
         Api.require(!blocked,409,"资源变更影响有效预约，请先处理预约");
     }
     private void version(Map<String,Object> before,Long expected) { Api.require(expected!=null,400,"资源版本必填");Api.require(Store.id(before,"version")==expected,409,"资源已变化，请刷新后重试"); }

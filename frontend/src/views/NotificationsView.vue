@@ -19,6 +19,7 @@ const filterType = ref('all')
 const typeMeta = {
   reservation_success: { text: '预约成功', color: 'var(--green-strong)', bg: 'var(--green-weak)' },
   reservation_cancelled:{ text:'预约取消', color:'var(--text-3)', bg:'var(--surface-3)' },
+  management_cancelled:{ text:'资源管理取消', color:'var(--text-3)', bg:'var(--surface-3)', category:'reservation_cancelled' },
   checkin_reminder:   { text: '签到提醒', color: 'var(--primary-active)', bg: 'var(--primary-weak)' },
   violation:          { text: '违约警告', color: 'var(--red-strong)', bg: 'var(--red-weak)' },
   credit_change:      { text: '历史信用变动', color: 'var(--amber-strong)', bg: 'var(--amber-weak)' },
@@ -56,11 +57,14 @@ function fmtTime(t) {
   return new Date(t).toLocaleString('zh-CN', { hour12: false })
 }
 
+function categoryOf(type) { return typeMeta[type]?.category || type }
+
 const buckets = computed(() => {
   const b = { all: list.value.length, unread: 0 }
   Object.keys(typeMeta).forEach((k) => (b[k] = 0))
   list.value.forEach((n) => {
-    if (b[n.type] !== undefined) b[n.type]++
+    const category = categoryOf(n.type)
+    if (b[category] !== undefined) b[category]++
     if (!n.is_read) b.unread++
   })
   return b
@@ -68,13 +72,13 @@ const buckets = computed(() => {
 const filtered = computed(() => {
   if (filterType.value === 'all') return list.value
   if (filterType.value === 'unread') return list.value.filter((n) => !n.is_read)
-  return list.value.filter((n) => n.type === filterType.value)
+  return list.value.filter((n) => categoryOf(n.type) === filterType.value)
 })
 
 const typeNav = computed(() => ([
   { key: 'all',    label: '全部消息', icon: 'inbox' },
   { key: 'unread', label: '未读消息', icon: 'notification' },
-  ...Object.keys(typeMeta).map((k) => ({ key: k, label: typeMeta[k].text, icon: typeIcon(k) }))
+  ...Object.keys(typeMeta).filter(k => !typeMeta[k].category).map((k) => ({ key: k, label: typeMeta[k].text, icon: typeIcon(k) }))
 ]))
 function typeIcon(k) {
   return {

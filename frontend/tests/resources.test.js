@@ -33,11 +33,12 @@ async function resources(overrides = {}) {
   }
   const page = await script('../src/components/admin/ResourceManagement.vue', {
     vue: { ref, computed, onMounted() {} },
-    '../../api/room': { getRooms: async () => { effects.calls.push(['rooms']); return { data: [room()] } } },
+    '../../api/room': { getRooms: overrides.getRooms || (async () => { effects.calls.push(['rooms']); return { data: [room()] } }) },
     '../../api/admin': api,
     './userForm.js': { operationReason },
     '../ui/feedback': { message: { success() {} } }
-  }, 'loadRooms, openCreate, openEdit, saveRoom, roomForm, roomDialog, formError, openSeats, editSeat, saveSeat, seatForm, seatDialog, seatRoom, removeResource, deleteForm, saveDelete, deleteDialog', { defineEmits: () => (_, value) => effects.summaries.push(value) })
+  }, 'loadRooms, openCreate, openEdit, saveRoom, roomForm, roomDialog, formError, openSeats, editSeat, saveSeat, seatForm, seatDialog, seatRoom, removeResource, deleteForm, saveDelete, deleteDialog, changeConfirm, writeNotice', { defineEmits: () => (_, value) => effects.summaries.push(value) })
+  page.changeConfirm.value = {run:overrides.confirmChange || (async proposal=>{effects.calls.push(['change',proposal]);return{operation_id:'test-operation',cancelled_count:0}})}
   return { ...page, effects }
 }
 test('resource summary uses actual seat counts and capacity rather than layout multiplication', async () => {
@@ -52,12 +53,12 @@ test('room editing sends expected version, string B1 floor and explicit public r
   page.roomForm.value.reason = '更新公开位置'
   await page.saveRoom()
   const call = page.effects.calls[0]
-  assert.equal(call[0], 'updateRoom')
-  assert.equal(call[2].floor, 'B1')
-  assert.equal(call[2].version, 3)
-  assert.equal(call[2].reason, '更新公开位置')
-  assert.equal('open_time' in call[2], false)
-  assert.equal('close_time' in call[2], false)
+  assert.equal(call[0], 'change');assert.equal(call[1].change_type,'room.update');assert.equal(call[1].target_id,1)
+  assert.equal(call[1].payload.floor, 'B1')
+  assert.equal(call[1].payload.version, 3)
+  assert.equal(call[1].payload.reason, '更新公开位置')
+  assert.equal('open_time' in call[1].payload, false)
+  assert.equal('close_time' in call[1].payload, false)
   assert.equal(page.roomDialog.value, false)
 })
 test('single seat creation uses room version and editing uses seat version; both refresh real resource data', async () => {
@@ -73,10 +74,10 @@ test('single seat creation uses room version and editing uses seat version; both
   page.editSeat(seat())
   page.seatForm.value.reason = '更新模拟座位'
   await page.saveSeat()
-  assert.equal(page.effects.calls.find(call => call[0] === 'updateSeat')[2].version, 5)
+  assert.equal(page.effects.calls.find(call => call[0] === 'change' && call[1].change_type === 'seat.update')[1].payload.version, 5)
 })
 test('resource conflict preserves attempted input and instructs refresh rather than silently replacing version', async () => {
-  const page = await resources({ updateRoom: async () => { throw { status: 409, message: '版本过期' } } })
+  const page = await resources({ confirmChange: async () => { throw { status: 409, message: '版本过期' } } })
   page.openEdit(room())
   page.roomForm.value.name = '希望更新的名称'
   page.roomForm.value.reason = '更新位置'
@@ -152,4 +153,16 @@ test('available seat outside authoritative opening window cannot bypass manual s
   page.selected.value = closed
   await page.confirmBooking()
   assert.deepEqual(page.calls, [])
+})
+
+test('cancelled resource preview keeps the room form and reason and never closes it as saved',async()=>{
+  const page=await resources({confirmChange:async()=>false})
+  page.openEdit(room());page.roomForm.value.reason='工程模拟：取消预览';await page.saveRoom()
+  assert.equal(page.roomDialog.value,true);assert.equal(page.roomForm.value.reason,'工程模拟：取消预览');assert.equal(page.effects.calls.length,0)
+})
+test('acknowledged resource write followed by reload failure is explicit and never retried as a new operation',async()=>{
+  let changes=0
+  const page=await resources({confirmChange:async()=>{changes++;return{cancelled_count:1}},getRooms:async()=>{throw new Error('读取失败')}})
+  page.openEdit(room());page.roomForm.value.reason='工程模拟：资源维护';await page.saveRoom()
+  assert.equal(changes,1);assert.equal(page.roomDialog.value,false);assert.match(page.writeNotice.value,/已确认写入/);assert.match(page.writeNotice.value,/不要重复提交/)
 })

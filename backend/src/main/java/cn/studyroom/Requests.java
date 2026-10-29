@@ -5,6 +5,9 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 public final class Requests {
     private Requests() {}
+    public record ResourceChangeProposal(@JsonProperty("change_type") @NotBlank String changeType,@JsonProperty("target_id") @NotNull @Positive Long targetId,@NotNull java.util.Map<String,Object> payload) {}
+    public record Coordination(Boolean confirmed,String note) {}
+    public record ResourceChangeConfirm(@javax.validation.Valid @NotNull ResourceChangeProposal proposal,@JsonProperty("impact_hash") @NotBlank String impactHash,@JsonProperty("operation_id") @NotBlank String operationId,Coordination coordination) {}
     public record SeatCodeChange(@NotNull @Min(0) Long version,@NotBlank @Size(max=1000) String reason) {}
     public record SeatCodeStatus(@NotNull @Positive Long version,@NotNull Boolean enabled,@NotBlank @Size(max=1000) String reason) {}
     public record Login(@NotBlank String username,@NotBlank String password) {}

@@ -55,7 +55,7 @@ class MigrationIntegrationTest {
     }
     @Test void emptyInstallationAndRepeatedStartup() throws Exception {
         var f=flyway(); DatabaseMigrations.migrate(f,false); DatabaseMigrations.migrate(f,false);
-        assertEquals(9,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(10,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".booking_mutex WHERE id=1"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".audit_events"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"));
@@ -73,7 +73,7 @@ class MigrationIntegrationTest {
         assertEquals(1,count("SELECT count(*) FROM "+schema+".seats WHERE version=1 AND resource_reason IS NULL"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".reservations WHERE user_id=1 AND seat_id=1 AND status='pending'"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"),"历史座位不能被伪造成已经配置真实贴码");
-        assertEquals(9,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(10,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE username='known-campus' AND campus_id='OLD-01' AND student_no='OLD-01'"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE type='BASELINE'"));
     }
@@ -148,6 +148,6 @@ class MigrationIntegrationTest {
         var error=assertThrows(FlywayException.class,()->DatabaseMigrations.migrate(broken,false));
         assertTrue(error.getMessage().contains("V9999__broken.sql"));
         assertEquals(0,count("SELECT count(*) FROM information_schema.tables WHERE table_schema='"+schema+"' AND table_name='rollback_probe'"));
-        assertEquals(9,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(10,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
     }
 }

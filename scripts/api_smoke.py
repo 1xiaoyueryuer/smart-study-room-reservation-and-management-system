@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import time
+import uuid
 import urllib.request
 import urllib.error
 
@@ -107,6 +108,14 @@ def main():
         check('管理端生成座位', status == 200)
         version = generated['data']['room']['version']
         check('重复生成被阻止',call('POST',f'/admin/rooms/{temp}/seats/batch',{'seat_rows':1,'seat_cols':2,'version':version,'reason':'API重复生成应被拒绝'},admin)[0] == 409)
+        proposal = {'change_type':'room.update','target_id':temp,'payload':{**room_req,'version':version,'description':'API无预约影响变更验证','reason':'API核对只读预览与幂等确认'}}
+        status, preview = call('POST','/admin/resource-changes/preview',proposal,admin)
+        check('资源变更只读预览返回无影响清单',status == 200 and preview['data']['summary']['total_count'] == 0 and bool(preview['data']['target_label']))
+        confirmation = {'proposal':preview['data']['normalized_proposal'],'impact_hash':preview['data']['impact_hash'],'operation_id':str(uuid.uuid4())}
+        status, changed = call('POST','/admin/resource-changes/confirm',confirmation,admin)
+        check('管理员按预览确认无影响变更',status == 200 and changed['data']['cancelled_count'] == 0 and changed['data']['replayed'] is False)
+        status, replayed = call('POST','/admin/resource-changes/confirm',confirmation,admin)
+        check('同操作确认幂等返回原结果',status == 200 and replayed['data']['operation_id'] == confirmation['operation_id'] and replayed['data']['replayed'] is True)
     finally:
         status, current = call('GET', '/rooms', token=admin)
         if status == 200:

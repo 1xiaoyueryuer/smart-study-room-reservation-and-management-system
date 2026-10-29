@@ -4,7 +4,7 @@
 
 基于 [imicola/smart-study-room](https://github.com/imicola/smart-study-room) 的课程项目二次开发：保留原 Vue 3 前端，后端改为 Java 17 + Spring Boot，使用 Docker PostgreSQL 17 和已有 Redis，已移除智能助手。保留原作者 MIT 许可证。
 
-当前已接入校园账号、开放安排、预约签到与使用结算，以及三种连续空档找座方案和同源图列表选座。投诉申诉、累计违规限制等仍待后续落实，详见 [迁移说明与需求差距](docs/MIGRATION.md)。
+当前已接入校园账号、开放安排、预约签到与使用结算、三种连续空档找座方案，以及资源变更影响预览与管理取消。投诉申诉、累计违规限制等仍待后续落实，详见 [迁移说明与需求差距](docs/MIGRATION.md)。
 
 ## 后续开发从这里开始
 
@@ -37,6 +37,8 @@
 使用与结束：签到后生成唯一使用记录，“我的预约”展示签到、结束、结算登记和使用时长。提前签退释放剩余时段；到期自动按原结束时间结算，不额外处罚漏点签退。不再提供暂离/返回操作，历史暂离依据保留，短暂离开不延长原结束。新记录不再增加信用奖励或扣分。
 
 找座预约：选择日期和空间，比较最早可约、连续可用最久或满足所需学习时长三种方案，可切换平面图和逐段列表，3D沿用同一结果。空档已扣除座位占用、本人其他空间安排及停用限制；最早和最长方案默认预约30分钟，时长方案默认采用输入分钟，可在完整空档内主动修改。若本次短于找座输入，页面和确认框明确提醒。查询是快照，确认提交时再次校验，被抢后显示原因并刷新原条件。
+
+资源变更：管理端编辑空间、座位、开放安排或临停时，先核对真实影响清单，再确认立即取消受影响预约；使用中还需登记管理员自报的协调依据，按确认时刻结算已用时长。取消预览保留表单，清单变化须重新预览。恢复资源不会复活原预约，本人可查看当次公开原因与使用记录；系统不据自报证明现场已经腾退。
 
 停止 Java：`./scripts/Stop.ps1`。该脚本不会关闭共享数据库或 Redis。
 
@@ -92,6 +94,6 @@ Java 从 `.local/server.jar` 独立副本运行，不锁定 Maven 构建产物�
 
 [本次验证结果](docs/VALIDATION.md) 与上游资料分开保存。`docs/upstream/` 和 `diagrams/` 是原作者材料，不等于本组贡献或本次测试结果。
 
-后端入口为 `backend/src/main/java/cn/studyroom/`：`Requests` 定义前端契约，控制器提供接口，`AuthService`/`WebSecurity` 负责权限，`UserService` 维护校园账号，`ResourceService` 管理资源，`OpeningScheduleService` 计算合法窗口，`Slot`/`BookingService` 统一预约时间与事务，`StatsService` 汇总统计，`Store` 处理 SQL 和保真时间映射。
+后端入口为 `backend/src/main/java/cn/studyroom/`：`Requests` 定义前端契约，控制器提供接口，`AuthService`/`WebSecurity` 负责权限，`UserService` 维护校园账号，`ResourceService` 管理资源，`OpeningScheduleService` 计算合法窗口，`ResourceChangeService` 编排预览与管理取消，`Slot`/`BookingService` 统一预约时间与事务，`UsageService` 记录实际使用，`AvailabilityService` 计算连续空档，`StatsService` 汇总统计，`Store` 处理 SQL 和保真时间映射。
 
 应用仅监听127.0.0.1。上游来源和许可证在本项目中保留；原作者材料不能作为本组的实现或测试结果。
