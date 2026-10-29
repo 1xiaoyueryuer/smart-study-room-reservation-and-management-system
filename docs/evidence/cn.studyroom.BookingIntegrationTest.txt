@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: cn.studyroom.BookingIntegrationTest
+-------------------------------------------------------------------------------
+Tests run: 8, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 5.164 s - in cn.studyroom.BookingIntegrationTest

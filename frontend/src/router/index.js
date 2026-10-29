@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { SYSTEM_NAME } from '../config/branding'
 
 // 应用路由表(页面随迭代逐步补充)
 const routes = [
@@ -87,8 +88,8 @@ router.beforeEach((to) => {
     return auth.roleHomePath
   }
   document.title = to.meta.title
-    ? `${to.meta.title} - 智能共享自习室预约系统`
-    : '智能共享自习室预约系统'
+    ? `${to.meta.title} - ${SYSTEM_NAME}`
+    : SYSTEM_NAME
 })
 
 export default router

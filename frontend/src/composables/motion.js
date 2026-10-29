@@ -14,7 +14,7 @@ export const pageMotion = {
   cancel(el) { gsap.killTweensOf(el); gsap.set(el, { clearProps: 'opacity' }) }
 }
 
-// Explicitly applied to page roots, never to streaming AI content or 3D scenes.
+// Explicitly applied to page roots, never to 3D scenes.
 export const revealDirective = {
   mounted(el) {
     const media = gsap.matchMedia()

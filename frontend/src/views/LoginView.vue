@@ -7,6 +7,7 @@ import { useAuthStore } from '../stores/auth'
 import AppIcon from '../components/AppIcon.vue'
 import SButton from '../components/ui/SButton.vue'
 import SInput from '../components/ui/SInput.vue'
+import { SYSTEM_NAME, SYSTEM_NAME_ZH } from '../config/branding'
 
 const router = useRouter()
 const route = useRoute()
@@ -79,8 +80,8 @@ const features = [
       <div class="hero-brand">
         <div class="hero-mark"><AppIcon name="book" :size="20" /></div>
         <div>
-          <div class="hero-name">智能共享自习室</div>
-          <div class="hero-sub">Smart Study Room</div>
+          <div class="hero-name">{{ SYSTEM_NAME_ZH }}</div>
+          <div class="hero-sub">{{ SYSTEM_NAME }}</div>
         </div>
       </div>
 
@@ -99,7 +100,7 @@ const features = [
         </ul>
       </div>
 
-      <div class="hero-foot">智能共享自习室预约系统 · 课程设计演示环境</div>
+      <div class="hero-foot">{{ SYSTEM_NAME_ZH }} · 课程设计演示环境</div>
     </aside>
 
     <!-- ============ 右侧：登录 / 注册 ============ -->

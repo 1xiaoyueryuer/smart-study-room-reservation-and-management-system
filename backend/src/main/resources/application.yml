@@ -1,0 +1,32 @@
+server:
+  address: 127.0.0.1
+  port: ${STUDYROOM_HOST_PORT:8080}
+spring:
+  config:
+    import: optional:file:../.local/application-local.properties,optional:file:.local/application-local.properties
+  datasource:
+    driver-class-name: org.postgresql.Driver
+    url: ${STUDYROOM_DB_URL:jdbc:postgresql://127.0.0.1:5433/studyroom_java}
+    username: ${STUDYROOM_DB_USERNAME:studyroom}
+    password: ${STUDYROOM_DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: 12
+      connection-timeout: 10000
+  redis:
+    host: ${STUDYROOM_REDIS_HOST:localhost}
+    port: ${STUDYROOM_REDIS_PORT:6379}
+    password: ${STUDYROOM_REDIS_PASSWORD:}
+    database: ${STUDYROOM_REDIS_DATABASE:3}
+    timeout: 2s
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+    time-zone: Asia/Shanghai
+  sql:
+    init:
+      mode: always
+      encoding: UTF-8
+studyroom:
+  jwt-secret: ${STUDYROOM_JWT_SECRET}
+  seed: ${STUDYROOM_SEED:true}
+  scheduler-enabled: ${STUDYROOM_SCHEDULER_ENABLED:true}
+  zone: Asia/Shanghai

@@ -1,102 +1,36 @@
-# ============================================================
-# 智能共享自习室预约系统 — 后端 + 数据库 Docker 编排
-#
-# 用法:
-#   docker compose up -d --build     # 首次构建并启动
-#   docker compose logs -f backend   # 查看后端日志
-#   docker compose ps                # 查看健康状态
-#   docker compose down              # 停止(保留数据卷)
-#   docker compose down -v           # 停止并删除数据卷(下次启动重新初始化)
-#
-# 数据库首次启动时，postgres 镜像会自动按序执行
-# /docker-entrypoint-initdb.d/ 下的 SQL(仅在数据卷为空时)：
-#   001_init.sql  → 建表/约束/索引(schema 迁移)
-#   002_seed.sql  → 演示种子数据(admin/admin123, stu01..stu40/123456)
-# 重置数据库: docker compose down -v && docker compose up -d
-# ============================================================
-name: smart-study-room
-
+name: studyroom-java
 services:
   db:
-    image: postgres:18-alpine
-    container_name: studyroom-db
+    image: postgres:17-alpine
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-studyroom}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-studyroom}
-      POSTGRES_DB: ${POSTGRES_DB:-studyroom}
+      POSTGRES_DB: studyroom_java
+      POSTGRES_USER: studyroom
+    env_file:
+      - .local/postgres.env
     ports:
-      # 宿主 5433 → 容器 5432，避免与本机既有 PostgreSQL(5432) 冲突
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
-      # PG18 镜像约定: 卷挂载至 /var/lib/postgresql(数据自动落入其版本子目录)
-      - db-data:/var/lib/postgresql
-      # 只读挂载 schema 迁移与种子数据，按文件名序执行(001 → 002)
-      - ./backend/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
-      - ./backend/seed/seed.sql:/docker-entrypoint-initdb.d/002_seed.sql:ro
-      - ./backend/migrations/002_ai_assistant.sql:/docker-entrypoint-initdb.d/003_ai_assistant.sql:ro
+      - studyroom-postgres:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      # $$ 转义: 由容器内环境变量展开，避免 compose 提前插值
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-      start_period: 10s
+      test: [CMD-SHELL, "pg_isready -U studyroom -d studyroom_java"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
     restart: unless-stopped
-
   redis:
-    image: redis:7-alpine
-    container_name: studyroom-redis
-    command: >
-      redis-server
-      --requirepass ${REDIS_PASSWORD:-studyroom_redis_pass}
-      --appendonly yes
-      --maxmemory 256mb
-      --maxmemory-policy volatile-lru
-    environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-studyroom_redis_pass}
+    profiles: [extra-redis]
+    image: redis:7.2-alpine
     ports:
-      # 宿主 6380 → 容器 6379，避免与本机既有 Redis(6379) 冲突
-      - "${REDIS_HOST_PORT:-6380}:6379"
+      - "127.0.0.1:6380:6379"
     volumes:
-      - redis-data:/data
+      - studyroom-redis:/data
+    command: [redis-server, --appendonly, "yes"]
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a $${REDIS_PASSWORD:-studyroom_redis_pass} ping | grep PONG"]
+      test: [CMD, redis-cli, ping]
       interval: 5s
       timeout: 3s
       retries: 5
-      start_period: 3s
-    restart: unless-stopped
-
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: studyroom-backend
-    environment:
-      STUDYROOM_PORT: "8080"
-      STUDYROOM_DB_URL: postgres://${POSTGRES_USER:-studyroom}:${POSTGRES_PASSWORD:-studyroom}@db:5432/${POSTGRES_DB:-studyroom}?sslmode=disable
-      STUDYROOM_REDIS_ADDR: redis:6379
-      STUDYROOM_REDIS_PASSWORD: ${REDIS_PASSWORD:-studyroom_redis_pass}
-      STUDYROOM_REDIS_DB: "0"
-      STUDYROOM_JWT_SECRET: ${STUDYROOM_JWT_SECRET:-studyroom-dev-secret}
-      # Compose 自动读取根目录 .env；AI 未配置时后端会优雅降级，不影响其他功能。
-      STUDYROOM_AI_BASE_URL: ${STUDYROOM_AI_BASE_URL:-https://api.openai.com/v1}
-      STUDYROOM_AI_API_KEY: ${STUDYROOM_AI_API_KEY:-}
-      STUDYROOM_AI_MODEL: ${STUDYROOM_AI_MODEL:-gpt-4o-mini}
-      STUDYROOM_AI_CONNECT_TIMEOUT_SECONDS: ${STUDYROOM_AI_CONNECT_TIMEOUT_SECONDS:-10}
-      STUDYROOM_AI_RESPONSE_TIMEOUT_SECONDS: ${STUDYROOM_AI_RESPONSE_TIMEOUT_SECONDS:-60}
-      STUDYROOM_AI_CONTEXT_MESSAGES: ${STUDYROOM_AI_CONTEXT_MESSAGES:-20}
-    ports:
-      # 与前端 Vite 本地代理 http://127.0.0.1:8080 衔接；
-      # 若宿主 8080 被其它服务占用，可设 STUDYROOM_HOST_PORT 覆盖(如 8081)
-      - "${STUDYROOM_HOST_PORT:-8080}:8080"
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
-
 volumes:
-  db-data:
-  redis-data:
+  studyroom-postgres:
+  studyroom-redis:

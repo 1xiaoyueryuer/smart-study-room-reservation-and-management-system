@@ -38,3 +38,11 @@ tools/
 
 # Word 临时锁文件
 ~$*
+
+# Java and local tools
+backend/target/
+.local/
+
+# Python cache
+__pycache__/
+*.pyc

@@ -11,7 +11,8 @@ import { useThemeStore } from '../stores/theme'
 import { logout as logoutApi } from '../api/auth'
 import AppIcon from '../components/AppIcon.vue'
 import MobileTopbar from '../components/MobileTopbar.vue'
-import AIAssistant from '../components/AIAssistant.vue'
+import { SYSTEM_NAME, SYSTEM_NAME_ZH } from '../config/branding'
+
 import SBadge from '../components/ui/SBadge.vue'
 
 const router = useRouter()
@@ -224,11 +225,11 @@ onUnmounted(() => {
 
     <!-- ============== 左栏（导航 / 品牌 / 用户） ============== -->
     <aside class="sidebar" :class="{ collapsed: isSidebarCollapsed }">
-      <!-- 品牌（保留智能自习室与副标题；折叠按钮展开态居右、折叠态居左，纵向高度恒定） -->
+      <!-- 系统名称集中定义，侧栏展示中英文名称。 -->
       <div class="brand" :class="{ collapsed: isDesktopCollapsed }">
         <div class="brand-copy">
-          <div class="brand-name">智能自习室</div>
-          <div class="brand-sub">Smart Study Room</div>
+          <div class="brand-name">{{ SYSTEM_NAME_ZH }}</div>
+          <div class="brand-sub">{{ SYSTEM_NAME }}</div>
         </div>
         <button
           class="sidebar-toggle"
@@ -349,7 +350,7 @@ onUnmounted(() => {
         </router-view>
       </main>
     </section>
-    <AIAssistant v-if="auth.isLoggedIn && auth.isStudent" />
+
   </div>
 </template>
 
@@ -389,8 +390,8 @@ onUnmounted(() => {
   position: relative;
   display: flex;
   align-items: center;
-  height: 56px;
-  min-height: 56px;
+  height: 96px;
+  min-height: 96px;
   padding: 0;
   white-space: nowrap;
   box-sizing: border-box;
@@ -409,19 +410,20 @@ onUnmounted(() => {
   pointer-events: none;
 }
 .brand-name {
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
   color: var(--text-1);
   letter-spacing: -.01em;
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.4;
 }
 .brand-sub {
-  font-size: 10px;
+  font-size: 9px;
   color: var(--text-4);
   margin-top: 2px;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-  white-space: nowrap;
+  letter-spacing: 0;
+  white-space: normal;
+  line-height: 1.3;
 }
 .sidebar-toggle {
   appearance: none;

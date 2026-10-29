@@ -7,8 +7,7 @@
 .page-view {
   min-width: 0;
   min-height: 100%;
-  /* 底部留白：为右下角 AI 助手悬浮球让位，避免遮挡页面末端内容 */
-  padding: 24px 32px 76px;
+  padding: 24px 32px 32px;
   max-width: 1720px;
   margin: 0 auto;
 }
