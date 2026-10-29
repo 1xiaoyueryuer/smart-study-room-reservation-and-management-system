@@ -21,6 +21,7 @@ async function mine(overrides={}) {
   const api={listMyReservations:async()=>{calls.push('mine');return{data:[waiting([])]}},...Object.fromEntries(['cancel','abandon','checkin','leave','return','checkout'].map(key=>[`${key}Reservation`,async id=>{calls.push(key);return{data:{id}}}])),...overrides}
   const page=await script('../src/views/MyReservationsView.vue',{
     vue:{ref,computed,onMounted(){}},
+    'vue-router':{useRouter:()=>({push:async location=>{calls.push(location)}})},
     '../composables/usePagination':{usePagination:items=>({page:ref(1),pages:computed(()=>1),pageItems:items})},
     '../components/ui/feedback':{message:{success(){}},confirmDialog:overrides.confirmDialog|| (async text=>{confirmations.push(text)})},
     '../api/reservation':api

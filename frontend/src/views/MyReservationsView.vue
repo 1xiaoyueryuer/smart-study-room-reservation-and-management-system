@@ -4,9 +4,10 @@ import SAnimatedNumber from '../components/ui/SAnimatedNumber.vue'
 import { usePagination } from '../composables/usePagination'
 import SPagination from '../components/ui/SPagination.vue'
 import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { message, confirmDialog } from '../components/ui/feedback'
 import {
-  listMyReservations, cancelReservation, abandonReservation, checkinReservation,
+  listMyReservations, cancelReservation, abandonReservation,
   leaveReservation, returnReservation, checkoutReservation
 } from '../api/reservation'
 import AppIcon from '../components/AppIcon.vue'
@@ -16,6 +17,7 @@ import SEmpty from '../components/ui/SEmpty.vue'
 import SBanner from '../components/ui/SBanner.vue'
 import ViolationsPanel from '../components/ViolationsPanel.vue'
 
+const router = useRouter()
 const list = ref([])
 const loading = ref(false)
 const error = ref(''), actionError = ref(''), busyId = ref(null), violations = ref(null)
@@ -57,7 +59,7 @@ const actionVariant = {
 }
 
 const actionDefinitions = {
-  checkin:{key:'checkin',label:'签到',type:'primary'},
+  checkin:{key:'checkin',label:'扫码签到',type:'primary'},
   cancel:{key:'cancel',label:'开始前取消',type:'danger'},
   abandon:{key:'abandon',label:'开始后放弃',type:'danger'},
   leave:{key:'leave',label:'临时离开',type:'warning'},
@@ -67,13 +69,14 @@ const actionDefinitions = {
 function actionsOf(row) {
   return Array.isArray(row.allowed_actions) ? row.allowed_actions.map(key=>actionDefinitions[key]).filter(Boolean) : []
 }
-const apiMap = { checkin:checkinReservation,cancel:cancelReservation,abandon:abandonReservation,leave:leaveReservation,return:returnReservation,checkout:checkoutReservation }
+const apiMap = { cancel:cancelReservation,abandon:abandonReservation,leave:leaveReservation,return:returnReservation,checkout:checkoutReservation }
 async function refreshAll() {
   await load()
   await violations.value?.refresh()
 }
 async function doAction(row, key) {
   if (loading.value || error.value || busyId.value !== null || !actionsOf(row).some(action=>action.key===key)) return
+  if (key === 'checkin') { await router.push({ name: 'checkin', params: { id: row.id } }); return }
   const reservationId = row.id
   busyId.value = reservationId
   actionError.value = ''
@@ -126,7 +129,7 @@ const { page, pages, pageItems } = usePagination(filtered, filterStatus)
       <p class="heading-sub">管理签到、临时离开与签退等预约全生命周期操作</p>
     </div><PageHelp title="操作说明">
         <ul class="tips">
-          <li>开始前取消不登记新违规；开始后未签到主动放弃会登记一次未使用违约。</li><li>签到窗口为开始起至开始后15分钟之前；达到期限仍未签到则自动结束并登记一次，动作以服务端当前允许为准。</li><li>信用分和流水只读保留，不再新增加减分或低分触发限制。</li>
+          <li>开始前取消不登记新违规；开始后未签到主动放弃会登记一次未使用违约。</li><li>请扫描预约座位的二维码签到。签到窗口为开始起至开始后15分钟之前；达到期限仍未签到则自动结束并登记一次，动作以服务端当前允许为准。</li><li>信用分和流水只读保留，不再新增加减分或低分触发限制。</li>
         </ul>
       </PageHelp></header>
     <!-- 我的预约：页面级双栏 = 左状态筛选 | 右列表 -->

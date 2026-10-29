@@ -33,6 +33,13 @@ const routes = [
         meta: { title: '我的预约', requiresAuth: true, allowedRoles: ['student', 'staff'] }
       },
       {
+        path: '/mine/:id/checkin',
+        name: 'checkin',
+        component: () => import('../views/CheckinView.vue'),
+        props: true,
+        meta: { title: '扫码签到', requiresAuth: true, allowedRoles: ['student', 'staff'] }
+      },
+      {
         path: '/waitlist',
         name: 'waitlist',
         component: () => import('../views/WaitlistView.vue'),

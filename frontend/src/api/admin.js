@@ -75,3 +75,10 @@ export function listUnavailability(roomId) { return request.get(`/admin/rooms/${
 export function createUnavailability(roomId, data) { return request.post(`/admin/rooms/${roomId}/unavailability`, data) }
 export function updateUnavailability(roomId, id, data) { return request.put(`/admin/rooms/${roomId}/unavailability/${id}`, data) }
 export function cancelUnavailability(roomId, id, data) { return request.delete(`/admin/rooms/${roomId}/unavailability/${id}`, { data }) }
+
+// 座位码拥有独立版本，PNG通过同一Bearer请求获取。
+export const getSeatCode = id => request.get(`/admin/seats/${id}/code`, { silent: true })
+export const createSeatCode = (id, data) => request.post(`/admin/seats/${id}/code`, data, { silent: true })
+export const rotateSeatCode = (id, data) => request.post(`/admin/seats/${id}/code/rotate`, data, { silent: true })
+export const updateSeatCode = (id, data) => request.patch(`/admin/seats/${id}/code`, data, { silent: true })
+export const getSeatCodePng = (id, expectedVersion) => request.get(`/admin/seats/${id}/code/png`, { params: { expected_version: expectedVersion }, responseType: 'blob', silent: true })

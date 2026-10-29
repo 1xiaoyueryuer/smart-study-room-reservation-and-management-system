@@ -67,7 +67,7 @@ def main():
         status, _ = call('POST','/reservations',request,other)
         check('重叠座位返回409',status == 409)
         check('越权取消返回403',call('POST',f'/reservations/{res_id}/cancel',{},other)[0] == 403)
-        check('未来预约不能提前签到',call('POST',f'/reservations/{res_id}/checkin',{},student)[0] == 400)
+        check('旧无座位码签到请求被拒绝',call('POST',f'/reservations/{res_id}/checkin',{},student)[0] == 400)
         status, body = call('GET','/reservations/mine',token=student)
         check('我的预约包含座位与房间',status == 200 and any(r['id']==res_id and 'room_name' in r for r in body['data']))
         time.sleep(1.1)

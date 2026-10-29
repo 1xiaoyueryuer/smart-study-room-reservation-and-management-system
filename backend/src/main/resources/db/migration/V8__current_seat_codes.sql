@@ -1,0 +1,8 @@
+CREATE TABLE seat_codes (
+    seat_id BIGINT PRIMARY KEY REFERENCES seats(id) ON DELETE CASCADE,
+    code_value VARCHAR(80) NOT NULL UNIQUE,
+    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    version BIGINT NOT NULL DEFAULT 1 CHECK(version > 0),
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);

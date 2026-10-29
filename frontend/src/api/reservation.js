@@ -13,8 +13,12 @@ export function cancelReservation(id) {
   return request.post(`/reservations/${id}/cancel`)
 }
 
-export function checkinReservation(id) {
-  return request.post(`/reservations/${id}/checkin`)
+export function getReservation(id) {
+  return request.get(`/reservations/${id}`, { silent: true })
+}
+
+export function checkinReservation(id, seatCode) {
+  return request.post(`/reservations/${id}/checkin`, { seat_code: seatCode }, { silent: true })
 }
 
 export function leaveReservation(id) {

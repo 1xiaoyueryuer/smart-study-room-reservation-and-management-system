@@ -113,7 +113,7 @@ const shortcuts = computed(() => auth.isAdmin
     ]
   : [
       { title: '座位预约', desc: '分钟时段 · 平面图与3D选座', icon: 'booking', to: '/booking', tone: 'primary' },
-      { title: '我的预约', desc: '签到 · 临时离开 · 签退', icon: 'reservations', to: '/mine', tone: 'success' },
+      { title: '我的预约', desc: '扫码签到 · 临时离开 · 签退', icon: 'reservations', to: '/mine', tone: 'success' },
       { title: '历史候补', desc: '查原记录 · 可退出历史等待', icon: 'waitlist', to: '/waitlist', tone: 'warm' },
       {
         title: '消息中心',
@@ -263,7 +263,7 @@ const cardToneClass = {
         <div v-if="auth.isOrdinary" class="intro-grid">
           <div class="intro-cell">
             <div class="intro-label">在线预约</div>
-            <div class="intro-text">平面图可视化选座，时段冲突自动检测，支持签到 / 临时离开 / 签退全生命周期。</div>
+            <div class="intro-text">平面图可视化选座，时段冲突自动检测，支持扫码签到 / 临时离开 / 签退全生命周期。</div>
           </div>
           <div class="intro-cell">
             <div class="intro-label">分钟预约</div>

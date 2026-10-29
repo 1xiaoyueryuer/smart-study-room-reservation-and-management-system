@@ -37,6 +37,7 @@ class MinuteBookingIntegrationTest {
     @Autowired ObjectMapper json;
     @Autowired StringRedisTemplate redis;
     @Autowired BookingService bookings;
+    @Autowired SeatCodeService codes;
     @Autowired ResourceService resources;
     @Autowired OpeningScheduleService opening;
     @Autowired StatsService stats;
@@ -45,9 +46,13 @@ class MinuteBookingIntegrationTest {
     LocalDate base;
     String remote;
     static final String PASSWORD="S02-test-only-password";
+    String seatCode(long seat) {
+        if(db.count("SELECT count(*) FROM seat_codes WHERE seat_id=?",seat)==0) codes.generate(admin,seat,new Requests.SeatCodeChange(0L,"测试生成真实座位码"));
+        return Store.text(db.one("SELECT code_value FROM seat_codes WHERE seat_id=?",seat),"code_value");
+    }
     @BeforeEach void fixture() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"));
-        for(String table:List.of("violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         base=LocalDate.now(BookingPolicy.CAMPUS_ZONE).minusDays(1);clock.set(base.atTime(9,0));remote="s07-test-"+UUID.randomUUID();
         String hash=new BCryptPasswordEncoder().encode(PASSWORD);
         admin=db.insert("INSERT INTO users(username,password_hash,role) VALUES('s07_admin',?,'admin')",hash);
@@ -99,7 +104,7 @@ class MinuteBookingIntegrationTest {
     }
     @Test void midnightLifecycleSettlementAndStatsEndAtNextDayZeroWithoutNewCredit() {
         long id=Store.id(bookings.create(student,req(seat1,0,"23:30","24:00")),"id");
-        clock.set(base.atTime(23,30));bookings.action(student,id,"checkin");
+        clock.set(base.atTime(23,30));bookings.checkin(student,id,seatCode(seat1));
         clock.set(base.plusDays(1).atStartOfDay());bookings.tick();bookings.tick();
         var row=db.one("SELECT status,checkout_at,end_time FROM reservations WHERE id=?",id);
         assertEquals("completed",row.get("status"));assertEquals(base.plusDays(1).atStartOfDay(),LocalDateTime.parse(row.get("checkout_at").toString()));assertEquals("24:00:00",row.get("end_time"));

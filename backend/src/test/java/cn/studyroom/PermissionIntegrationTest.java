@@ -39,7 +39,7 @@ class PermissionIntegrationTest {
 
     @BeforeEach void fixture() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"),"禁止操作其他数据库");
-        for(String table:List.of("violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         remote="s02-test-"+UUID.randomUUID();
         ids=new LinkedHashMap<>();
         String hash=new BCryptPasswordEncoder().encode(PASSWORD);

@@ -22,7 +22,18 @@ request.interceptors.request.use((config) => {
 
 request.interceptors.response.use(
   (resp) => resp.data,
-  (err) => {
+  async (err) => {
+    // responseType=blob也会包装后端JSON错误；统一解包后仍交给requestError。
+    const body = err.response?.data
+    if (typeof Blob !== 'undefined' && body instanceof Blob && body.size <= 1024 * 1024) {
+      try {
+        const text = (await body.text()).trim()
+        if (text.startsWith('{')) {
+          const parsed = JSON.parse(text)
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) err.response.data = parsed
+        }
+      } catch { /* 非JSON、损坏或不可读取的Blob保留原HTTP状态与兼容错误消息。 */ }
+    }
     const failure = requestError(err)
     const { status, message: errMsg } = failure
     if (status === 401 && !err.config?.skipAuthHandling) {

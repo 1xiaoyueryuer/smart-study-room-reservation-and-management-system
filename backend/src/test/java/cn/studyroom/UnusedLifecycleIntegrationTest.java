@@ -32,6 +32,7 @@ class UnusedLifecycleIntegrationTest {
     @Autowired ObjectMapper json;
     @Autowired StringRedisTemplate redis;
     @Autowired BookingService bookings;
+    @Autowired SeatCodeService codes;
     @Autowired OpeningScheduleService opening;
     @Autowired ResourceService resources;
     @Autowired MinuteBookingIntegrationTest.TestClock clock;
@@ -39,9 +40,13 @@ class UnusedLifecycleIntegrationTest {
     long student,staff,admin,room,seat1,seat2;
     String remote;
     static final String PASSWORD="S02-test-only-password";
+    String seatCode(long seat) {
+        if(db.count("SELECT count(*) FROM seat_codes WHERE seat_id=?",seat)==0) codes.generate(admin,seat,new Requests.SeatCodeChange(0L,"测试生成真实座位码"));
+        return Store.text(db.one("SELECT code_value FROM seat_codes WHERE seat_id=?",seat),"code_value");
+    }
     @BeforeEach void setup() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"));
-        for(String table:List.of("violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         base=LocalDate.now(BookingPolicy.CAMPUS_ZONE).minusDays(1);clock.set(base.atTime(9,0));remote="s08-test-"+UUID.randomUUID();
         String hash=new BCryptPasswordEncoder().encode(PASSWORD);
         student=db.insert("INSERT INTO users(username,password_hash,campus_id,role) VALUES('s08_student',?,'S08-student','student')",hash);
@@ -60,7 +65,10 @@ class UnusedLifecycleIntegrationTest {
         return json.readTree(result.getResponse().getContentAsString()).path("data").path("token").asText();
     }
     Map<String,Object> row(long id) { return db.one("SELECT * FROM reservations WHERE id=?",id); }
-    MockHttpServletRequestBuilder action(long id,String name,String token) { return post("/api/reservations/"+id+"/"+name).header("Authorization","Bearer "+token); }
+    MockHttpServletRequestBuilder action(long id,String name,String token) {
+        var req=post("/api/reservations/"+id+"/"+name).header("Authorization","Bearer "+token);
+        if(name.equals("checkin")) req.contentType("application/json").content("{\"seat_code\":\""+seatCode(Store.id(row(id),"seat_id"))+"\"}");return req;
+    }
     @Test void beforeStartCancellationNeverCreatesPenaltyAndReleasesSlot() {
         long id=create(student,seat1,"10:00","11:00");at(9,59,59);
         assertEquals(List.of("cancel"),bookings.mine(student).get(0).get("allowed_actions"));
@@ -142,7 +150,7 @@ class UnusedLifecycleIntegrationTest {
         http.perform(get("/api/credit").header("Authorization","Bearer "+token)).andExpect(status().isOk()).andExpect(jsonPath("$.data.history_only").value(true)).andExpect(jsonPath("$.data.legacy_ban_active").value(true)).andExpect(jsonPath("$.data.legacy_banned_until").value(d()+"T10:00+08:00"));
         assertEquals(403,assertThrows(Api.Failure.class,()->create(student,seat1,"11:00","12:00")).status);
         at(10,0,0);http.perform(get("/api/credit").header("Authorization","Bearer "+token)).andExpect(status().isOk()).andExpect(jsonPath("$.data.legacy_ban_active").value(false));
-        long id=create(student,seat1,"10:00","11:00");bookings.action(student,id,"checkin");at(10,30,0);bookings.action(student,id,"checkout");
+        long id=create(student,seat1,"10:00","11:00");bookings.checkin(student,id,seatCode(seat1));at(10,30,0);bookings.action(student,id,"checkout");
         assertEquals(50,db.count("SELECT credit_score FROM users WHERE id=?",student));assertEquals(1,db.count("SELECT count(*) FROM credit_logs WHERE user_id=?",student));assertEquals(base.atTime(10,0),LocalDateTime.parse(db.one("SELECT credit_banned_until FROM users WHERE id=?",student).get("credit_banned_until").toString()));
     }
     @Test void directCreationAndSeatMapReleaseExpiredPendingWithoutWaitingForTickOrMine() {
@@ -181,7 +189,7 @@ class UnusedLifecycleIntegrationTest {
     }
     @Test void allowedActionsAndRealReturnStateFollowServerWindowWithoutEarlyCheckin() throws Exception {
         long id=create(student,seat1,"10:00","11:00");String token=token("student");at(9,59,59);
-        http.perform(action(id,"checkin",token)).andExpect(status().isBadRequest());http.perform(action(id,"abandon",token)).andExpect(status().isConflict());
+        http.perform(action(id,"checkin",token)).andExpect(status().isConflict());http.perform(action(id,"abandon",token)).andExpect(status().isConflict());
         assertEquals(List.of("cancel"),bookings.mine(student).get(0).get("allowed_actions"));
         at(10,0,0);http.perform(action(id,"checkin",token)).andExpect(status().isOk()).andExpect(jsonPath("$.data.action").value("checked_in"));
         assertEquals(List.of("leave","checkout"),bookings.mine(student).get(0).get("allowed_actions"));

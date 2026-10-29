@@ -19,11 +19,17 @@ public class BookingService {
     private final BookingPolicy policy;
     private final AuditService audit;
     private final ViolationService violations;
-    public BookingService(Store db,Clock clock,OpeningScheduleService opening,BookingPolicy policy,AuditService audit,ViolationService violations) { this.db=db;this.clock=clock;this.opening=opening;this.policy=policy;this.audit=audit;this.violations=violations; }
+    private final SeatCodeService codes;
+    public BookingService(Store db,Clock clock,OpeningScheduleService opening,BookingPolicy policy,AuditService audit,ViolationService violations,SeatCodeService codes) { this.db=db;this.clock=clock;this.opening=opening;this.policy=policy;this.audit=audit;this.violations=violations;this.codes=codes; }
     public List<Map<String,Object>> mine(long uid) {
         db.lockBookings();LocalDateTime now=LocalDateTime.now(clock);reconcileUnused(uid,now);
         var rows=db.list(VIEW+"WHERE rv.user_id=? ORDER BY rv.res_date DESC,rv.start_time DESC,rv.id DESC",uid);
         for(var row:rows) row.put("allowed_actions",allowedActions(row,now));return rows;
+    }
+    public Map<String,Object> detail(long uid,long resId) {
+        db.lockBookings();requireOrdinary(uid);var row=db.one(VIEW+"WHERE rv.id=?",resId);
+        Api.require(id(row,"user_id")==uid,403,"无权查看他人的预约");LocalDateTime now=LocalDateTime.now(clock);
+        reconcilePending(List.of(row),now);row=db.one(VIEW+"WHERE rv.id=?",resId);row.put("allowed_actions",allowedActions(row,now));return row;
     }
     public List<Map<String,Object>> violationsMine(long uid) {
         db.lockBookings();reconcileUnused(uid,LocalDateTime.now(clock));return violations.mine(uid);
@@ -65,6 +71,14 @@ public class BookingService {
     private boolean legacyBanActive(Map<String,Object> user,LocalDateTime now) { return user.get("credit_banned_until")!=null&&LocalDateTime.parse(user.get("credit_banned_until").toString()).isAfter(now); }
     public record ActionResult(int status,String message,Map<String,Object> data,Object details) {}
     public ActionResult action(long uid,long resId,String action) {
+        if("checkin".equals(action)) {
+            db.lockBookings();requireOrdinary(uid);var row=db.one("SELECT user_id FROM reservations WHERE id=?",resId);
+            Api.require(id(row,"user_id")==uid,403,"无权操作他人的预约");throw Api.fail(400,"签到需要座位码，请使用专用签到接口");
+        }
+        return performAction(uid,resId,action,null);
+    }
+    public ActionResult checkin(long uid,long resId,String seatCode) { return performAction(uid,resId,"checkin",seatCode); }
+    private ActionResult performAction(long uid,long resId,String action,String seatCode) {
         db.lockBookings();requireOrdinary(uid);var res=db.one("SELECT * FROM reservations WHERE id=?",resId);
         Api.require(id(res,"user_id")==uid,403,"无权操作他人的预约");
         Api.require(Set.of("cancel","abandon","checkin","leave","return","checkout").contains(action),404,"操作不存在");
@@ -88,8 +102,13 @@ public class BookingService {
             }
             case "checkin" -> {
                 Api.require(state.equals("pending"),409,"当前状态不能签到");
-                Api.require(!now.isBefore(start)&&now.isBefore(ReservationDeadline.at(res))&&now.isBefore(end),400,"签到窗口为预约开始至开始后15分钟之前");
-                change(resId,"checked_in","checkin_at",now);auditReservation(uid,"reservation.checkin",res,"用户在签到窗口内签到（座位码核验待S09）");
+                Api.require(!now.isBefore(start)&&now.isBefore(ReservationDeadline.at(res))&&now.isBefore(end),409,"签到窗口为预约开始至开始后15分钟之前");
+                codes.requireValid(id(res,"seat_id"),seatCode);
+                var seat=db.one("SELECT * FROM seats WHERE id=?",id(res,"seat_id"));
+                var calendar=opening.calendar(id(seat,"room_id"));
+                Api.require(calendar.day(LocalDate.parse(text(res,"res_date")),id(res,"seat_id")).contains(LocalDate.parse(text(res,"res_date")),now,end),409,"预约资源当前不可使用，请联系管理员");
+                change(resId,"checked_in","checkin_at",now);notify(uid,"reservation_checkin","签到成功","座位码核验成功，预约已进入使用中。");
+                auditReservation(uid,"reservation.checkin",res,"用户核验当前有效座位码后签到");
             }
             case "leave" -> {
                 Api.require(state.equals("checked_in")&&now.isBefore(end),409,"当前状态不能暂离");change(resId,"temp_leave","leave_at",now);auditReservation(uid,"reservation.leave",res,"用户暂离（旧流程，待S10退出）");

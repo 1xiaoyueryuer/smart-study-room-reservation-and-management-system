@@ -19,6 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class BookingIntegrationTest {
     @Autowired Store db;
     @Autowired BookingService bookings;
+    @Autowired SeatCodeService codes;
     @Autowired ResourceService resources;
     @Autowired OpeningScheduleService opening;
     @Autowired StatsService stats;
@@ -29,9 +30,13 @@ class BookingIntegrationTest {
     @TestConfiguration static class TimeConfig {
         @Bean @Primary Clock fixedClock() { return Clock.fixed(Instant.parse("2026-10-30T01:00:00Z"),ZoneId.of("Asia/Shanghai")); }
     }
+    String seatCode(long seat) {
+        if(db.count("SELECT count(*) FROM seat_codes WHERE seat_id=?",seat)==0) codes.generate(admin,seat,new Requests.SeatCodeChange(0L,"测试生成真实座位码"));
+        return Store.text(db.one("SELECT code_value FROM seat_codes WHERE seat_id=?",seat),"code_value");
+    }
     @BeforeEach void setup() {
         assertTrue(env.getProperty("spring.datasource.url","").endsWith("/studyroom_java_test"),"必须使用独立测试库");
-        for(String table:List.of("violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
+        for(String table:List.of("seat_codes","violations","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","notifications","waitlist","reservations","seats","rooms","users")) db.update("DELETE FROM "+table);
         u1=db.insert("INSERT INTO users(username,password_hash) VALUES('test1','unused')");
         u2=db.insert("INSERT INTO users(username,password_hash) VALUES('test2','unused')");
         admin=db.insert("INSERT INTO users(username,password_hash,role) VALUES('resource-admin','unused','admin')");
@@ -65,7 +70,7 @@ class BookingIntegrationTest {
         long id=Store.id(bookings.create(u1,request(s1,"10:00","11:00")),"id");
         assertEquals(403,assertThrows(Api.Failure.class,()->bookings.action(u2,id,"cancel")).status);
         db.update("UPDATE reservations SET start_time=TIME '09:00',end_time=TIME '10:00' WHERE id=?",id);
-        bookings.action(u1,id,"checkin");bookings.action(u1,id,"checkout");
+        bookings.checkin(u1,id,seatCode(s1));bookings.action(u1,id,"checkout");
         assertEquals(409,assertThrows(Api.Failure.class,()->bookings.action(u1,id,"checkout")).status);
         assertEquals(0,db.count("SELECT count(*) FROM credit_logs WHERE reservation_id=?",id));
     }

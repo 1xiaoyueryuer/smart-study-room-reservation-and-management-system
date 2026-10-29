@@ -37,8 +37,15 @@ public class ApiController {
     @PostMapping("/reservations") Object create(HttpServletRequest req,@Valid @RequestBody Requests.Reservation body) { return ok(bookings.create(uid(req),body)); }
     @PostMapping("/reservations/auto") Object allocate(HttpServletRequest req,@Valid @RequestBody Requests.Allocation body) { return ok(bookings.allocate(uid(req),body)); }
     @GetMapping("/reservations/mine") Object mine(HttpServletRequest req) { return ok(bookings.mine(uid(req))); }
+    @GetMapping("/reservations/{id}") Object detail(HttpServletRequest req,@PathVariable long id) { return ok(bookings.detail(uid(req),id)); }
+    @PostMapping("/reservations/{id}/checkin") Object checkin(HttpServletRequest req,@PathVariable long id,@RequestBody Map<String,Object> body) {
+        Api.require(body.keySet().equals(java.util.Set.of("seat_code"))&&body.get("seat_code") instanceof String,400,"签到仅接受座位码 seat_code");
+        return actionResponse(bookings.checkin(uid(req),id,(String)body.get("seat_code")));
+    }
     @PostMapping("/reservations/{id}/{action}") Object action(HttpServletRequest req,@PathVariable long id,@PathVariable String action) {
-        var result=bookings.action(uid(req),id,action);
+        return actionResponse(bookings.action(uid(req),id,action));
+    }
+    private Object actionResponse(BookingService.ActionResult result) {
         // Service代理已成功提交事务，才把已落实deadline的冲突映为HTTP错误。
         if(result.status()!=200) throw Api.fail(result.status(),result.message(),result.details());
         return ok(result.data());
