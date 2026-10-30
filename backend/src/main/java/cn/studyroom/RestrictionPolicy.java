@@ -11,9 +11,10 @@ import org.springframework.transaction.annotation.*;
 /** 限制事实、状态投影与资格的唯一来源；不依赖预约服务，不从旧信用字段重新推断资格。 */
 @Service
 public class RestrictionPolicy {
+    private final NotificationService messages;
     private final Store db;private final AuditService audit;private final ObjectMapper json;
     private static final String SELECT="SELECT r.*,COALESCE(NULLIF(c.real_name,''),c.username) AS creator_name,COALESCE(NULLIF(l.real_name,''),l.username) AS releaser_name,n.id AS notification_id,n.created_at AS notified_at,nr.id AS release_notification_id,nr.created_at AS release_notified_at,u.username,u.real_name,u.campus_id,u.role AS subject_role,u.status AS subject_status FROM restrictions r JOIN users u ON u.id=r.user_id LEFT JOIN users c ON c.id=r.creator_id LEFT JOIN users l ON l.id=r.releaser_id LEFT JOIN notifications n ON n.restriction_id=r.id AND n.type='restriction_started' LEFT JOIN notifications nr ON nr.restriction_id=r.id AND nr.type='restriction_released' ";
-    public RestrictionPolicy(Store db,AuditService audit,ObjectMapper json){this.db=db;this.audit=audit;this.json=json;}
+    public RestrictionPolicy(Store db,AuditService audit,ObjectMapper json,NotificationService messages) {this.messages=messages;this.db=db;this.audit=audit;this.json=json;}
     List<Map<String,Object>> activeRaw(long user,LocalDateTime now){return db.list("SELECT * FROM restrictions WHERE user_id=? AND starts_at<=? AND ends_at>? AND released_at IS NULL ORDER BY id",user,stamp(now),stamp(now));}
     List<Long> activeUsers(LocalDateTime now){return db.list("SELECT DISTINCT user_id FROM restrictions WHERE starts_at<=? AND ends_at>? AND released_at IS NULL ORDER BY user_id",stamp(now),stamp(now)).stream().map(row->Store.id(row,"user_id")).toList();}
     List<Long> candidateUsers(LocalDateTime now){return db.list("SELECT user_id FROM restrictions WHERE starts_at<=? AND ends_at>? AND released_at IS NULL UNION SELECT v.user_id FROM violations v JOIN users u ON u.id=v.user_id WHERE u.role IN('student','staff') AND v.status='active' AND v.occurred_at>=? AND v.occurred_at<=? AND NOT EXISTS(SELECT 1 FROM restriction_evaluation_sources s WHERE s.violation_id=v.id) ORDER BY user_id",stamp(now),stamp(now),stamp(now.minusDays(30)),stamp(now)).stream().map(row->Store.id(row,"user_id")).toList();}
@@ -71,7 +72,7 @@ public class RestrictionPolicy {
         var stored=snapshots.get(0);var result=new LinkedHashMap<String,Object>();for(String key:List.of("evaluated_at","window_start","window_end"))result.put(key,offset(stored.get(key)));for(String key:List.of("window_start_inclusive","window_end_inclusive","threshold","duration_hours"))result.put(key,stored.get(key));result.put("source_violations",sources.stream().map(source->ViolationService.safeOne(db,Store.id(source,"violation_id"))).toList());return result;
     }
     String status(Map<String,Object> row,LocalDateTime now){return row.get("released_at")!=null?"released":!now.isBefore(LocalDateTime.parse(row.get("ends_at").toString()))?"expired":"active";}
-    private void notify(long user,long restriction,String type,String title,String content,LocalDateTime now){db.update("INSERT INTO notifications(user_id,type,title,content,restriction_id,created_at) VALUES(?,?,?,?,?,?)",user,type,title,content,restriction,stamp(now));}
+    private void notify(long user,long restriction,String type,String title,String content,LocalDateTime now){messages.restriction(user,restriction,type,title,content,now);}
     private String write(Object value){try{return json.writeValueAsString(value);}catch(Exception e){throw new IllegalStateException(e);}}
     static Timestamp stamp(LocalDateTime value){return Timestamp.valueOf(value);}
     static String offset(Object value){return value==null?null:LocalDateTime.parse(value.toString()).atZone(BookingPolicy.CAMPUS_ZONE).toOffsetDateTime().toString();}

@@ -55,7 +55,7 @@ class MigrationIntegrationTest {
     }
     @Test void emptyInstallationAndRepeatedStartup() throws Exception {
         var f=flyway(); DatabaseMigrations.migrate(f,false); DatabaseMigrations.migrate(f,false);
-        assertEquals(23,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(24,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".booking_mutex WHERE id=1"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".audit_events"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"));
@@ -73,7 +73,7 @@ class MigrationIntegrationTest {
         assertEquals(1,count("SELECT count(*) FROM "+schema+".seats WHERE version=1 AND resource_reason IS NULL"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".reservations WHERE user_id=1 AND seat_id=1 AND status='pending'"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"),"历史座位不能被伪造成已经配置真实贴码");
-        assertEquals(23,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(24,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE username='known-campus' AND campus_id='OLD-01' AND student_no='OLD-01'"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE type='BASELINE'"));
     }
@@ -258,7 +258,7 @@ class MigrationIntegrationTest {
         assertThrows(SQLException.class,()->transactionSql(invalid));
     }
     @Test void reviewMigrationPreservesSubmissionOwnerTimeSnapshotAndOriginalNotification()throws Exception{
-        var previous=Flyway.configure().dataSource(source).defaultSchema(schema).schemas(schema).cleanDisabled(true).baselineOnMigrate(false).target("18").locations("classpath:db/migration").load();DatabaseMigrations.migrate(previous,false);appealFacts();transactionSql(validAppeal("d1111111-1111-4111-8111-111111111111")+"INSERT INTO appeal_events(appeal_id,actor_id,event_type,source,occurred_at) VALUES(1,1,'submitted','user_submit','2026-10-29 09:17');");String before=readText("SELECT jsonb_build_object('appeal',(SELECT to_jsonb(a) FROM "+schema+".appeals a),'event',(SELECT to_jsonb(e) FROM "+schema+".appeal_events e),'notice',(SELECT (to_jsonb(n)-'appeal_id'-'review_operation_id'-'review_reservation_id') FROM "+schema+".notifications n))::text");DatabaseMigrations.migrate(flyway(),false);assertEquals(before,readText("SELECT jsonb_build_object('appeal',(SELECT to_jsonb(a) FROM "+schema+".appeals a),'event',(SELECT to_jsonb(e) FROM "+schema+".appeal_events e),'notice',(SELECT (to_jsonb(n)-'appeal_id'-'review_operation_id'-'review_reservation_id') FROM "+schema+".notifications n))::text"));assertEquals(0,count("SELECT count(*) FROM "+schema+".appeal_reviews"));assertEquals(0,count("SELECT count(*) FROM "+schema+".restriction_recalculations"));assertEquals(1,count("SELECT count(*) FROM "+schema+".notifications WHERE violation_id=1 AND appeal_id IS NULL AND review_operation_id IS NULL AND review_reservation_id IS NULL"));
+        var previous=Flyway.configure().dataSource(source).defaultSchema(schema).schemas(schema).cleanDisabled(true).baselineOnMigrate(false).target("18").locations("classpath:db/migration").load();DatabaseMigrations.migrate(previous,false);appealFacts();transactionSql(validAppeal("d1111111-1111-4111-8111-111111111111")+"INSERT INTO appeal_events(appeal_id,actor_id,event_type,source,occurred_at) VALUES(1,1,'submitted','user_submit','2026-10-29 09:17');");String before=readText("SELECT jsonb_build_object('appeal',(SELECT to_jsonb(a) FROM "+schema+".appeals a),'event',(SELECT to_jsonb(e) FROM "+schema+".appeal_events e),'notice',(SELECT (to_jsonb(n)-'appeal_id'-'review_operation_id'-'review_reservation_id'-'reservation_id'-'complaint_event_id'-'complaint_event_type'-'event_key') FROM "+schema+".notifications n))::text");DatabaseMigrations.migrate(flyway(),false);assertEquals(before,readText("SELECT jsonb_build_object('appeal',(SELECT to_jsonb(a) FROM "+schema+".appeals a),'event',(SELECT to_jsonb(e) FROM "+schema+".appeal_events e),'notice',(SELECT (to_jsonb(n)-'appeal_id'-'review_operation_id'-'review_reservation_id'-'reservation_id'-'complaint_event_id'-'complaint_event_type'-'event_key') FROM "+schema+".notifications n))::text"));assertEquals(0,count("SELECT count(*) FROM "+schema+".appeal_reviews"));assertEquals(0,count("SELECT count(*) FROM "+schema+".restriction_recalculations"));assertEquals(1,count("SELECT count(*) FROM "+schema+".notifications WHERE violation_id=1 AND appeal_id IS NULL AND review_operation_id IS NULL AND review_reservation_id IS NULL AND reservation_id IS NULL AND complaint_event_id IS NULL AND complaint_event_type IS NULL AND event_key IS NULL"));
     }
     String readText(String sql)throws Exception{try(var c=source.getConnection();var s=c.createStatement();var r=s.executeQuery(sql)){r.next();return r.getString(1);}}
     void reviewFacts()throws Exception{appealFacts();transactionSql("INSERT INTO users(username,password_hash,role) VALUES('reviewadmin','hash','admin');"+validAppeal("d1111111-1111-4111-8111-111111111111")+"INSERT INTO appeal_events(appeal_id,actor_id,event_type,source,occurred_at) VALUES(1,1,'submitted','user_submit','2026-10-29 09:17');");}
@@ -281,7 +281,7 @@ class MigrationIntegrationTest {
         var error=assertThrows(FlywayException.class,()->DatabaseMigrations.migrate(broken,false));
         assertTrue(error.getMessage().contains("V9999__broken.sql"));
         assertEquals(0,count("SELECT count(*) FROM information_schema.tables WHERE table_schema='"+schema+"' AND table_name='rollback_probe'"));
-        assertEquals(23,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(24,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
     }
 
     @Test void reviewModerationUpgradePreservesOldReceiptAndBindsFunctionsToTheirOwnSchema()throws Exception{
@@ -292,5 +292,9 @@ class MigrationIntegrationTest {
         assertThrows(SQLException.class,()->execute("SET search_path TO public; INSERT INTO "+schema+".review_operations(operation_id,review_id,actor_id,reservation_id,action,request,receipt,occurred_at) VALUES('00000000-0000-0000-0000-000000000004',1,3,1,'create','{}','{}',CURRENT_TIMESTAMP)"));
         assertThrows(SQLException.class,()->execute("UPDATE "+schema+".review_operations SET receipt='{}' WHERE operation_id='00000000-0000-0000-0000-000000000001'"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".notifications WHERE review_reservation_id=1"));
+    }
+
+    @Test void notificationMigrationPreservesLegacyMessageExactlyAndDoesNotGuessTargets()throws Exception{
+        Flyway.configure().dataSource(source).defaultSchema(schema).schemas(schema).cleanDisabled(true).target("23").locations("classpath:db/migration").load().migrate();execute("INSERT INTO "+schema+".users(id,username,password_hash,role) VALUES(1,'owner','hash','student'); INSERT INTO "+schema+".notifications(user_id,type,title,content,is_read,created_at) VALUES(1,'reservation_success','old title','reservation #123 only appears in text',true,TIMESTAMP '2026-10-29 10:00:00.123456')");String before=readText("SELECT to_jsonb(n)::text FROM "+schema+".notifications n");flyway().migrate();assertEquals(before,readText("SELECT (to_jsonb(n)-'reservation_id'-'complaint_event_id'-'complaint_event_type'-'event_key')::text FROM "+schema+".notifications n"));assertEquals(1,count("SELECT count(*) FROM "+schema+".notifications WHERE reservation_id IS NULL AND complaint_event_id IS NULL AND complaint_event_type IS NULL AND event_key IS NULL AND is_read AND created_at=TIMESTAMP '2026-10-29 10:00:00.123456'"));
     }
 }

@@ -11,6 +11,7 @@ import static cn.studyroom.Store.*;
 @Service
 @Transactional
 public class BookingService {
+    private final NotificationService messages;
     private static final String ACTIVE="('pending','checked_in')";
     private static final String VIEW="SELECT rv.*,s.seat_no,s.zone,s.has_power,s.room_id,r.name AS room_name,r.building,r.floor,r.location,u.username,u.real_name FROM reservations rv JOIN seats s ON s.id=rv.seat_id JOIN rooms r ON r.id=s.room_id JOIN users u ON u.id=rv.user_id ";
     private final Store db;
@@ -23,7 +24,7 @@ public class BookingService {
     private final UsageService usage;
     private final RestrictionPolicy restrictions;
     private final com.fasterxml.jackson.databind.ObjectMapper json;
-    public BookingService(Store db,Clock clock,OpeningScheduleService opening,BookingPolicy policy,AuditService audit,ViolationService violations,SeatCodeService codes,UsageService usage,RestrictionPolicy restrictions,com.fasterxml.jackson.databind.ObjectMapper json) { this.db=db;this.clock=clock;this.opening=opening;this.policy=policy;this.audit=audit;this.violations=violations;this.codes=codes;this.usage=usage;this.restrictions=restrictions;this.json=json; }
+    public BookingService(Store db,Clock clock,OpeningScheduleService opening,BookingPolicy policy,AuditService audit,ViolationService violations,SeatCodeService codes,UsageService usage,RestrictionPolicy restrictions,com.fasterxml.jackson.databind.ObjectMapper json,NotificationService messages) {this.messages=messages; this.db=db;this.clock=clock;this.opening=opening;this.policy=policy;this.audit=audit;this.violations=violations;this.codes=codes;this.usage=usage;this.restrictions=restrictions;this.json=json; }
     public List<Map<String,Object>> mine(long uid) {return RecordPage.items(records(uid,RecordPage.legacy(Map.of(),RecordPage.Domain.RESERVATION,false),false));}
     public Map<String,Object> records(long actor,Map<String,String> parameters,boolean admin){return records(actor,RecordPage.parse(parameters,RecordPage.Domain.RESERVATION,admin),admin);}
     private Map<String,Object> records(long actor,RecordPage query,boolean admin){
@@ -57,7 +58,7 @@ public class BookingService {
         Api.require(!conflict("user_id",uid,slot),409,"您在同一时段已有其他预约");
         long resId=db.insert("INSERT INTO reservations(user_id,seat_id,res_date,start_time,end_time,source) VALUES(?,?,?,CAST(? AS TIME),CAST(? AS TIME),?)",
                 uid,req.seatId(),Date.valueOf(slot.date()),slot.startText(),slot.endText(),source);
-        notify(uid,"reservation_success","预约成功",room.get("name")+" "+seat.get("seat_no")+" "+req.date()+" "+req.startTime()+"—"+req.endTime()+"，请按时签到。");
+        messages.reservation(uid,resId,null,"reservation_success","预约成功",room.get("name")+" "+seat.get("seat_no")+" "+req.date()+" "+req.startTime()+"—"+req.endTime()+"，请按时签到。",snapshot);
         audit.record(uid,"reservation.create","reservation",Long.toString(resId),"用户预约",Map.of(),Map.of("seat_id",req.seatId(),"date",slot.date().toString(),"start_time",slot.startText(),"end_time",slot.endText(),"source",source));
         var created=db.one(VIEW+"WHERE rv.id=?",resId);decorate(created,snapshot);return created;
     }
@@ -101,7 +102,7 @@ public class BookingService {
             case "cancel" -> {
                 Api.require(state.equals("pending"),409,"当前状态不能取消预约");Api.require(now.isBefore(start),409,"预约已经开始，请使用放弃操作");
                 db.update("UPDATE reservations SET status='cancelled',ended_at=?,termination_reason='user_cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=?",Timestamp.valueOf(now),resId);
-                notify(uid,"reservation_cancelled","预约已取消","您在开始前取消了预约，本次不登记违规。");
+                messages.reservation(uid,resId,null,"reservation_cancelled","预约已取消","您在开始前取消了预约，本次不登记违规。",now);
                 auditReservation(uid,"reservation.cancel",res,"用户开始前取消预约");
             }
             case "abandon" -> {
@@ -115,7 +116,7 @@ public class BookingService {
                 var seat=db.one("SELECT * FROM seats WHERE id=?",id(res,"seat_id"));
                 var calendar=opening.calendar(id(seat,"room_id"));
                 Api.require(calendar.day(LocalDate.parse(text(res,"res_date")),id(res,"seat_id")).contains(LocalDate.parse(text(res,"res_date")),now,end),409,"预约资源当前不可使用，请联系管理员");
-                usage.start(resId,now,"seat_code");db.update("UPDATE reservations SET status='checked_in',updated_at=CURRENT_TIMESTAMP WHERE id=?",resId);notify(uid,"reservation_checkin","签到成功","座位码核验成功，预约已进入使用中。");
+                usage.start(resId,now,"seat_code");db.update("UPDATE reservations SET status='checked_in',updated_at=CURRENT_TIMESTAMP WHERE id=?",resId);messages.reservation(uid,resId,null,"reservation_checkin","签到成功","座位码核验成功，预约已进入使用中。",now);
                 auditReservation(uid,"reservation.checkin",res,"用户核验当前有效座位码后签到");
             }
             case "checkout" -> {
@@ -164,8 +165,8 @@ public class BookingService {
         long reservation=id(before,"id");before.put("usage_record",usage.view(reservation,snapshot));UsageService.requireReservationState(text(before,"status"),usage.view(reservation,snapshot),snapshot);
         if("checked_in".equals(before.get("status"))){Api.require(restrictionId==null,409,"使用中预约不由预约限制提前结束");usage.finish(reservation,ends(before),snapshot,tag,snapshot);}
         LocalDateTime end=snapshot.isBefore(ends(before))?snapshot:ends(before);db.update("UPDATE reservations SET status='cancelled',ended_at=?,termination_reason=?,termination_note=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",Timestamp.valueOf(end),tag,reason,reservation);
-        if(restrictionId==null)notify(id(before,"user_id"),"management_cancelled","预约因资源管理已取消","管理原因："+reason+"。受影响预约已立即取消，已用时长按实际确认时刻结算，本次不登记用户违规或信用奖惩。");
-        else db.update("INSERT INTO notifications(user_id,type,title,content,restriction_id,created_at) VALUES(?,'restriction_cancelled','待签到预约因限制取消',?,?,?)",id(before,"user_id"),"预约"+reservation+"因当前有效限制取消。\n公开原因：\n"+reason+"\n本次管理取消不另登记用户违约。",restrictionId,Timestamp.valueOf(snapshot));
+        if(restrictionId==null)messages.reservation(id(before,"user_id"),reservation,null,"management_cancelled","预约因资源管理已取消","管理原因："+reason+"。受影响预约已立即取消，已用时长按实际确认时刻结算，本次不登记用户违规或信用奖惩。",snapshot);
+        else messages.reservation(id(before,"user_id"),reservation,restrictionId,"restriction_cancelled","待签到预约因限制取消","预约"+reservation+"因当前有效限制取消。\n公开原因：\n"+reason+"\n本次管理取消不另登记用户违约。",snapshot);
         if(restrictionId==null)auditReservation(actor,"reservation.admin_cancel",before,reason);else {var after=db.one("SELECT * FROM reservations WHERE id=?",reservation);after.put("usage_record",usage.view(reservation,snapshot));var values=reservationSnapshot(after);values.put("restriction_id",restrictionId);audit.record(actor,"reservation.restriction_cancel","reservation",Long.toString(reservation),reason,reservationSnapshot(before),values);}
         var result=db.one("SELECT id AS reservation_id,status,termination_reason,termination_note,ended_at FROM reservations WHERE id=?",reservation);result.put("usage_record",usage.view(reservation,snapshot));return result;
     }
@@ -195,7 +196,7 @@ public class BookingService {
         if(!usage.finish(reservation,ends(res),actual,reason,now)) return;
         var record=usage.view(reservation,now);
         db.update("UPDATE reservations SET status='completed',ended_at=?,termination_reason=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",Timestamp.valueOf(LocalDateTime.parse(record.get("ended_at").toString())),reason,reservation);
-        notify(id(res,"user_id"),"reservation_completed","使用已结束",reason.equals("auto_end")?"预约已到期，使用记录已结算，无新增违规或信用奖惩。":"已提前签退并释放剩余时段，使用记录已结算。");
+        messages.reservation(id(res,"user_id"),reservation,null,"reservation_completed","使用已结束",reason.equals("auto_end")?"预约已到期，使用记录已结算，无新增违规或信用奖惩。":"已提前签退并释放剩余时段，使用记录已结算。",now);
         auditReservation(actor,"reservation.complete",res,"预约使用结束，无信用奖惩");
     }
     private void decorate(Map<String,Object> row,LocalDateTime now) {
@@ -209,9 +210,6 @@ public class BookingService {
     }
     private Map<String,Object> reservationSnapshot(Map<String,Object> row) {
         var result=new LinkedHashMap<String,Object>();for(String field:List.of("user_id","seat_id","res_date","start_time","end_time","source","status","checkin_at","checkout_at","leave_at","ended_at","termination_reason","termination_note","usage_record")) result.put(field,row.get(field));return result;
-    }
-    void notify(long uid,String type,String title,String content) {
-        db.update("INSERT INTO notifications(user_id,type,title,content) VALUES(?,?,?,?)",uid,type,title,content);
     }
     public Map<String,Object> allocate(long uid,Requests.Allocation req) { requireOrdinary(uid);throw Api.fail(410,"旧偏好自动分配已退出，请手动选择座位预约"); }
     public Map<String,Object> join(long uid,Requests.Wait req) { requireOrdinary(uid);throw Api.fail(410,"新增候补已退出，历史候补可查看或退出"); }
@@ -264,7 +262,7 @@ public class BookingService {
         enforceRestrictions(id(before,"user_id"),snapshot,actor,null);var current=db.one("SELECT * FROM reservations WHERE id=?",reservation);String blocked=correctionBlocked(current,snapshot);
         if(blocked!=null)return new ActionResult(409,blocked,Map.of(),correctionView(reservation,snapshot));
         usage.startCorrection(reservation,business,snapshot,actor,operation,reason,note,request);db.update("UPDATE reservations SET status='checked_in',updated_at=CURRENT_TIMESTAMP WHERE id=?",reservation);
-        notify(id(before,"user_id"),"reservation_corrected_checkin","管理员已核实补签","预约#"+reservation+"已补签。公开依据："+reason+"。业务签到："+AttachmentService.offset(business)+"；实际操作："+AttachmentService.offset(snapshot)+"。这是管理员核实自报记录。");audit.record(actor,"reservation.correct_checkin","reservation",Long.toString(reservation),reason,Map.of("status",before.get("status")),Map.of("status","checked_in","operation_id",operation,"business_checkin_at",AttachmentService.offset(business),"operated_at",AttachmentService.offset(snapshot),"verification_source","admin_self_report"));
+        messages.reservation(id(before,"user_id"),reservation,null,"reservation_corrected_checkin","管理员已核实补签","预约#"+reservation+"已补签。公开依据："+reason+"。业务签到："+AttachmentService.offset(business)+"；实际操作："+AttachmentService.offset(snapshot)+"。这是管理员核实自报记录。",snapshot);audit.record(actor,"reservation.correct_checkin","reservation",Long.toString(reservation),reason,Map.of("status",before.get("status")),Map.of("status","checked_in","operation_id",operation,"business_checkin_at",AttachmentService.offset(business),"operated_at",AttachmentService.offset(snapshot),"verification_source","admin_self_report"));
         var result=correctionView(reservation,snapshot);result.put("operation_id",operation);result.put("replayed",false);return new ActionResult(200,"ok",result,null);
     }
     private String correctionText(String raw,int limit){String value=raw==null?"":raw.trim();Api.require(!value.isEmpty()&&value.length()<=limit,400,"公开理由及私有核实依据必填且须在长度限制内");return value;}

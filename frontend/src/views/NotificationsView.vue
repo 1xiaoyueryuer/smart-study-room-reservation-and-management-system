@@ -1,208 +1,68 @@
 <script setup>
 import PageHelp from '../components/PageHelp.vue'
+import {ref,computed,onMounted,onBeforeUnmount,watch} from 'vue'
+import {message} from '../components/ui/feedback'
+import {listNotifications,markRead,markAllRead} from '../api/notification'
+import {useNotificationStore} from '../stores/notification'
+import {useAuthStore} from '../stores/auth'
+import {createRecordPager} from '../composables/recordPage.js'
 import {reviewNotificationTarget} from '../composables/reviewManagement.js'
-import SAnimatedNumber from '../components/ui/SAnimatedNumber.vue'
-import { usePagination } from '../composables/usePagination'
-import SPagination from '../components/ui/SPagination.vue'
-import { ref, computed, onMounted } from 'vue'
-import { message } from '../components/ui/feedback'
-import { listNotifications, markRead, markAllRead } from '../api/notification'
-import { useNotificationStore } from '../stores/notification'
+import {validNotificationPage,validReadReceipt,reservationTarget,appealTarget,restrictionTarget,violationTarget,complaintTarget,hasNotificationTarget} from '../composables/notificationPage.js'
+import RecordFilters from '../components/RecordFilters.vue'
+import RecordPageControls from '../components/RecordPageControls.vue'
 import AppIcon from '../components/AppIcon.vue'
 import SButton from '../components/ui/SButton.vue'
 import SEmpty from '../components/ui/SEmpty.vue'
-
-const notifStore = useNotificationStore()
-const list = ref([])
-const loading = ref(false)
-const filterType = ref('all')
-
+import SBanner from '../components/ui/SBanner.vue'
+const auth=useAuthStore(),notifStore=useNotificationStore(),markingId=ref(null),markingAll=ref(false),actionError=ref(''),writeNotice=ref('')
+const scope=()=>`${auth.user?.id}:${auth.token}:${auth.user?.role}`
+let alive=true
+const pager=createRecordPager(async query=>{
+ const identity=scope(),ticket=notifStore.beginUpdate(),response=await listNotifications(query)
+ if(!alive||identity!==scope())throw new Error('账号已变化，请重新读取本人消息')
+ if(!validNotificationPage(response.data,query))throw new Error('消息分页或全本人汇总响应不完整')
+ notifStore.acceptUnread(response.data.counts.unread,ticket)
+ return response
+},{blocked:()=>markingId.value!==null||markingAll.value})
+const {items:list,loading,error,filters,snapshot,snapshotQuery}=pager
 const typeMeta = {
+  reservation_checkin:{text:'预约签到成功',color:'var(--green-strong)',bg:'var(--green-weak)'},
+  reservation_completed:{text:'预约使用结束',color:'var(--text-2)',bg:'var(--surface-3)'},
   review_replied:{text:'评价管理回复',color:'var(--primary-active)',bg:'var(--primary-weak)'},
   review_hidden:{text:'评价隐藏通知',color:'var(--text-2)',bg:'var(--surface-3)'},
   reservation_corrected_checkin:{text:'管理员核实补签',color:'var(--primary-active)',bg:'var(--primary-weak)'},
   reservation_success: { text: '预约成功', color: 'var(--green-strong)', bg: 'var(--green-weak)' },
   reservation_cancelled:{ text:'预约取消', color:'var(--text-3)', bg:'var(--surface-3)' },
-  management_cancelled:{ text:'资源管理取消', color:'var(--text-3)', bg:'var(--surface-3)', category:'reservation_cancelled' },
-  checkin_reminder:   { text: '签到提醒', color: 'var(--primary-active)', bg: 'var(--primary-weak)' },
+  management_cancelled:{ text:'资源管理取消', color:'var(--text-3)', bg:'var(--surface-3)' },
+  checkin_reminder:   { text: '历史签到提醒', color: 'var(--primary-active)', bg: 'var(--primary-weak)' },
   appeal_reviewed:{text:'申诉审核结果',color:'var(--primary-active)',bg:'var(--primary-weak)'},
   restriction_started:{text:'预约限制生效',color:'var(--red-strong)',bg:'var(--red-weak)'},
   restriction_released:{text:'单条预约限制解除',color:'var(--green-strong)',bg:'var(--green-weak)'},
   restriction_cancelled:{text:'限制管理取消预约',color:'var(--text-2)',bg:'var(--surface-3)'},
   violation:          { text: '违规通知', color: 'var(--red-strong)', bg: 'var(--red-weak)' },
   credit_change:      { text: '历史信用变动', color: 'var(--amber-strong)', bg: 'var(--amber-weak)' },
-  waitlist_promoted:  { text: '候补递补', color: 'var(--violet-strong)', bg: 'var(--violet-weak)' },
+  waitlist_promoted:  { text: '历史候补递补', color: 'var(--violet-strong)', bg: 'var(--violet-weak)' },
   complaint_feedback:{ text:'投诉反馈',color:'var(--primary-active)',bg:'var(--primary-weak)' },
   complaint_auto_closed:{ text:'投诉自动结案',color:'var(--text-2)',bg:'var(--surface-3)' },
   system:             { text: '系统',     color: 'var(--text-2)', bg: 'var(--surface-3)' }
 }
 
-async function load() {
-  loading.value = true
-  try {
-    const resp = await listNotifications()
-    list.value = resp.data || []
-    notifStore.refresh()
-  } finally {
-    loading.value = false
-  }
-}
-
-async function onMarkRead(n) {
-  if (n.is_read) return
-  await markRead(n.id)
-  n.is_read = true
-  notifStore.decrement(1)
-  notifStore.refresh()
-}
-
-async function onMarkAll() {
-  const resp = await markAllRead()
-  message.success(`已标记 ${resp.data.marked} 条为已读`)
-  notifStore.clear()
-  load()
-}
-
-function appealTarget(n){return n.type==='appeal_reviewed'&&Number.isSafeInteger(n.appeal_id)&&n.appeal_id>0?`/appeals/${n.appeal_id}`:null}
-function restrictionTarget(n) {return ['restriction_started','restriction_released','restriction_cancelled'].includes(n.type)&&Number.isSafeInteger(n.restriction_id)&&n.restriction_id>0?{path:'/profile',query:{restriction_id:n.restriction_id},hash:'#restrictions'}:null}
-function violationTarget(n) { return n.type === 'violation' && Number.isSafeInteger(n.violation_id) && n.violation_id > 0 ? {path:'/profile',query:{violation_id:n.violation_id},hash:'#violations'} : null }
-function complaintTarget(n) { return ['complaint_feedback','complaint_auto_closed'].includes(n.type) && Number.isSafeInteger(n.complaint_id) && n.complaint_id > 0 ? `/complaints/${n.complaint_id}` : null }
-
-function fmtTime(t) {
-  return new Date(t).toLocaleString('zh-CN', { hour12: false })
-}
-
-function categoryOf(type) { return typeMeta[type]?.category || type }
-
-const buckets = computed(() => {
-  const b = { all: list.value.length, unread: 0 }
-  Object.keys(typeMeta).forEach((k) => (b[k] = 0))
-  list.value.forEach((n) => {
-    const category = categoryOf(n.type)
-    if (b[category] !== undefined) b[category]++
-    if (!n.is_read) b.unread++
-  })
-  return b
-})
-const filtered = computed(() => {
-  if (filterType.value === 'all') return list.value
-  if (filterType.value === 'unread') return list.value.filter((n) => !n.is_read)
-  return list.value.filter((n) => categoryOf(n.type) === filterType.value)
-})
-
-const typeNav = computed(() => ([
-  { key: 'all',    label: '全部消息', icon: 'inbox' },
-  { key: 'unread', label: '未读消息', icon: 'notification' },
-  ...Object.keys(typeMeta).filter(k => !typeMeta[k].category).map((k) => ({ key: k, label: typeMeta[k].text, icon: typeIcon(k) }))
-]))
-function typeIcon(k) {
-  return {
-    reservation_success: 'circle-success',
-    reservation_cancelled:'circle-muted',
-    checkin_reminder: 'waitlist',
-    violation: 'warning',
-    credit_change: 'credit',
-    waitlist_promoted: 'ticket',
-    complaint_feedback:'ticket',
-    complaint_auto_closed:'circle-muted',
-    system: 'announcement'
-  }[k] || 'circle-muted'
-}
-
-onMounted(load)
-const { page, pages, pageItems } = usePagination(filtered, filterType)
+const fields=[{key:'type',label:'消息类型',options:[{value:'',label:'全部类型'},...Object.entries(typeMeta).map(([value,meta])=>({value,label:meta.text}))]},{key:'is_read',label:'已读状态',options:[{value:'',label:'全部已读状态'},{value:'false',label:'未读'},{value:'true',label:'已读'}]}]
+const busy=computed(()=>markingId.value!==null||markingAll.value)
+const buckets=computed(()=>snapshot.value?{...snapshot.value.counts.by_type,all:snapshot.value.counts.total,unread:snapshot.value.counts.unread}:null)
+const typeNav=computed(()=>[{key:'all',label:'全部消息',icon:'inbox'},{key:'unread',label:'全部未读',icon:'notification'},...Object.entries(typeMeta).map(([key,value])=>({key,label:value.text,icon:'circle-muted'}))])
+const activeCategory=computed(()=>filters.value.type|| (filters.value.is_read==='false'?'unread':'all'))
+function selectCategory(key){if(busy.value)return;filters.value={type:['all','unread'].includes(key)?'':key,is_read:key==='unread'?'false':''};return pager.apply()}
+const load=()=>pager.refresh()
+async function afterRead(){await Promise.all([pager.refresh(true),notifStore.refresh()])}
+async function onMarkRead(item){if(busy.value||item.is_read||!Number.isSafeInteger(item.id)||item.id<1)return;const identity=scope(),ticket=notifStore.beginUpdate();markingId.value=item.id;actionError.value='';writeNotice.value='';try{const {data}=await markRead(item.id);if(!alive||identity!==scope())return;if(!validReadReceipt(data,item.id))throw new Error('已读回执不完整，请主动重读或再次核对');notifStore.acceptUnread(data.unread_count,ticket);writeNotice.value=`本次实际标记${data.marked}条已读；服务端当时未读${data.unread_count}条。`;await afterRead()}catch(e){if(alive&&identity===scope())actionError.value=e.message+'；未伪造已读状态，可主动重试核对。'}finally{if(alive&&identity===scope())markingId.value=null}}
+async function onMarkAll(){if(busy.value)return;const identity=scope(),ticket=notifStore.beginUpdate();markingAll.value=true;actionError.value='';writeNotice.value='';try{const {data}=await markAllRead();if(!alive||identity!==scope())return;if(!validReadReceipt(data,null))throw new Error('全部已读回执不完整，请主动重读或再次核对');notifStore.acceptUnread(data.unread_count,ticket);writeNotice.value=`本次实际标记${data.marked}条已读；服务端当时仍未读${data.unread_count}条，新消息不会被强行清零。`;message.success(`本次已标记${data.marked}条`);await afterRead()}catch(e){if(alive&&identity===scope())actionError.value=e.message+'；保留上次成功快照，可主动重试核对。'}finally{if(alive&&identity===scope())markingAll.value=false}}
+function fmtTime(value){return new Date(value).toLocaleString('zh-CN',{hour12:false})}
+function linked(item){return hasNotificationTarget(item,reviewNotificationTarget)}
+watch(scope,()=>{pager.items.value=[];pager.snapshot.value=null;pager.snapshotQuery.value=null;pager.loaded.value=false;actionError.value='';writeNotice.value='';markingId.value=null;markingAll.value=false})
+onMounted(load);onBeforeUnmount(()=>{alive=false;pager.dispose()})
 </script>
-
-<template>
-  <div v-reveal class="page-view">
-    <header class="view-heading has-page-help"><div class="heading-copy" data-page-title>
-      <h1>消息中心</h1>
-      <p class="heading-sub">预约结果、违规通知与历史通知</p>
-    </div><PageHelp title="使用提示">
-        <ul class="tips">
-          <li>点击消息条目将其标记为<b>已读</b></li>
-          <li>历史候补递补、违规通知等<b>已发生事件</b>可在此追溯</li>
-          <li>每 60 秒自动刷新未读数量（顶部铃铛）</li>
-        </ul>
-      </PageHelp></header>
-    <div class="split notif-split">
-    <div class="split-left">
-      <section class="card responsive-compact">
-        <div class="card-title-row">
-          <h3>消息总览</h3>
-          <SButton size="sm" variant="secondary" :disabled="buckets.unread === 0" @click="onMarkAll">全部已读</SButton>
-        </div>
-        <div class="kpi-grid">
-          <div class="kpi"><div class="kpi-num"><SAnimatedNumber :value="buckets.all" /></div><div class="kpi-label">消息总数</div></div>
-          <div class="kpi" :class="buckets.unread > 0 ? 'kpi-bad' : ''"><div class="kpi-num"><SAnimatedNumber :value="buckets.unread" /></div><div class="kpi-label">未读</div></div>
-        </div>
-      </section>
-
-      <section class="card responsive-compact">
-        <div class="card-title-row"><h3>消息分类</h3></div>
-        <nav v-active-track class="side-nav">
-          <button
-            v-for="n in typeNav"
-            :key="n.key"
-            class="side-nav-item"
-            :class="{ active: filterType === n.key }"
-            @click="filterType = n.key"
-          >
-            <span class="side-nav-icon"><AppIcon :name="n.icon" :size="16" /></span>
-            <span class="side-nav-label">{{ n.label }}</span>
-            <span v-if="(n.key === 'unread' ? buckets.unread : buckets[n.key] ?? 0) > 0" class="side-nav-count">
-              {{ n.key === 'unread' ? buckets.unread : buckets[n.key] ?? 0 }}
-            </span>
-          </button>
-        </nav>
-      </section>
-
-      
-    </div>
-
-    <div class="split-right">
-      <section class="card">
-        <div class="card-title-row">
-          <h3>消息列表 <span class="muted">共 {{ filtered.length }} 条</span></h3>
-        </div>
-
-        <div v-list-motion="pageItems.map(row => row.id).join()" v-loading="loading" class="list">
-          <SEmpty v-if="!filtered.length && !loading" icon="inbox" description="暂无消息" />
-          <div v-for="n in pageItems" :key="n.id" class="msg-entry">
-          <button
-            class="msg-item"
-            :class="{ unread: !n.is_read }"
-            @click="onMarkRead(n)"
-          >
-            <span
-              class="msg-type"
-              :style="{ color: typeMeta[n.type]?.color, background: typeMeta[n.type]?.bg }"
-            >
-              {{ typeMeta[n.type]?.text || n.type }}
-            </span>
-            <div class="msg-body">
-              <div class="msg-title">
-                <span class="msg-title-text">{{ n.title }}</span>
-                <span v-if="!n.is_read" class="msg-dot" aria-label="未读" />
-              </div>
-              <div class="msg-content">{{ n.content }}</div>
-            </div>
-            <span class="msg-time">{{ fmtTime(n.created_at) }}</span>
-          </button>
-          <RouterLink v-if="reviewNotificationTarget(n)" class="complaint-link" :to="reviewNotificationTarget(n)">查看本人评价及管理结果</RouterLink>
-          <RouterLink v-if="appealTarget(n)" class="complaint-link" :to="appealTarget(n)">查看本人申诉审核结果</RouterLink>
-          <RouterLink v-if="restrictionTarget(n)" class="complaint-link" :to="restrictionTarget(n)">查看本人关联限制记录与资格</RouterLink>
-          <RouterLink v-if="violationTarget(n)" class="complaint-link" :to="violationTarget(n)">查看本人关联违规记录</RouterLink>
-          <RouterLink v-if="complaintTarget(n)" class="complaint-link" :to="complaintTarget(n)">查看关联投诉详情</RouterLink>
-          </div>
-        </div>
-        <SPagination v-model="page" :pages="pages" :total="filtered.length" />
-      </section>
-    </div>
-    </div>
-  </div>
-</template>
-
+<template><div class="page-view"><header class="view-heading has-page-help"><div class="heading-copy" data-page-title><h1>消息中心</h1><p>业务结果与历史通知；关联目标独立核对本人权限。</p></div><PageHelp title="消息说明"><ul class="tips"><li>消息已读不代表业务已处理或申诉期限重置。</li><li>数量汇总覆盖本人的全部消息，不受当前筛选限制；列表总数按筛选条件计算。</li><li>无可靠关联的历史消息不根据正文猜测目标。</li></ul></PageHelp></header><div class="split notif-split"><div class="split-left"><section class="card"><h3>全本人消息汇总</h3><p>总消息：{{buckets?.all??'尚未读取'}}；未读快照：{{buckets?.unread??'尚未读取'}}</p><p v-if="notifStore.hasValue">最近权威未读数：{{notifStore.unread}}</p><SBanner v-if="notifStore.error" type="error" :title="notifStore.error"/><SButton :disabled="busy" @click="notifStore.refresh()">复核未读角标</SButton><SButton :disabled="busy||!buckets" :loading="markingAll" @click="onMarkAll">全部标记已读</SButton></section><section class="card"><h3>消息类型（全本人数量）</h3><nav class="side-nav"><button v-for="category in typeNav" :key="category.key" class="side-nav-item" :class="{active:activeCategory===category.key}" :disabled="busy||loading" @click="selectCategory(category.key)"><AppIcon :name="category.icon" :size="16"/><span>{{category.label}}</span><span>{{buckets?(buckets[category.key]??0):'—'}}</span></button></nav></section></div><div class="split-right"><section class="card"><h3>消息列表</h3><RecordFilters v-model="filters" :fields="fields" :disabled="busy||loading" @apply="pager.apply"/><SButton :disabled="busy||loading" @click="load">刷新已应用条件</SButton><RecordPageControls :snapshot="snapshot" :query="snapshotQuery" :fields="fields" :disabled="busy||loading" @page="pager.turn"/><SBanner v-if="error" type="error" :title="error"/><SBanner v-if="actionError" type="error" :title="actionError"/><p v-if="writeNotice" role="status">{{writeNotice}}</p><p v-if="loading" role="status">正在读取真实消息页；下方保留上次成功快照。</p><div class="list"><SEmpty v-if="snapshot&&!list.length&&!loading&&!error" icon="inbox" description="该次筛选暂无消息"/><div v-for="item in list" :key="item.id" class="msg-entry"><button class="msg-item" :class="{unread:!item.is_read}" :disabled="busy||item.is_read" @click="onMarkRead(item)"><span class="msg-type" :style="{color:typeMeta[item.type]?.color,background:typeMeta[item.type]?.bg}">{{typeMeta[item.type]?.text||'历史消息类型'}}</span><div class="msg-body"><div class="msg-title"><span class="msg-title-text">{{item.title}}</span><span v-if="!item.is_read" class="msg-dot" aria-label="未读"/></div><div class="msg-content">{{item.content}}</div></div><span class="msg-time">{{fmtTime(item.created_at)}} · {{item.is_read?'已读':'未读'}}</span></button><RouterLink v-if="reservationTarget(item)" class="complaint-link" :to="reservationTarget(item)">查看本人关联预约/使用记录</RouterLink><RouterLink v-if="reviewNotificationTarget(item)" class="complaint-link" :to="reviewNotificationTarget(item)">查看本人评价与管理结果</RouterLink><RouterLink v-if="appealTarget(item)" class="complaint-link" :to="appealTarget(item)">查看本人申诉审核结果</RouterLink><RouterLink v-if="restrictionTarget(item)" class="complaint-link" :to="restrictionTarget(item)">查看本人关联限制与资格</RouterLink><RouterLink v-if="violationTarget(item)" class="complaint-link" :to="violationTarget(item)">查看本人关联违规</RouterLink><RouterLink v-if="complaintTarget(item)" class="complaint-link" :to="complaintTarget(item)">查看本人投诉进度</RouterLink><p v-if="!linked(item)" class="complaint-link">历史消息未保存可定位关联；不根据正文猜测业务目标。</p></div></div></section></div></div></div></template>
 <style scoped>
 .msg-entry{min-width:0}.complaint-link{display:inline-block;margin:0 16px 10px 106px;font-size:var(--fs-caption)}@media(max-width:600px){.complaint-link{margin-left:16px}}
 

@@ -4,13 +4,13 @@ import {createRecordPager,recordFields} from '../composables/recordPage.js'
 import RecordFilters from '../components/RecordFilters.vue'
 import RecordPageControls from '../components/RecordPageControls.vue'
 
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {reviewReservationParam} from '../composables/reviewManagement.js'
 import { message, confirmDialog } from '../components/ui/feedback'
 import {
   listMyReservations, cancelReservation, abandonReservation,
-  checkoutReservation
+  checkoutReservation, getReservation
 } from '../api/reservation'
 import SButton from '../components/ui/SButton.vue'
 import STag from '../components/ui/STag.vue'
@@ -23,6 +23,7 @@ import ReviewEditor from '../components/ReviewEditor.vue'
 const router = useRouter()
 const route=useRoute()
 const reviewEditor=ref(null)
+const linkedReservation=ref(null),linkedLoading=ref(false),linkedError=ref('');let linkedAlive=true,linkedSequence=0
 const pager=createRecordPager(listMyReservations,{initial:{record_type:'reservation'},blocked:()=>busyId.value!==null}),fields=recordFields('reservation')
 const {items:list,loading,error,filters,snapshot,snapshotQuery}=pager
 const actionError = ref(''), busyId = ref(null), violations = ref(null)
@@ -39,7 +40,9 @@ const sourceMeta = { manual: '手动选座', auto: '历史智能分配', waitlis
 const terminationLabels = {user_cancelled:'开始前本人取消',abandon:'开始后主动放弃',no_show:'到签到期限仍未签到',legacy_violation:'历史违约状态，仅作溯源，未转为新独立违规',early_checkout:'提前签退',auto_end:'到期自动结束',legacy_unclassified:'历史结束，具体方式未记录',demo_completed:'演示模拟结束',temp_leave_timeout:'旧暂离流程结束（历史）',admin_resource_change:'资源管理取消（不记用户违约）',admin_restriction:'预约限制管理取消（不记用户违约）'}
 
 const load=()=>pager.refresh(true)
-onBeforeUnmount(pager.dispose)
+onBeforeUnmount(()=>{pager.dispose();linkedAlive=false;linkedSequence++})
+async function readLinkedReservation(){const id=reviewReservationParam(route.query.reservation_id),ticket=++linkedSequence;linkedReservation.value=null;linkedError.value='';if(id===null){linkedLoading.value=false;return}linkedLoading.value=true;try{const {data}=await getReservation(id);if(!linkedAlive||ticket!==linkedSequence)return;if(data?.id!==id||typeof data.status!=='string'||!Array.isArray(data.allowed_actions))throw new Error('关联预约单条返回不完整');linkedReservation.value=data}catch(e){if(linkedAlive&&ticket===linkedSequence)linkedError.value=e.message}finally{if(linkedAlive&&ticket===linkedSequence)linkedLoading.value=false}}
+watch(()=>route.query.reservation_id,readLinkedReservation)
 
 const actionVariant = {
   primary: 'primary',
@@ -60,7 +63,7 @@ function actionsOf(row) {
 }
 const apiMap = { cancel:cancelReservation,abandon:abandonReservation,checkout:checkoutReservation }
 async function refreshAll() {
-  await load()
+  await Promise.all([load(),readLinkedReservation()])
   await violations.value?.refresh()
 }
 function requestOccupationHelp(row) { if (!loading.value && !error.value && busyId.value === null) return router.push({name:'complaints',query:{type:'occupation',reservation_id:String(row.id)}}) }
@@ -110,6 +113,8 @@ onMounted(async()=>{await refreshAll();const target=reviewReservationParam(route
     <div class="split mine-split">
     <div class="split-left"><section class="card"><h3>预约与使用记录筛选</h3><RecordFilters v-model="filters" :fields="fields" :disabled="loading||busyId!==null" @apply="pager.apply"/><SButton :disabled="loading||busyId!==null" @click="refreshAll">刷新已应用条件</SButton><p>状态数量与总数均以当前服务端查询为准，不从当前页推算全部记录。</p></section></div>
     <div class="split-right">
+      <section v-if="route.query.reservation_id" class="card"><h3>消息关联预约（独立读取）</h3><SButton :disabled="linkedLoading||busyId!==null" @click="readLinkedReservation">刷新关联预约</SButton><p v-if="linkedLoading" role="status">正在核对本人关联预约及真实使用记录…</p><SBanner v-if="linkedError" type="error" :title="linkedError"/><template v-if="linkedReservation"><h4>预约#{{linkedReservation.id}} · {{statusMeta[linkedReservation.status]?.text||linkedReservation.status}}</h4><p>{{linkedReservation.room_name}} / {{linkedReservation.seat_no}} · {{linkedReservation.res_date}} {{linkedReservation.start_time}}—{{linkedReservation.end_time}}</p><p>{{terminationLabels[linkedReservation.termination_reason]||linkedReservation.termination_reason||'尚未终止'}}</p><UsageRecordSummary :record="linkedReservation.usage_record"/><p>这是一条独立的本人记录，不计入当前筛选页总数。</p><div class="row-actions"><SButton v-for="action in actionsOf(linkedReservation)" :key="action.key" :disabled="busyId!==null" @click="doAction(linkedReservation,action.key)">{{action.label}}</SButton><SButton :disabled="busyId!==null" @click="reviewEditor?.open(linkedReservation.id)">查看本人评价</SButton></div></template></section>
+
       <section class="card">
         <div class="card-title-row">
           <h3>

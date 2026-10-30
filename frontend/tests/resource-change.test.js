@@ -1,3 +1,4 @@
+import {recordTestImport} from './record-fixtures.js'
 import * as reviewManagement from '../src/composables/reviewManagement.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -11,7 +12,7 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve))
 async function component(file,mocks,exports,extra={}) {
   const source=(await readFile(new URL(file,import.meta.url),'utf8')).split('<script setup>')[1].split('</script>')[0]
   const context=vm.createContext({defineExpose(){},...extra}),module=new vm.SourceTextModule(source+`\nexport {${exports}}`,{context})
-  await module.link(specifier=>{const values=mocks[specifier]||(specifier.endsWith('/reviewManagement.js')?reviewManagement:null)||(specifier.endsWith('.vue')?{default:{}}:null);assert.ok(values,specifier);return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})})
+  await module.link(specifier=>{const values=recordTestImport(specifier,mocks[specifier])||(specifier.endsWith('/reviewManagement.js')?reviewManagement:null)||(specifier.endsWith('.vue')?{default:{}}:null);assert.ok(values,specifier);return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})})
   await module.evaluate();return module.namespace
 }
 const proposal=()=>({change_type:'room.update',target_id:1,payload:{version:2,reason:'工程模拟：检修停用',enabled:false}})
@@ -101,17 +102,12 @@ test('actual typed summary renders room changes, full-day closure and original b
   const cancelHtml=await renderSummary(page);assert.match(cancelHtml,/A1 \/ 2026-11-01T08:00—12:00/);assert.match(cancelHtml,/其他重叠停用记录/)
 })
 
-test('management cancellation notifications use readable labels and the existing cancellation category without rewriting raw types',async()=>{
-  const page=await component('../src/views/NotificationsView.vue',{
-    vue:{ref,computed,onMounted(){}},
-    '../composables/usePagination':{usePagination:items=>({page:ref(1),pages:computed(()=>1),pageItems:items})},
-    '../components/ui/feedback':{message:{success(){}}},
-    '../api/notification':{listNotifications:async()=>({data:[]}),markRead:async()=>{},markAllRead:async()=>({data:{marked:0}})},
-    '../stores/notification':{useNotificationStore:()=>({refresh(){},decrement(){},clear(){}})}
-  },'list,filterType,typeMeta,buckets,filtered,typeNav')
-  page.list.value=[{id:1,type:'management_cancelled',is_read:false},{id:2,type:'reservation_cancelled',is_read:true},{id:3,type:'reservation_success',is_read:true}]
-  assert.equal(page.typeMeta.management_cancelled.text,'资源管理取消');assert.equal(page.buckets.value.reservation_cancelled,2)
-  page.filterType.value='reservation_cancelled';assert.deepEqual(Array.from(page.filtered.value,item=>item.id),[1,2])
-  assert.equal(page.filtered.value[0].type,'management_cancelled');assert.equal(page.typeNav.value.filter(item=>item.key==='reservation_cancelled').length,1);assert.equal(page.typeNav.value.some(item=>item.key==='management_cancelled'),false)
-  assert.equal(page.typeMeta.reservation_checkin,undefined)
+test('management cancellation and user cancellation retain distinct exact server categories and full-owner counts',async()=>{
+ const page=await component('../src/views/NotificationsView.vue',{
+  vue:{ref,computed,onMounted(){}},'../components/ui/feedback':{message:{success(){}}},'../api/notification':{listNotifications:async()=>({data:[]}),markRead:async()=>{},markAllRead:async()=>({data:{marked:0}})},'../stores/notification':{useNotificationStore:()=>({refresh(){},beginUpdate(){},acceptUnread(){}})}
+ },'list,filters,typeMeta,buckets,snapshot,typeNav')
+ page.list.value=[{id:1,type:'management_cancelled',is_read:false}]
+ page.snapshot.value={counts:{total:30,unread:8,by_type:{reservation_cancelled:4,management_cancelled:9,reservation_success:17}}}
+ assert.equal(page.typeMeta.management_cancelled.text,'资源管理取消');assert.equal(page.buckets.value.reservation_cancelled,4);assert.equal(page.buckets.value.management_cancelled,9);assert.equal(page.buckets.value.all,30)
+ page.filters.value={type:'reservation_cancelled'};assert.equal(page.list.value.length,1);assert.equal(page.list.value[0].type,'management_cancelled');assert.equal(page.typeNav.value.some(item=>item.key==='management_cancelled'),true);assert.equal(page.typeMeta.reservation_checkin.text,'预约签到成功')
 })

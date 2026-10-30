@@ -11,6 +11,7 @@ import static cn.studyroom.WebSecurity.uid;
 @RestController
 @RequestMapping("/api")
 public class ApiController {
+    private final NotificationService messages;
     private final AuthService auth;
     private final ResourceService resources;
     private final BookingService bookings;
@@ -19,7 +20,7 @@ public class ApiController {
     private final UserService users;
     private final BookingPolicy policy;
     private final StringRedisTemplate redis;
-    public ApiController(AuthService auth,ResourceService resources,BookingService bookings,StatsService stats,Store db,StringRedisTemplate redis,UserService users,BookingPolicy policy) {
+    public ApiController(AuthService auth,ResourceService resources,BookingService bookings,StatsService stats,Store db,StringRedisTemplate redis,UserService users,BookingPolicy policy,NotificationService messages) {this.messages=messages;
         this.auth=auth;this.resources=resources;this.bookings=bookings;this.stats=stats;this.db=db;this.redis=redis;this.users=users;this.policy=policy;
     }
     @GetMapping("/health") Object health() {
@@ -56,13 +57,10 @@ public class ApiController {
     @GetMapping("/admin/reservations") Object adminReservations(HttpServletRequest req,@RequestParam Map<String,String> parameters){return ok(bookings.records(uid(req),parameters,true));}
     @GetMapping("/admin/reservations/{id}") Object adminReservation(HttpServletRequest req,@PathVariable long id){return ok(bookings.correctionDetail(uid(req),id));}
     @GetMapping("/credit") Object credit(HttpServletRequest req) { return ok(bookings.legacyCredit(uid(req))); }
-    @GetMapping("/notifications") Object notifications(HttpServletRequest req) { return ok(db.list("SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 200",uid(req))); }
-    @GetMapping("/notifications/unread_count") Object unread(HttpServletRequest req) { return ok(Map.of("count",db.count("SELECT count(*) FROM notifications WHERE user_id=? AND is_read=FALSE",uid(req)))); }
-    @PostMapping("/notifications/{id}/read") Object read(HttpServletRequest req,@PathVariable long id) {
-        var row=db.one("SELECT user_id FROM notifications WHERE id=?",id);Api.require(Store.id(row,"user_id")==uid(req),403,"无权访问他人消息");
-        db.update("UPDATE notifications SET is_read=TRUE WHERE id=? AND user_id=?",id,uid(req));return ok(Map.of("read",id));
-    }
-    @PostMapping("/notifications/read_all") Object readAll(HttpServletRequest req) { db.update("UPDATE notifications SET is_read=TRUE WHERE user_id=?",uid(req));return ok(Map.of("read_all",true)); }
+    @GetMapping("/notifications") Object notifications(HttpServletRequest req,@RequestParam Map<String,String> parameters){return ok(messages.list(uid(req),parameters));}
+    @GetMapping("/notifications/unread_count") Object unread(HttpServletRequest req){return ok(messages.unread(uid(req)));}
+    @PostMapping("/notifications/{id}/read") Object read(HttpServletRequest req,@PathVariable long id){return ok(messages.read(uid(req),id));}
+    @PostMapping("/notifications/read_all") Object readAll(HttpServletRequest req){return ok(messages.readAll(uid(req)));}
     @PostMapping("/waitlist") Object join(HttpServletRequest req,@Valid @RequestBody Requests.Wait body) { return ok(bookings.join(uid(req),body)); }
     @GetMapping("/waitlist/mine") Object waitMine(HttpServletRequest req) { return ok(bookings.waitMine(uid(req))); }
     @PostMapping("/waitlist/{id}/cancel") Object cancelWait(HttpServletRequest req,@PathVariable long id) { bookings.cancelWait(uid(req),id);return ok(Map.of("cancelled",id)); }

@@ -14,6 +14,7 @@ import MobileTopbar from '../components/MobileTopbar.vue'
 import { SYSTEM_NAME, SYSTEM_NAME_ZH } from '../config/branding'
 
 import SBadge from '../components/ui/SBadge.vue'
+import SButton from '../components/ui/SButton.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -267,6 +268,7 @@ onUnmounted(() => {
         </button>
       </nav>
 
+      <section v-if="auth.isOrdinary&&notifStore.error" class="notification-retry" role="status"><p>{{notifStore.hasValue?'未读数保留上次成功值':'未读数尚未成功读取'}}：{{notifStore.error}}</p><SButton size="sm" :disabled="notifStore.loading" @click="refreshUnread">重试未读数量</SButton></section>
       <div class="sidebar-spacer" />
 
       <!-- 主题模式切换（折叠后整体隐藏） -->
@@ -357,6 +359,8 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+.notification-retry{padding:8px 12px;font-size:var(--fs-caption);overflow-wrap:anywhere;min-width:0}.notification-retry p{margin-bottom:6px}
+
 /* ---- 外壳级双栏（全局） ---- */
 .shell {
   height: 100%;

@@ -13,8 +13,9 @@ import org.springframework.transaction.annotation.*;
 /** 自动未使用与已核实手动违规的唯一事实写源；累计限制由外层同事务领域编排。 */
 @Service
 public class ViolationService {
+    private final NotificationService messages;
     private final Store db;private final AuthService auth;private final AuditService audit;private final ObjectMapper json;private final Clock clock;
-    public ViolationService(Store db,AuthService auth,AuditService audit,ObjectMapper json,Clock clock){this.db=db;this.auth=auth;this.audit=audit;this.json=json;this.clock=clock;}
+    public ViolationService(Store db,AuthService auth,AuditService audit,ObjectMapper json,Clock clock,NotificationService messages) {this.messages=messages;this.db=db;this.auth=auth;this.audit=audit;this.json=json;this.clock=clock;}
     @Transactional(propagation=Propagation.MANDATORY)
     public long recordUnused(long userId,long reservationId,String type,LocalDateTime occurredAt,LocalDateTime registeredAt,String reason) {
         db.lockBookings();return db.insert("INSERT INTO violations(user_id,reservation_id,type,event_key,occurred_at,registered_at,reason,source) VALUES(?,?,?,?,?,?,?,'automatic')",userId,reservationId,type,"unused:"+reservationId,Timestamp.valueOf(occurredAt),Timestamp.valueOf(registeredAt),reason);
@@ -61,7 +62,7 @@ public class ViolationService {
     private Api.Failure duplicate(Map<String,Object> source,long event){return Api.fail(409,"同一来源事件或同一事实已登记违规，不重复登记",Map.of("code","violation_already_registered","existing_violation_id",source.get("existing_id"),"duplicate_by",Store.id(source,"existing_source_event_id")==event?"source_event":"fact"));}
     private Map<String,Object> existing(Map<String,Object> row){var result=new LinkedHashMap<String,Object>();result.put("id",row.get("existing_id"));result.put("status",row.get("existing_status"));result.put("type",row.get("existing_type"));result.put("registered_at",AttachmentService.offset(row.get("existing_registered_at")));result.put("notified_at",AttachmentService.offset(row.get("existing_notified_at")));result.put("registrant_display_name",row.get("existing_registrant_display_name"));return result;}
     private Map<String,Object> receipt(long id,String operation,boolean replayed){var row=db.one("SELECT v.id,v.user_id,v.reservation_id,v.source_event_id,v.type,v.source,v.status,v.reason,v.occurred_at,v.registered_at,COALESCE(NULLIF(u.real_name,''),u.username) AS registrant_display_name,n.id AS notification_id,n.created_at AS notified_at FROM violations v LEFT JOIN users u ON u.id=v.registrant_id LEFT JOIN notifications n ON n.violation_id=v.id WHERE v.id=?",id);times(row);return Map.of("operation_id",operation,"replayed",replayed,"violation",row);}
-    private long notifyViolation(long user,long violation,String title,String content,LocalDateTime now){return db.insert("INSERT INTO notifications(user_id,type,title,content,violation_id,created_at) VALUES(?,'violation',?,?,?,?)",user,title,content,violation,Timestamp.valueOf(now));}
+    private long notifyViolation(long user,long violation,String title,String content,LocalDateTime now){return messages.violation(user,violation,title,content,now);}
     private static void times(Map<String,Object> row){for(String key:List.of("occurred_at","registered_at","notified_at"))row.put(key,AttachmentService.offset(row.get(key)));}
     private void requireAdmin(long actor){var user=auth.profile(actor);Api.require("admin".equals(user.get("role"))&&"active".equals(user.get("status")),403,"需要启用的管理员权限");}
     private String reason(String value){String reason=value==null?null:value.trim();Api.require(reason!=null&&!reason.isEmpty()&&reason.length()<=1000,400,"面向被登记人的公开事实说明须为1至1000字");return reason;}

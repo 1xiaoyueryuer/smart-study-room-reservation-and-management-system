@@ -1,0 +1,11 @@
+import {validRecordPage} from './recordPage.js'
+const positive=value=>Number.isSafeInteger(value)&&value>0
+export function validNotificationCounts(counts){if(!Number.isSafeInteger(counts?.total)||counts.total<0||!Number.isSafeInteger(counts.unread)||counts.unread<0||counts.unread>counts.total||!counts.by_type||typeof counts.by_type!=='object'||Array.isArray(counts.by_type))return false;const values=Object.values(counts.by_type);return values.every(value=>Number.isSafeInteger(value)&&value>=0)&&values.reduce((sum,n)=>sum+n,0)===counts.total}
+export function validNotificationPage(data,query){return validRecordPage(data,query)&&validNotificationCounts(data.counts)&&data.items.every(item=>typeof item.type==='string'&&typeof item.is_read==='boolean'&&typeof item.title==='string'&&typeof item.content==='string')}
+export function validReadReceipt(value,id){return Number.isSafeInteger(value?.marked)&&value.marked>=0&&Number.isSafeInteger(value.unread_count)&&value.unread_count>=0&&(id===null||value.id===id&&value.marked<=1)}
+export function reservationTarget(item){return ['reservation_success','reservation_cancelled','reservation_checkin','reservation_completed','management_cancelled','reservation_corrected_checkin','restriction_cancelled'].includes(item?.type)&&positive(item.reservation_id)?{path:'/mine',query:{reservation_id:String(item.reservation_id)}}:null}
+export function appealTarget(item){return item?.type==='appeal_reviewed'&&positive(item.appeal_id)?`/appeals/${item.appeal_id}`:null}
+export function restrictionTarget(item){return ['restriction_started','restriction_released','restriction_cancelled'].includes(item?.type)&&positive(item.restriction_id)?{path:'/profile',query:{restriction_id:item.restriction_id},hash:'#restrictions'}:null}
+export function violationTarget(item){return item?.type==='violation'&&positive(item.violation_id)?{path:'/profile',query:{violation_id:item.violation_id},hash:'#violations'}:null}
+export function complaintTarget(item){return ['complaint_feedback','complaint_auto_closed'].includes(item?.type)&&positive(item.complaint_id)?`/complaints/${item.complaint_id}`:null}
+export function hasNotificationTarget(item,reviewTarget){return !!(reservationTarget(item)||appealTarget(item)||restrictionTarget(item)||violationTarget(item)||complaintTarget(item)||reviewTarget(item))}
