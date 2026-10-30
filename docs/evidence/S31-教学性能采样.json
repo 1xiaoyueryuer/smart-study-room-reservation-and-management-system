@@ -1,0 +1,930 @@
+{
+  "run_id": "20261030T142922.771264Z-603b72cd",
+  "status": "success",
+  "started_at": "2026-10-30T14:29:22.771949+00:00",
+  "finished_at": "2026-10-30T14:29:42.974863+00:00",
+  "label": "Engineering single-client teaching benchmark, not campus concurrency capacity",
+  "scope": "Each whole-map sample contains two sequential room requests, all 1000 seats. Its elapsed_ms sums their HTTP+JSON-decode elapsed times; incremental evidence disk I/O, login and 0.6s real rate pauses are excluded. wall_elapsed_ms separately includes client bookkeeping. No warmup/slow/failure samples discarded.",
+  "machine": {
+    "os": "Windows-11-10.0.26200-SP0",
+    "processor": "Intel64 Family 6 Model 183 Stepping 1, GenuineIntel",
+    "python": "3.13.12"
+  },
+  "client": {
+    "implementation": "Python urllib.request standard library",
+    "version": "3.13.12",
+    "browser": "not used"
+  },
+  "versions": {
+    "commit": {
+      "status": "available",
+      "value": "53cc27f5929c8922c09fe17571eed039ea95f68e"
+    },
+    "git_worktree_dirty": {
+      "status": "available",
+      "value": true
+    },
+    "jdk_command_version": {
+      "status": "available",
+      "value": "17.0.12"
+    },
+    "postgresql": {
+      "status": "available",
+      "value": {
+        "database_name": "studyroom_java_test",
+        "version": "17.11",
+        "server_version_num": "170011"
+      }
+    },
+    "redis": {
+      "status": "available",
+      "value": "7.2.12"
+    }
+  },
+  "source_sha256": {
+    "scripts/teaching_performance.py": "75b980b0c6a1fce54281dc0db5126aeef406a35de6a0e7da04dadd278ebb35dd",
+    "scripts/fixtures/S31PerformanceFixture.java": "1697a2b8d74717d80596472153226fcd2f382742273d5b326f09ccb71f450721"
+  },
+  "database_name": "studyroom_java_test",
+  "health": {
+    "http_status": 200,
+    "elapsed_ms": 76.35629999276716,
+    "error": null,
+    "reported_database_name": "studyroom_java_test"
+  },
+  "query_samples": [
+    {
+      "index": 1,
+      "started_at": "2026-10-30T14:29:24.580949+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 321.9593999965582,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 116.67960000340827,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 438.6389999999665,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 449.19829998980276
+    },
+    {
+      "index": 2,
+      "started_at": "2026-10-30T14:29:25.033230+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 108.26399999496061,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 66.43140000232961,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 174.69539999729022,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 193.00480000674725
+    },
+    {
+      "index": 3,
+      "started_at": "2026-10-30T14:29:25.230363+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 126.62369999452494,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 81.52949999202974,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 208.15319998655468,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 222.13929999270476
+    },
+    {
+      "index": 4,
+      "started_at": "2026-10-30T14:29:25.455930+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 72.62140000239015,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 67.4999999901047,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 140.12139999249484,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 154.27070000441745
+    },
+    {
+      "index": 5,
+      "started_at": "2026-10-30T14:29:25.614419+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 91.70370000356343,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 80.27740000397898,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 171.9811000075424,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 192.2346000064863
+    },
+    {
+      "index": 6,
+      "started_at": "2026-10-30T14:29:25.810427+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 62.946799997007474,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 55.845199996838346,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 118.79199999384582,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 140.95739999902435
+    },
+    {
+      "index": 7,
+      "started_at": "2026-10-30T14:29:25.958393+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 95.9389000054216,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 83.44259999284986,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 179.38149999827147,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 201.6836999973748
+    },
+    {
+      "index": 8,
+      "started_at": "2026-10-30T14:29:26.167667+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 72.95189998694696,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 68.48250000621192,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 141.43439999315888,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 159.61329999845475
+    },
+    {
+      "index": 9,
+      "started_at": "2026-10-30T14:29:26.333472+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 76.21549999748822,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 55.0504999991972,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 131.26599999668542,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 151.74889999616425
+    },
+    {
+      "index": 10,
+      "started_at": "2026-10-30T14:29:26.492188+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 84.25410000199918,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 53.856400001677684,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 138.11050000367686,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 160.92939999361988
+    },
+    {
+      "index": 11,
+      "started_at": "2026-10-30T14:29:26.659940+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 82.95640000142157,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 64.47329999355134,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 147.4296999949729,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 170.8136000088416
+    },
+    {
+      "index": 12,
+      "started_at": "2026-10-30T14:29:26.838828+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 98.07429999636952,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 57.40579999110196,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 155.48009998747148,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 176.00059999676887
+    },
+    {
+      "index": 13,
+      "started_at": "2026-10-30T14:29:27.020558+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 62.172000005375594,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 45.27050000615418,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 107.44250001152977,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 130.2220999932615
+    },
+    {
+      "index": 14,
+      "started_at": "2026-10-30T14:29:27.157155+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 58.130099991103634,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 48.53210000146646,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 106.6621999925701,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 128.37360000412446
+    },
+    {
+      "index": 15,
+      "started_at": "2026-10-30T14:29:27.291378+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 57.741700002225116,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 51.87570000998676,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 109.61740001221187,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 126.09179998980835
+    },
+    {
+      "index": 16,
+      "started_at": "2026-10-30T14:29:27.420257+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 47.2379999991972,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 39.10789999645203,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 86.34589999564923,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 97.52530000696424
+    },
+    {
+      "index": 17,
+      "started_at": "2026-10-30T14:29:27.520868+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 42.148799999267794,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 54.822099991724826,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 96.97089999099262,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 109.36509999737609
+    },
+    {
+      "index": 18,
+      "started_at": "2026-10-30T14:29:27.632802+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 57.85120000655297,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 51.67749999964144,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 109.52870000619441,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 122.95429999358021
+    },
+    {
+      "index": 19,
+      "started_at": "2026-10-30T14:29:27.758896+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 82.28379998763558,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 40.92679999303073,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 123.2105999806663,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 139.73840000107884
+    },
+    {
+      "index": 20,
+      "started_at": "2026-10-30T14:29:27.901190+00:00",
+      "status": "success",
+      "requests": [
+        {
+          "http_status": 200,
+          "elapsed_ms": 46.81990000244696,
+          "error": null,
+          "room_id": 8336,
+          "seat_count": 600
+        },
+        {
+          "http_status": 200,
+          "elapsed_ms": 69.38339999760501,
+          "error": null,
+          "room_id": 8337,
+          "seat_count": 400
+        }
+      ],
+      "elapsed_ms": 116.20330000005197,
+      "seat_count": 1000,
+      "error": null,
+      "wall_elapsed_ms": 126.82449999556411
+    }
+  ],
+  "reservation_samples": [
+    {
+      "index": 1,
+      "started_at": "2026-10-30T14:29:28.030939+00:00",
+      "status": "success",
+      "reservation_id": 30142,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 151.8631000071764
+    },
+    {
+      "index": 2,
+      "started_at": "2026-10-30T14:29:28.792984+00:00",
+      "status": "success",
+      "reservation_id": 30143,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 118.64390000118874
+    },
+    {
+      "index": 3,
+      "started_at": "2026-10-30T14:29:29.527475+00:00",
+      "status": "success",
+      "reservation_id": 30144,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 92.18880000116769
+    },
+    {
+      "index": 4,
+      "started_at": "2026-10-30T14:29:30.230348+00:00",
+      "status": "success",
+      "reservation_id": 30145,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 87.64589999918826
+    },
+    {
+      "index": 5,
+      "started_at": "2026-10-30T14:29:30.930018+00:00",
+      "status": "success",
+      "reservation_id": 30146,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 114.94239998864941
+    },
+    {
+      "index": 6,
+      "started_at": "2026-10-30T14:29:31.654604+00:00",
+      "status": "success",
+      "reservation_id": 30147,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 82.65359999495558
+    },
+    {
+      "index": 7,
+      "started_at": "2026-10-30T14:29:32.345103+00:00",
+      "status": "success",
+      "reservation_id": 30148,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 112.10300000675488
+    },
+    {
+      "index": 8,
+      "started_at": "2026-10-30T14:29:33.067785+00:00",
+      "status": "success",
+      "reservation_id": 30149,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 80.68600000115111
+    },
+    {
+      "index": 9,
+      "started_at": "2026-10-30T14:29:33.756380+00:00",
+      "status": "success",
+      "reservation_id": 30150,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 90.26859998994041
+    },
+    {
+      "index": 10,
+      "started_at": "2026-10-30T14:29:34.460047+00:00",
+      "status": "success",
+      "reservation_id": 30151,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 97.50199998961762
+    },
+    {
+      "index": 11,
+      "started_at": "2026-10-30T14:29:35.164996+00:00",
+      "status": "success",
+      "reservation_id": 30152,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 98.4005999926012
+    },
+    {
+      "index": 12,
+      "started_at": "2026-10-30T14:29:35.873830+00:00",
+      "status": "success",
+      "reservation_id": 30153,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 78.26889998978004
+    },
+    {
+      "index": 13,
+      "started_at": "2026-10-30T14:29:36.565348+00:00",
+      "status": "success",
+      "reservation_id": 30154,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 78.72199999110308
+    },
+    {
+      "index": 14,
+      "started_at": "2026-10-30T14:29:37.255678+00:00",
+      "status": "success",
+      "reservation_id": 30155,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 88.75150000676513
+    },
+    {
+      "index": 15,
+      "started_at": "2026-10-30T14:29:37.952603+00:00",
+      "status": "success",
+      "reservation_id": 30156,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 79.21799999894574
+    },
+    {
+      "index": 16,
+      "started_at": "2026-10-30T14:29:38.642015+00:00",
+      "status": "success",
+      "reservation_id": 30157,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 82.57259998936206
+    },
+    {
+      "index": 17,
+      "started_at": "2026-10-30T14:29:39.336712+00:00",
+      "status": "success",
+      "reservation_id": 30158,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 83.73440000286791
+    },
+    {
+      "index": 18,
+      "started_at": "2026-10-30T14:29:40.029928+00:00",
+      "status": "success",
+      "reservation_id": 30159,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 76.88120000238996
+    },
+    {
+      "index": 19,
+      "started_at": "2026-10-30T14:29:40.717741+00:00",
+      "status": "success",
+      "reservation_id": 30160,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 96.55440000642557
+    },
+    {
+      "index": 20,
+      "started_at": "2026-10-30T14:29:41.421122+00:00",
+      "status": "success",
+      "reservation_id": 30161,
+      "http_status": 200,
+      "error": null,
+      "elapsed_ms": 86.88989999063779
+    }
+  ],
+  "uncertain_creation_samples": [],
+  "cleanup": [
+    {
+      "http_status": 200,
+      "elapsed_ms": 53.203599993139505,
+      "error": null,
+      "reservation_id": 30142,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 87.47220000077505,
+      "error": null,
+      "reservation_id": 30143,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 69.0759999997681,
+      "error": null,
+      "reservation_id": 30144,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 70.63349999953061,
+      "error": null,
+      "reservation_id": 30145,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 45.72779999580234,
+      "error": null,
+      "reservation_id": 30146,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 69.48730000294745,
+      "error": null,
+      "reservation_id": 30147,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 73.13879999855999,
+      "error": null,
+      "reservation_id": 30148,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 78.08479999948759,
+      "error": null,
+      "reservation_id": 30149,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 53.488300007302314,
+      "error": null,
+      "reservation_id": 30150,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 109.10000000149012,
+      "error": null,
+      "reservation_id": 30151,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 53.436299989698455,
+      "error": null,
+      "reservation_id": 30152,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 48.86580001038965,
+      "error": null,
+      "reservation_id": 30153,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 87.94340000895318,
+      "error": null,
+      "reservation_id": 30154,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 72.62739998986945,
+      "error": null,
+      "reservation_id": 30155,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 92.16139999625739,
+      "error": null,
+      "reservation_id": 30156,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 53.87850000988692,
+      "error": null,
+      "reservation_id": 30157,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 90.69719999388326,
+      "error": null,
+      "reservation_id": 30158,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 49.16150000644848,
+      "error": null,
+      "reservation_id": 30159,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 46.551500010536984,
+      "error": null,
+      "reservation_id": 30160,
+      "status": "success"
+    },
+    {
+      "http_status": 200,
+      "elapsed_ms": 49.869499998749234,
+      "error": null,
+      "reservation_id": 30161,
+      "status": "success"
+    }
+  ],
+  "cleanup_failures": [],
+  "failures": [],
+  "first_failure": null,
+  "accepted": true,
+  "query": {
+    "planned_samples": 20,
+    "attempted_samples": 20,
+    "successful_samples": 20,
+    "failed_samples": 0,
+    "in_progress_samples": 0,
+    "not_attempted_samples": 0,
+    "p95_nearest_rank_ms_all_attempts": 208.15319998655468,
+    "p95_nearest_rank_ms_successful": 208.15319998655468,
+    "median_ms_all_attempts": 134.68825000018114,
+    "maximum_ms_all_attempts": 438.6389999999665,
+    "target_ms": 2000,
+    "target_met": true
+  },
+  "reservation_submit": {
+    "planned_samples": 20,
+    "attempted_samples": 20,
+    "successful_samples": 20,
+    "failed_samples": 0,
+    "in_progress_samples": 0,
+    "not_attempted_samples": 0,
+    "p95_nearest_rank_ms_all_attempts": 118.64390000118874,
+    "p95_nearest_rank_ms_successful": 118.64390000118874,
+    "median_ms_all_attempts": 88.1987000029767,
+    "maximum_ms_all_attempts": 151.8631000071764,
+    "target_ms": 2000,
+    "target_met": true
+  },
+  "fixture": {
+    "date": "2026-10-31",
+    "room_layouts": [
+      "30x20",
+      "20x20"
+    ],
+    "java_runtime_version": "17.0.12+8-LTS-286",
+    "default_opening_verified": true,
+    "sample_seats": 1000,
+    "room_seats": [
+      600,
+      400
+    ],
+    "excluded_smoke_seats": 6
+  },
+  "boundaries": "Engineering labelled simulated users/resources, one local client. No credentials/tokens/raw bodies. Not campus concurrency capacity, physical arrival, independent human PV or real phone/camera acceptance."
+}

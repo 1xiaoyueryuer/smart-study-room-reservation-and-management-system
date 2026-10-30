@@ -1,4 +1,8 @@
-"""仅对studyroom_java_test专用服务验证API；模拟预约最终取消，投诉保留测试历史。"""
+"""仅对studyroom_java_test专用服务验证API；模拟预约最终取消，投诉保留测试历史。
+STUDYROOM_SMOKE_ADMIN/OWNER/OTHER_USERNAME及对应_PASSWORD可覆盖六项登录配置，
+STUDYROOM_SMOKE_ROOM_ID指定已准备空间；默认兼容admin/stu01/stu02种子账号。
+认证及业务调用前硬核专用库；不自动启用SeedData、不修改开放配置或解除限制。
+"""
 import json
 import os
 import sys
@@ -37,26 +41,133 @@ def page_items(response):
     assert type(value['page']) is int and value['page']>0 and type(value['page_size']) is int and 1<=value['page_size']<=50
     return value['items']
 
+def smoke_settings():
+    accounts = {}
+    for role, default_name, default_password in (
+            ('admin', 'admin', 'admin123'), ('owner', 'stu01', '123456'), ('other', 'stu02', '123456')):
+        prefix = 'STUDYROOM_SMOKE_' + role.upper()
+        username, password = os.environ.get(prefix + '_USERNAME', default_name), os.environ.get(prefix + '_PASSWORD', default_password)
+        if not username.strip() or not password:
+            raise AssertionError('测试账号配置不能为空：' + role)
+        accounts[role] = {'username': username, 'password': password}
+    if len({item['username'] for item in accounts.values()}) != 3:
+        raise AssertionError('管理、本人和另一个测试账号必须不同')
+    room = os.environ.get('STUDYROOM_SMOKE_ROOM_ID')
+    if room is not None:
+        if not room.isascii() or not room.isdecimal() or not 0 < int(room) <= 9223372036854775807:
+            raise AssertionError('测试空间编号须为正整数')
+        room = int(room)
+    return accounts, room
+
+
+def login_account(name, credentials, allowed_roles):
+    status, body = call('POST', '/auth/login', credentials)
+    data = body.get('data', {})
+    check(name + '登录及启用角色', status == 200 and data.get('user', {}).get('role') in allowed_roles
+          and data['user'].get('status') == 'active' and isinstance(data.get('token'), str) and bool(data['token']))
+    return data['token']
+
+
+def choose_room(rooms, configured_id, token, date):
+    candidates = [room for room in rooms if configured_id is None or room['id'] == configured_id]
+    if configured_id is not None:
+        check('指定测试空间存在', len(candidates) == 1)
+    for room in candidates:
+        if room.get('enabled') is not True or room.get('seat_count', 0) <= 0:
+            continue
+        status, body = call('GET', f"/rooms/{room['id']}/seats?date={date}&start=10:00&end=11:00", token=token)
+        check('准备空间实际座位图可读', status == 200)
+        if any(seat.get('status') == 'available' and seat.get('bookable_for_slot') is True and seat.get('occupied') is False
+               for seat in body['data']['seats']):
+            return room['id']
+    raise AssertionError('目标10:00—11:00没有合法空座，请准备工程夹具；脚本不修改配置或解除限制')
+
+
+def created_id(status, response):
+    """Track a successful creation before validating the rest of its receipt."""
+    data = response.get('data') if isinstance(response, dict) else None
+    value = data.get('id') if isinstance(data, dict) else None
+    return value if status == 200 and type(value) is int and 0 < value <= 9223372036854775807 else None
+
+
+def verify_reservation_roundtrip(request, student, other, date):
+    res_id = None
+    try:
+        status, body = call('POST', '/reservations', request, student)
+        res_id = created_id(status, body)
+        check('预约创建且日期不带午夜时间', status == 200 and res_id is not None and body['data'].get('res_date') == date)
+        status, _ = call('POST', '/reservations', request, other)
+        check('重叠座位返回409', status == 409)
+        check('越权取消返回403', call('POST', f'/reservations/{res_id}/cancel', {}, other)[0] == 403)
+        check('旧无座位码签到请求被拒绝', call('POST', f'/reservations/{res_id}/checkin', {}, student)[0] == 400)
+        check('旧暂离和返回入口退出', all(call('POST', f'/reservations/{res_id}/{action}', {}, student)[0] == 410 for action in ('leave', 'return')))
+        status, body = call('GET', '/reservations/mine', token=student)
+        reservation_items = page_items(body)
+        check('我的预约真实分页含座位与房间字段', status == 200 and body['data']['total'] >= 1 and all('room_name' in row and 'seat_no' in row for row in reservation_items))
+        status, current = call('GET', f'/reservations/{res_id}', token=student)
+        check('独立本人详情定位目标不依赖当前页', status == 200 and current['data']['id'] == res_id and 'room_name' in current['data'])
+        check('未签到预约没有伪造使用记录', current['data']['usage_record'] is None)
+        time.sleep(1.1)
+        status, _ = call('POST', '/reservations', {**request, 'start_time': '10:01', 'end_time': '10:30'}, student)
+        check('不足30分钟返回400', status == 400)
+    finally:
+        if res_id is not None:
+            check('本人取消释放座位', call('POST', f'/reservations/{res_id}/cancel', {}, student)[0] == 200)
+    return res_id
+
+
+def verify_temporary_room(admin):
+    room_req = {'name': 'API临时验证_' + str(time.time_ns()), 'location': '验证楼', 'seat_rows': 1, 'seat_cols': 2,
+        'description': '', 'building': 'API验证楼', 'floor': 'B1', 'enabled': True, 'reason': 'API模拟资源验证'}
+    temp, version = None, None
+    try:
+        status, body = call('POST', '/admin/rooms', room_req, admin)
+        temp = created_id(status, body)
+        check('管理端创建房间', status == 200 and temp is not None)
+        version = body['data'].get('version')
+        check('新建房间版本完整', type(version) is int and version >= 0)
+        status, generated = call('POST', f'/admin/rooms/{temp}/seats/batch', {'seat_rows': 1, 'seat_cols': 2, 'version': version, 'reason': 'API初次生成模拟座位'}, admin)
+        check('管理端生成座位', status == 200)
+        version = generated['data']['room']['version']
+        check('重复生成被阻止', call('POST', f'/admin/rooms/{temp}/seats/batch', {'seat_rows': 1, 'seat_cols': 2, 'version': version, 'reason': 'API重复生成应被拒绝'}, admin)[0] == 409)
+        proposal = {'change_type': 'room.update', 'target_id': temp, 'payload': {**room_req, 'version': version, 'description': 'API无预约影响变更验证', 'reason': 'API核对只读预览与幂等确认'}}
+        status, preview = call('POST', '/admin/resource-changes/preview', proposal, admin)
+        check('资源变更只读预览返回无影响清单', status == 200 and preview['data']['summary']['total_count'] == 0 and bool(preview['data']['target_label']))
+        confirmation = {'proposal': preview['data']['normalized_proposal'], 'impact_hash': preview['data']['impact_hash'], 'operation_id': str(uuid.uuid4())}
+        status, changed = call('POST', '/admin/resource-changes/confirm', confirmation, admin)
+        check('管理员按预览确认无影响变更', status == 200 and changed['data']['cancelled_count'] == 0 and changed['data']['replayed'] is False)
+        status, replayed = call('POST', '/admin/resource-changes/confirm', confirmation, admin)
+        check('同操作确认幂等返回原结果', status == 200 and replayed['data']['operation_id'] == confirmation['operation_id'] and replayed['data']['replayed'] is True)
+    finally:
+        if temp is not None:
+            status, current = call('GET', '/rooms', token=admin)
+            if status == 200:
+                version = next((room['version'] for room in current['data'] if room['id'] == temp), version)
+            check('清理临时房间版本可核对', type(version) is int and version >= 0)
+            check('删除无历史临时房间', call('DELETE', f'/admin/rooms/{temp}', {'version': version, 'reason': 'API清理无历史模拟资源'}, admin)[0] == 200)
+
+
 def main():
     status, body = call('GET', '/health')
     check('Java + PostgreSQL + Redis 健康检查', status == 200 and body['data']['backend'] == 'java' and body['data']['database'] == 'PostgreSQL')
     check('写入前确认专用测试库', body['data'].get('database_name') == 'studyroom_java_test')
     check('匿名请求被拦截', call('GET', '/rooms')[0] == 401)
-    check('错误密码被拦截', call('POST', '/auth/login', {'username':'stu01','password':'wrong'})[0] == 401)
-    status, body = call('POST','/auth/login',{'username':'admin','password':'admin123'})
-    check('管理员登录', status == 200)
-    admin = body['data']['token']
-    status, body = call('POST','/auth/login',{'username':'stu01','password':'123456'})
-    check('学生登录及 snake_case 用户字段', status == 200 and 'real_name' in body['data']['user'])
-    student = body['data']['token']
-    status, body = call('POST','/auth/login',{'username':'stu02','password':'123456'})
-    other = body['data']['token']
+    accounts, configured_room = smoke_settings()
+    wrong = 'intentionally-wrong-' + str(uuid.uuid4())
+    check('错误密码被拦截', call('POST', '/auth/login', {'username': accounts['owner']['username'], 'password': wrong})[0] == 401)
+    admin = login_account('管理员', accounts['admin'], {'admin'})
+    student = login_account('本人普通账号', accounts['owner'], {'student', 'staff'})
+    other = login_account('另一普通账号', accounts['other'], {'student', 'staff'})
+    status, profile = call('GET', '/auth/profile', token=student)
+    check('snake_case本人资料字段', status == 200 and 'real_name' in profile['data'])
     check('学生无管理权限',call('GET','/admin/users',token=student)[0] == 403)
     status, body = call('GET','/admin/users',token=admin)
-    check('用户列表不含口令',status == 200 and len(body['data']) >= 41 and all('password_hash' not in u for u in body['data']))
+    check('用户列表含所配测试账号且不含口令', status == 200 and isinstance(body['data'], list)
+          and {item['username'] for item in accounts.values()}.issubset({user['username'] for user in body['data']})
+          and all('password_hash' not in user for user in body['data']))
     status, body = call('GET','/rooms',token=student)
-    check('房间列表兼容原前端',status == 200 and len(body['data']) >= 3)
-    room = body['data'][0]['id']
+    check('实际空间列表可读', status == 200 and isinstance(body['data'], list) and bool(body['data']))
+    rooms = body['data']
     status, policy = call('GET', '/booking-policy', token=student)
     check('校园日期政策与分钟规则', status == 200 and policy['data']['campus_zone'] == 'Asia/Shanghai' and policy['data']['min_duration_minutes'] == 30 and len(policy['data']['dates']) == 3)
     status, eligibility = call('GET', '/booking-eligibility', token=student)
@@ -67,6 +178,7 @@ def main():
     check('自动限制仅展示真实三来源批次快照', all('automatic_evaluation' in item and (item['automatic_evaluation'] is None if item['source'] != 'automatic' else item['automatic_evaluation']['threshold'] == 3 and item['automatic_evaluation']['duration_hours'] == 168 and len(item['automatic_evaluation']['source_violations']) == 3 and all(not any(key in source for key in ('source_event_id','complaint_id','reporter_id','verification_note')) for source in item['automatic_evaluation']['source_violations'])) for item in restriction_items))
     check('普通用户不能读取全校限制管理',call('GET','/admin/restrictions',token=student)[0] == 403)
     date = policy['data']['dates'][1]
+    room = choose_room(rooms, configured_room, student, date)
     status, available = call('GET',f'/availability?room_id={room}&date={date}&strategy=earliest',token=student)
     check('最早连续空档与图列表共享结果',status == 200 and available['data']['strategy'] == 'earliest' and isinstance(available['data']['results'],list) and all('available_windows' in seat for seat in available['data']['seats']))
     check('空档最短30分钟且无他人私密记录',all(row['duration_minutes'] >= 30 and not any(key in row for key in ('user_id','username','real_name','code_value')) for row in available['data']['results']))
@@ -82,28 +194,7 @@ def main():
     check('旧偏好自动分配入口已退出',status == 410)
     check('旧候补新增入口已退出', call('POST', '/waitlist', {'room_id':room,'date':date,'start_time':'10:00','end_time':'11:00'},student)[0] == 410)
     request = {'seat_id':seat,'date':date,'start_time':'10:00','end_time':'11:00'}
-    res_id = None
-    try:
-        status, body = call('POST','/reservations',request,student)
-        check('预约创建且日期不带午夜时间',status == 200 and body['data']['res_date'] == date)
-        res_id = body['data']['id']
-        status, _ = call('POST','/reservations',request,other)
-        check('重叠座位返回409',status == 409)
-        check('越权取消返回403',call('POST',f'/reservations/{res_id}/cancel',{},other)[0] == 403)
-        check('旧无座位码签到请求被拒绝',call('POST',f'/reservations/{res_id}/checkin',{},student)[0] == 400)
-        check('旧暂离和返回入口退出',all(call('POST',f'/reservations/{res_id}/{action}',{},student)[0] == 410 for action in ('leave','return')))
-        status, body = call('GET','/reservations/mine',token=student)
-        reservation_items=page_items(body)
-        check('我的预约真实分页含座位与房间字段',status == 200 and body['data']['total'] >= 1 and all('room_name' in r and 'seat_no' in r for r in reservation_items))
-        status, current_reservation = call('GET',f'/reservations/{res_id}',token=student)
-        check('独立本人详情定位目标不依赖当前页',status == 200 and current_reservation['data']['id'] == res_id and 'room_name' in current_reservation['data'])
-        check('未签到预约没有伪造使用记录',current_reservation['data']['usage_record'] is None)
-        time.sleep(1.1)
-        status, _ = call('POST','/reservations',{**request,'start_time':'10:01','end_time':'10:30'},student)
-        check('不足30分钟返回400',status == 400)
-    finally:
-        if res_id:
-            check('本人取消释放座位',call('POST',f'/reservations/{res_id}/cancel',{},student)[0] == 200)
+    res_id = verify_reservation_roundtrip(request, student, other, date)
     status, body = call('GET','/violations/mine',token=student)
     violation_items=page_items(body)
     check('本人独立违规明细',status == 200 and isinstance(violation_items,list))
@@ -204,29 +295,7 @@ def main():
     check('统计七日事实与当前比例独立',status == 200 and len(body['data']['trend']) == 7 and len(body['data']['peak']) == 24 and set(body['data']) == {'snapshot_at','campus_zone','scope','day','current','trend','peak','top_seats'} and body['data']['campus_zone'] == 'Asia/Shanghai')
     status, body = call('GET',f'/stats/heatmap?room_id={room}&date={date}',token=admin)
     check('真实使用24小时热力矩阵',status == 200 and len(body['data']['cells']) == len(body['data']['seats']) and len(body['data']['hours']) == 24 and body['data']['ends'][-1] == '24:00' and all(len(row) == 24 and all(value in (0,1) for value in row) for row in body['data']['cells']))
-    room_req = {'name':'API临时验证_'+str(time.time_ns()),'location':'验证楼','seat_rows':1,'seat_cols':2,'description':'','building':'API验证楼','floor':'B1','enabled':True,'reason':'API模拟资源验证'}
-    status, body = call('POST','/admin/rooms',room_req,admin)
-    check('管理端创建房间',status == 200)
-    temp = body['data']['id']
-    version = body['data']['version']
-    try:
-        status, generated = call('POST',f'/admin/rooms/{temp}/seats/batch',{'seat_rows':1,'seat_cols':2,'version':version,'reason':'API初次生成模拟座位'},admin)
-        check('管理端生成座位', status == 200)
-        version = generated['data']['room']['version']
-        check('重复生成被阻止',call('POST',f'/admin/rooms/{temp}/seats/batch',{'seat_rows':1,'seat_cols':2,'version':version,'reason':'API重复生成应被拒绝'},admin)[0] == 409)
-        proposal = {'change_type':'room.update','target_id':temp,'payload':{**room_req,'version':version,'description':'API无预约影响变更验证','reason':'API核对只读预览与幂等确认'}}
-        status, preview = call('POST','/admin/resource-changes/preview',proposal,admin)
-        check('资源变更只读预览返回无影响清单',status == 200 and preview['data']['summary']['total_count'] == 0 and bool(preview['data']['target_label']))
-        confirmation = {'proposal':preview['data']['normalized_proposal'],'impact_hash':preview['data']['impact_hash'],'operation_id':str(uuid.uuid4())}
-        status, changed = call('POST','/admin/resource-changes/confirm',confirmation,admin)
-        check('管理员按预览确认无影响变更',status == 200 and changed['data']['cancelled_count'] == 0 and changed['data']['replayed'] is False)
-        status, replayed = call('POST','/admin/resource-changes/confirm',confirmation,admin)
-        check('同操作确认幂等返回原结果',status == 200 and replayed['data']['operation_id'] == confirmation['operation_id'] and replayed['data']['replayed'] is True)
-    finally:
-        status, current = call('GET', '/rooms', token=admin)
-        if status == 200:
-            version = next((room['version'] for room in current['data'] if room['id'] == temp), version)
-        check('删除无历史临时房间',call('DELETE',f'/admin/rooms/{temp}',{'version':version,'reason':'API清理无历史模拟资源'},admin)[0] == 200)
+    verify_temporary_room(admin)
     check('注销成功',call('POST','/auth/logout',{},student)[0] == 200)
     check('注销令牌立即失效',call('GET','/auth/profile',token=student)[0] == 401)
     print(f'通过 {len(checks)}/{len(checks)}')
