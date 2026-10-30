@@ -55,7 +55,7 @@ class MigrationIntegrationTest {
     }
     @Test void emptyInstallationAndRepeatedStartup() throws Exception {
         var f=flyway(); DatabaseMigrations.migrate(f,false); DatabaseMigrations.migrate(f,false);
-        assertEquals(16,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(17,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".booking_mutex WHERE id=1"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".audit_events"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"));
@@ -73,7 +73,7 @@ class MigrationIntegrationTest {
         assertEquals(1,count("SELECT count(*) FROM "+schema+".seats WHERE version=1 AND resource_reason IS NULL"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".reservations WHERE user_id=1 AND seat_id=1 AND status='pending'"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"),"历史座位不能被伪造成已经配置真实贴码");
-        assertEquals(16,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(17,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE username='known-campus' AND campus_id='OLD-01' AND student_no='OLD-01'"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE type='BASELINE'"));
     }
@@ -217,6 +217,28 @@ class MigrationIntegrationTest {
         else {if(problem.equals("operation_duplicate_action"))execute("INSERT INTO "+schema+".restriction_operations(operation_id,restriction_id,actor_id,action,request_hash,effects,created_at) VALUES('f1111111-1111-4111-8111-111111111111',1,1,'create','hash','{}','2026-10-29 09:00')");invalid="INSERT INTO "+schema+".restriction_operations(operation_id,restriction_id,actor_id,action,request_hash,effects,created_at) VALUES('f2222222-2222-4222-8222-222222222222',1,1,'create','hash','"+(problem.equals("operation_not_object")?"[]":"{}")+"','2026-10-29 09:00')";}
         String statement=invalid;assertThrows(SQLException.class,()->execute(statement));
     }
+    @Test void automaticBatchMigrationDoesNotInventConsumptionOrAlterExistingRestrictionFacts() throws Exception {
+        var previous=Flyway.configure().dataSource(source).defaultSchema(schema).schemas(schema).cleanDisabled(true).baselineOnMigrate(false).target("16").locations("classpath:db/migration").load();DatabaseMigrations.migrate(previous,false);
+        execute("INSERT INTO "+schema+".users(username,password_hash) VALUES('old','hash'); INSERT INTO "+schema+".restrictions(user_id,source,starts_at,ends_at,reason,created_at) VALUES(1,'legacy','2026-10-29 09:00','2026-10-30 09:00','original exact legacy reason','2026-10-29 09:00')");
+        DatabaseMigrations.migrate(flyway(),false);assertEquals(0,count("SELECT count(*) FROM "+schema+".restriction_evaluations"));assertEquals(0,count("SELECT count(*) FROM "+schema+".restriction_evaluation_sources"));assertEquals(1,count("SELECT count(*) FROM "+schema+".restrictions WHERE source='legacy' AND reason='original exact legacy reason' AND starts_at=TIMESTAMP '2026-10-29 09:00' AND ends_at=TIMESTAMP '2026-10-30 09:00' AND version=1 AND effects_applied_at IS NULL"));assertEquals(0,count("SELECT count(*) FROM "+schema+".notifications"));
+    }
+    String batchRestriction(int id,int user){return "INSERT INTO restrictions(id,user_id,source,starts_at,ends_at,reason,created_at) VALUES("+id+","+user+",'automatic','2026-10-29 09:00','2026-11-05 09:00','system public reason','2026-10-29 09:00');";}
+    String batchEvaluation(int id,int user){return "INSERT INTO restriction_evaluations(restriction_id,user_id,evaluated_at,window_start,window_end) VALUES("+id+","+user+",'2026-10-29 09:00','2026-09-29 09:00','2026-10-29 09:00');";}
+    String batchSources(int id,int user,int start,int count){var sql=new StringBuilder();for(int p=1;p<=count;p++)sql.append("INSERT INTO restriction_evaluation_sources(restriction_id,user_id,violation_id,source_order,violation_snapshot) VALUES(").append(id).append(',').append(user).append(',').append(start+p-1).append(',').append(p).append(",'{}');");return sql.toString();}
+    void transactionSql(String sql) throws Exception {try(var c=source.getConnection();var s=c.createStatement()){c.setAutoCommit(false);s.execute("SET search_path TO "+schema);try{s.execute(sql);c.commit();}catch(SQLException e){c.rollback();throw e;}}}
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"missing_evaluation","two_sources","four_sources","wrong_user","duplicate_permanent_source","revoked_still_consumed","wrong_window","null_evaluation","manual_evaluation","wrong_duration","delete_source","move_source_old_batch"})
+    void automaticBatchConstraintsRequireExactThreeOriginalSourcesAndKeepPermanentOwnership(String problem) throws Exception {
+        DatabaseMigrations.migrate(flyway(),false);transactionSql("INSERT INTO users(username,password_hash) VALUES('one','hash'),('two','hash'); INSERT INTO rooms(name,seat_rows,seat_cols) VALUES('batch simulation',1,1); INSERT INTO seats(room_id,seat_no,row_no,col_no) VALUES(1,'01',1,1); INSERT INTO reservations(id,user_id,seat_id,res_date,start_time,end_time,status) SELECT x,1,1,'2026-10-29','09:00','10:00','unused_ended' FROM generate_series(1,6) x; INSERT INTO violations(id,user_id,reservation_id,type,event_key,occurred_at,registered_at,reason,source) SELECT x,1,x,'no_show','unused:'||x,'2026-10-29 09:15','2026-10-29 09:16','source simulation','automatic' FROM generate_series(1,6) x;");
+        String valid=batchRestriction(1,1)+batchEvaluation(1,1)+batchSources(1,1,1,3),invalid;
+        if(Set.of("duplicate_permanent_source","revoked_still_consumed","delete_source","move_source_old_batch").contains(problem)){
+            transactionSql(valid);if(problem.equals("revoked_still_consumed"))transactionSql("UPDATE violations SET status='revoked' WHERE id=1;");
+            invalid=switch(problem){case "delete_source"->"DELETE FROM restriction_evaluation_sources WHERE restriction_id=1 AND source_order=1;";case "move_source_old_batch"->batchRestriction(2,1)+batchEvaluation(2,1)+"UPDATE restriction_evaluation_sources SET restriction_id=2;";default->batchRestriction(2,1)+batchEvaluation(2,1)+batchSources(2,1,1,3);};
+        }else invalid=switch(problem){case "missing_evaluation"->batchRestriction(1,1);case "two_sources"->batchRestriction(1,1)+batchEvaluation(1,1)+batchSources(1,1,1,2);case "four_sources"->batchRestriction(1,1)+batchEvaluation(1,1)+batchSources(1,1,1,4);case "wrong_user"->batchRestriction(1,2)+batchEvaluation(1,2)+batchSources(1,2,1,3);case "wrong_window"->valid.replace("2026-09-29 09:00","2026-09-29 09:01");case "null_evaluation"->valid.replace("'2026-09-29 09:00'","NULL");case "manual_evaluation"->valid.replace("'automatic','2026-10-29 09:00'","'legacy','2026-10-29 09:00'");default->valid.replace("2026-11-05 09:00","2026-11-05 09:01");};
+        assertThrows(SQLException.class,()->transactionSql(invalid));if(Set.of("delete_source","move_source_old_batch","duplicate_permanent_source","revoked_still_consumed").contains(problem))assertEquals(3,count("SELECT count(*) FROM "+schema+".restriction_evaluation_sources WHERE restriction_id=1"));
+    }
+    @Test void automaticBatchDeferredCardinalityAllowsAtomicCreationAndWholeDomainCleanup() throws Exception {
+        DatabaseMigrations.migrate(flyway(),false);transactionSql("INSERT INTO users(username,password_hash) VALUES('one','hash'); INSERT INTO rooms(name,seat_rows,seat_cols) VALUES('simulation',1,1); INSERT INTO seats(room_id,seat_no,row_no,col_no) VALUES(1,'01',1,1); INSERT INTO reservations(id,user_id,seat_id,res_date,start_time,end_time,status) SELECT x,1,1,'2026-10-29','09:00','10:00','unused_ended' FROM generate_series(1,3) x; INSERT INTO violations(id,user_id,reservation_id,type,event_key,occurred_at,registered_at,reason,source) SELECT x,1,x,'no_show','unused:'||x,'2026-10-29 09:15','2026-10-29 09:16','simulation','automatic' FROM generate_series(1,3) x;"+batchRestriction(1,1)+batchEvaluation(1,1)+batchSources(1,1,1,3));assertEquals(3,count("SELECT count(*) FROM "+schema+".restriction_evaluation_sources"));transactionSql("DELETE FROM restriction_evaluation_sources;DELETE FROM restriction_evaluations;DELETE FROM restrictions;");assertEquals(0,count("SELECT count(*) FROM "+schema+".restrictions"));
+    }
     @Test void failedMigrationIsDiagnosticAndTransactional() throws Exception {
         var f=flyway(); DatabaseMigrations.migrate(f,false);
         Files.writeString(scripts.resolve("V9999__broken.sql"),"CREATE TABLE rollback_probe(id bigint); INSERT INTO missing_table VALUES(1);");
@@ -224,6 +246,6 @@ class MigrationIntegrationTest {
         var error=assertThrows(FlywayException.class,()->DatabaseMigrations.migrate(broken,false));
         assertTrue(error.getMessage().contains("V9999__broken.sql"));
         assertEquals(0,count("SELECT count(*) FROM information_schema.tables WHERE table_schema='"+schema+"' AND table_name='rollback_probe'"));
-        assertEquals(16,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(17,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
     }
 }

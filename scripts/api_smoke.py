@@ -56,6 +56,7 @@ def main():
     check('本人资格读取服务端独立限制集合',status == 200 and isinstance(eligibility['data']['can_book'],bool) and isinstance(eligibility['data']['active_restrictions'],list) and eligibility['data']['campus_zone'] == 'Asia/Shanghai')
     status, restrictions = call('GET', '/restrictions/mine', token=student)
     check('本人独立限制历史不公开管理私有核实依据',status == 200 and isinstance(restrictions['data'],list) and all(not any(key in item for key in ('verification_note','release_verification_note','subject')) for item in restrictions['data']))
+    check('自动限制仅展示真实三来源批次快照', all('automatic_evaluation' in item and (item['automatic_evaluation'] is None if item['source'] != 'automatic' else item['automatic_evaluation']['threshold'] == 3 and item['automatic_evaluation']['duration_hours'] == 168 and len(item['automatic_evaluation']['source_violations']) == 3 and all(not any(key in source for key in ('source_event_id','complaint_id','reporter_id','verification_note')) for source in item['automatic_evaluation']['source_violations'])) for item in restrictions['data']))
     check('普通用户不能读取全校限制管理',call('GET','/admin/restrictions',token=student)[0] == 403)
     date = policy['data']['dates'][1]
     status, available = call('GET',f'/availability?room_id={room}&date={date}&strategy=earliest',token=student)

@@ -34,33 +34,33 @@ public class BookingService {
         enforceRestrictions(uid,now,null,null);row=db.one(VIEW+"WHERE rv.id=?",resId);decorate(row,now);return row;
     }
     public List<Map<String,Object>> violationsMine(long uid) {
-        db.lockBookings();reconcileUser(uid,now());return violations.mine(uid);
+        db.lockBookings();enforceRestrictions(uid,now(),null,null);return violations.mine(uid);
     }
     /** 成功调用的兼容适配；HTTP使用typed入口以在代理提交后映射已落实限制的403。 */
     public Map<String,Object> create(long uid,Requests.Reservation req) {var result=createForClient(uid,req);if(result.status()!=200)throw Api.fail(result.status(),result.message(),result.details());return result.data();}
     public ActionResult createForClient(long uid,Requests.Reservation req) {
         db.lockBookings();Slot slot=Slot.parse(req.date(),req.startTime(),req.endTime());policy.validate(slot);requireBookingAccount(uid);var now=now();enforceRestrictions(uid,now,null,null);var qualification=restrictions.eligibility(uid,now);
-        if(!Boolean.TRUE.equals(qualification.get("can_book")))return new ActionResult(403,"当前存在有效预约限制，请查看每条原因与截止",Map.of(),restrictions.denial(qualification));return new ActionResult(200,"ok",createInternal(uid,req,"manual"),null);
+        if(!Boolean.TRUE.equals(qualification.get("can_book")))return new ActionResult(403,"当前存在有效预约限制，请查看每条原因与截止",Map.of(),restrictions.denial(qualification));return new ActionResult(200,"ok",createInternal(uid,req,"manual",now),null);
     }
-    private Map<String,Object> createInternal(long uid,Requests.Reservation req,String source) {
-        Slot slot=Slot.parse(req.date(),req.startTime(),req.endTime()); policy.validate(slot);eligible(uid);
+    private Map<String,Object> createInternal(long uid,Requests.Reservation req,String source,LocalDateTime snapshot) {
+        Slot slot=Slot.parse(req.date(),req.startTime(),req.endTime()); policy.validate(slot);eligible(uid,snapshot);
         var seat=db.one("SELECT * FROM seats WHERE id=?",req.seatId());
         Api.require("available".equals(seat.get("status")),409,"座位当前不可预约");
         var room=db.one("SELECT * FROM rooms WHERE id=?",id(seat,"room_id"));opening.requireSlot(id(seat,"room_id"),req.seatId(),slot);
-        reconcileRows(db.list("SELECT * FROM reservations WHERE status IN "+ACTIVE+" AND (user_id=? OR seat_id=?) ORDER BY id",uid,req.seatId()),now());
+        reconcileScope(db.list("SELECT * FROM reservations WHERE status IN "+ACTIVE+" AND (user_id=? OR seat_id=?) ORDER BY id",uid,req.seatId()),snapshot,uid);
         Api.require(!conflict("seat_id",req.seatId(),slot),409,"该座位此时段已被预约");
         Api.require(!conflict("user_id",uid,slot),409,"您在同一时段已有其他预约");
         long resId=db.insert("INSERT INTO reservations(user_id,seat_id,res_date,start_time,end_time,source) VALUES(?,?,?,CAST(? AS TIME),CAST(? AS TIME),?)",
                 uid,req.seatId(),Date.valueOf(slot.date()),slot.startText(),slot.endText(),source);
         notify(uid,"reservation_success","预约成功",room.get("name")+" "+seat.get("seat_no")+" "+req.date()+" "+req.startTime()+"—"+req.endTime()+"，请按时签到。");
         audit.record(uid,"reservation.create","reservation",Long.toString(resId),"用户预约",Map.of(),Map.of("seat_id",req.seatId(),"date",slot.date().toString(),"start_time",slot.startText(),"end_time",slot.endText(),"source",source));
-        var created=db.one(VIEW+"WHERE rv.id=?",resId);decorate(created,now());return created;
+        var created=db.one(VIEW+"WHERE rv.id=?",resId);decorate(created,snapshot);return created;
     }
     private boolean conflict(String column,long id,Slot slot) {
         return db.count("SELECT count(*) FROM reservations WHERE "+column+"=? AND res_date=? AND status IN "+ACTIVE+" AND start_time<CAST(? AS TIME) AND end_time>CAST(? AS TIME)",
                 id,Date.valueOf(slot.date()),slot.endText(),slot.startText())>0;
     }
-    private void eligible(long uid) {requireBookingAccount(uid);var qualification=restrictions.eligibility(uid,now());Api.require(Boolean.TRUE.equals(qualification.get("can_book")),403,"当前存在有效预约限制，请查看每条原因与截止");}
+    private void eligible(long uid,LocalDateTime snapshot) {requireBookingAccount(uid);var qualification=restrictions.eligibility(uid,snapshot);Api.require(Boolean.TRUE.equals(qualification.get("can_book")),403,"当前存在有效预约限制，请查看每条原因与截止");}
     private void requireBookingAccount(long uid) {
         var user=db.one("SELECT * FROM users WHERE id=?",uid);
         Api.require(AuthService.isOrdinary(user.get("role")),403,"仅学生和教职工可以预约");
@@ -86,21 +86,12 @@ public class BookingService {
         db.lockBookings();requireOrdinary(uid);var res=db.one("SELECT * FROM reservations WHERE id=?",resId);
         Api.require(id(res,"user_id")==uid,403,"无权操作他人的预约");
         Api.require(Set.of("cancel","abandon","checkin","checkout").contains(action),404,"操作不存在");
-        LocalDateTime now=now(),start=starts(res),end=ends(res);String state=text(res,"status");res.put("usage_record",usage.view(resId,now));
-        if(state.equals("pending")&&!restrictions.activeRaw(uid,now).isEmpty()) {
-            boolean expired=ReservationDeadline.expiredPending(res,now);enforceRestrictions(uid,now,null,null);var current=db.one("SELECT * FROM reservations WHERE id=?",resId);
-            if(!"pending".equals(current.get("status"))) {var details=new LinkedHashMap<String,Object>();for(String key:List.of("id","status","termination_reason","termination_note","ended_at"))details.put(key,current.get(key));details.put("reservation_id",resId);details.put("allowed_actions",List.of());return new ActionResult(409,expired?"签到期限已到，预约已按未签到结束，请刷新记录":"预约已因当前有效限制管理取消，未执行本次动作，请刷新记录",Map.of(),details);}
+        LocalDateTime now=now();String previousState=text(res,"status");enforceRestrictions(uid,now,null,null);res=db.one("SELECT * FROM reservations WHERE id=?",resId);
+        if(!previousState.equals(res.get("status"))) {
+            var actual=db.one("SELECT id,status,termination_reason,termination_note,ended_at FROM reservations WHERE id=?",resId);decorate(actual,now);actual.put("reservation_id",resId);
+            String message=switch(text(res,"status")){case "unused_ended"->"签到期限已到，预约已按未签到结束，请刷新记录";case "completed"->"预约已到期并完成使用结算，请刷新记录";default->"预约已因当前有效限制管理取消，未执行本次动作，请刷新记录";};return new ActionResult(409,message,Map.of(),actual);
         }
-        if(ReservationDeadline.expiredPending(res,now)) {
-            endUnused(res,"no_show",now);
-            var actual=db.one("SELECT id,status,termination_reason,ended_at FROM reservations WHERE id=?",resId);
-            var details=new LinkedHashMap<String,Object>(actual);details.put("reservation_id",resId);details.put("allowed_actions",List.of());
-            return new ActionResult(409,"签到期限已到，预约已按未签到结束，请刷新记录",Map.of(),details);
-        }
-        if(state.equals("checked_in")&&!now.isBefore(end)) {
-            complete(res,end,"auto_end",null,now);var actual=db.one("SELECT id,status,termination_reason,ended_at FROM reservations WHERE id=?",resId);decorate(actual,now);
-            actual.put("reservation_id",resId);return new ActionResult(409,"预约已到期并完成使用结算，请刷新记录",Map.of(),actual);
-        }
+        LocalDateTime start=starts(res),end=ends(res);String state=text(res,"status");res.put("usage_record",usage.view(resId,now));
         switch(action) {
             case "cancel" -> {
                 Api.require(state.equals("pending"),409,"当前状态不能取消预约");Api.require(now.isBefore(start),409,"预约已经开始，请使用放弃操作");
@@ -110,7 +101,7 @@ public class BookingService {
             }
             case "abandon" -> {
                 Api.require(state.equals("pending"),409,"当前状态不能放弃预约");Api.require(!now.isBefore(start),409,"开始前请使用取消操作");
-                endUnused(res,"abandon",now);
+                endUnused(res,"abandon",now);enforceRestrictions(uid,now,null,null);
             }
             case "checkin" -> {
                 Api.require(state.equals("pending"),409,"当前状态不能签到");
@@ -144,11 +135,14 @@ public class BookingService {
     private void reconcileUser(long uid,LocalDateTime now) { reconcileRows(db.list("SELECT * FROM reservations WHERE user_id=? AND status IN "+ACTIVE+" ORDER BY id",uid),now); }
     public void reconcileRoom(long roomId,LocalDate date) {
         db.lockBookings();db.one("SELECT id FROM rooms WHERE id=?",roomId);
-        reconcileRows(db.list("SELECT rv.* FROM reservations rv JOIN seats s ON s.id=rv.seat_id WHERE s.room_id=? AND rv.res_date=? AND rv.status IN "+ACTIVE+" ORDER BY rv.id",roomId,Date.valueOf(date)),now());
+        reconcileScope(db.list("SELECT rv.* FROM reservations rv JOIN seats s ON s.id=rv.seat_id WHERE s.room_id=? AND rv.res_date=? AND rv.status IN "+ACTIVE+" ORDER BY rv.id",roomId,Date.valueOf(date)),now(),null);
     }
     public void reconcileAvailability(long uid,long roomId,LocalDate date,LocalDateTime snapshot) {
         db.lockBookings();requireOrdinary(uid);
-        reconcileRows(db.list("SELECT rv.* FROM reservations rv JOIN seats s ON s.id=rv.seat_id WHERE rv.res_date=? AND rv.status IN "+ACTIVE+" AND (s.room_id=? OR rv.user_id=?) ORDER BY rv.id",Date.valueOf(date),roomId,uid),snapshot);
+        reconcileScope(db.list("SELECT rv.* FROM reservations rv JOIN seats s ON s.id=rv.seat_id WHERE rv.res_date=? AND rv.status IN "+ACTIVE+" AND (s.room_id=? OR rv.user_id=?) ORDER BY rv.id",Date.valueOf(date),roomId,uid),snapshot,uid);
+    }
+    private void reconcileScope(List<Map<String,Object>> rows,LocalDateTime snapshot,Long caller){
+        reconcileRows(rows,snapshot);var users=new TreeSet<Long>();if(caller!=null)users.add(caller);for(var row:rows)users.add(id(row,"user_id"));for(long user:users)enforceRestrictions(user,snapshot,null,null);
     }
     private void reconcileRows(List<Map<String,Object>> rows,LocalDateTime now) {
         for(var row:rows) {
@@ -178,7 +172,7 @@ public class BookingService {
     }
     @Transactional(propagation=org.springframework.transaction.annotation.Propagation.MANDATORY)
     public Map<String,Object> enforceRestrictions(long user,LocalDateTime snapshot,Long actor,Long preferred) {
-        var result=reconcileForRestriction(user,snapshot);var active=new ArrayList<>(restrictions.activeRaw(user,snapshot));if(preferred!=null)active.sort(Comparator.comparingInt(row->id(row,"id")==preferred?0:1));@SuppressWarnings("unchecked") var cancelled=(List<Map<String,Object>>)result.get("cancelled_pending");
+        var result=reconcileForRestriction(user,snapshot);restrictions.assess(user,snapshot);var active=new ArrayList<>(restrictions.activeRaw(user,snapshot));if(preferred!=null)active.sort(Comparator.comparingInt(row->id(row,"id")==preferred?0:1));@SuppressWarnings("unchecked") var cancelled=(List<Map<String,Object>>)result.get("cancelled_pending");
         for(var restriction:active){var own=new ArrayList<Map<String,Object>>();for(var booking:db.list("SELECT * FROM reservations WHERE user_id=? AND status='pending' ORDER BY id",user)){if(OpeningScheduleService.remaining(booking,snapshot)==null)continue;var change=cancelManaged(actor,booking,text(restriction,"reason"),"admin_restriction",snapshot,id(restriction,"id"));change.remove("usage_record");change.put("ended_at",RestrictionPolicy.offset(change.get("ended_at")));own.add(change);cancelled.add(change);}var effects=new LinkedHashMap<String,Object>(result);effects.put("cancelled_pending",own);restrictions.applied(restriction,effects,actor,snapshot);}
         return result;
     }
@@ -225,10 +219,13 @@ public class BookingService {
         db.update("UPDATE waitlist SET status='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=?",waitId);
     }
     public void tick() {
-        db.lockBookings();LocalDateTime now=now();
-        for(long user:restrictions.activeUsers(now))enforceRestrictions(user,now,null,null);
-        reconcileRows(db.list("SELECT * FROM reservations WHERE status IN "+ACTIVE+" ORDER BY id"),now);
+        db.lockBookings();settleRestrictions(now());
         // 已退出候补递补；历史记录保持原状，只有本人主动退出才修改waiting。
+    }
+    @Transactional(propagation=org.springframework.transaction.annotation.Propagation.MANDATORY)
+    public void settleRestrictions(LocalDateTime snapshot){
+        db.lockBookings();var rows=db.list("SELECT * FROM reservations WHERE status IN "+ACTIVE+" ORDER BY id");reconcileRows(rows,snapshot);
+        var users=new TreeSet<>(restrictions.candidateUsers(snapshot));for(var row:rows)users.add(id(row,"user_id"));for(long user:users)enforceRestrictions(user,snapshot,null,null);
     }
     private void requireOrdinary(long uid) {
         Api.require(AuthService.isOrdinary(db.one("SELECT role FROM users WHERE id=?",uid).get("role")),403,"仅学生和教职工可操作本人预约或候补");

@@ -12,8 +12,10 @@ import org.springframework.transaction.annotation.Transactional;
 /** 限制动作与预约善后薄编排；Policy不反注预约，旧操作重放只读当前投影。 */
 @Service
 public class RestrictionWorkflow {
-    private final Store db;private final AuthService auth;private final RestrictionPolicy policy;private final BookingService bookings;private final ObjectMapper json;private final Clock clock;
-    public RestrictionWorkflow(Store db,AuthService auth,RestrictionPolicy policy,BookingService bookings,ObjectMapper json,Clock clock){this.db=db;this.auth=auth;this.policy=policy;this.bookings=bookings;this.json=json;this.clock=clock;}
+    private final Store db;private final AuthService auth;private final RestrictionPolicy policy;private final BookingService bookings;private final ViolationService violations;private final ObjectMapper json;private final Clock clock;
+    public RestrictionWorkflow(Store db,AuthService auth,RestrictionPolicy policy,BookingService bookings,ViolationService violations,ObjectMapper json,Clock clock){this.db=db;this.auth=auth;this.policy=policy;this.bookings=bookings;this.violations=violations;this.json=json;this.clock=clock;}
+    @Transactional
+    public Map<String,Object> registerManualViolation(long actor,long event,Requests.ManualViolation request){db.lockBookings();var snapshot=now();var result=violations.registerManual(actor,event,request,snapshot);if(Boolean.TRUE.equals(result.get("replayed")))return result;@SuppressWarnings("unchecked") var violation=(Map<String,Object>)result.get("violation");bookings.enforceRestrictions(Store.id(violation,"user_id"),snapshot,actor,null);return result;}
     @Transactional
     public Map<String,Object> create(long actor,Requests.RestrictionCreate request){
         db.lockBookings();admin(actor);Api.require(request!=null,400,"限制参数必填");String operation=AttachmentService.uuid(request.operationId(),"operation_id");var previous=policy.operation(operation);String reason,note;LocalDateTime end;
@@ -35,9 +37,9 @@ public class RestrictionWorkflow {
     @Transactional
     public Map<String,Object> eligibility(long actor){db.lockBookings();auth.profile(actor);var now=now();bookings.enforceRestrictions(actor,now,null,null);return policy.eligibility(actor,now);}
     @Transactional
-    public List<Map<String,Object>> list(long actor,Long user,String status){db.lockBookings();admin(actor);RestrictionPolicy.validateFilter(user,status);var now=now();if(user!=null){db.one("SELECT id FROM users WHERE id=?",user);bookings.enforceRestrictions(user,now,null,null);}else for(long id:policy.activeUsers(now))bookings.enforceRestrictions(id,now,null,null);return policy.list(user,status,now,true);}
+    public List<Map<String,Object>> list(long actor,Long user,String status){db.lockBookings();admin(actor);RestrictionPolicy.validateFilter(user,status);var now=now();if(user!=null){db.one("SELECT id FROM users WHERE id=?",user);bookings.enforceRestrictions(user,now,null,null);}else bookings.settleRestrictions(now);return policy.list(user,status,now,true);}
     @Transactional
-    public void settle(){db.lockBookings();var now=now();for(long user:policy.activeUsers(now))bookings.enforceRestrictions(user,now,null,null);}
+    public void settle(){db.lockBookings();bookings.settleRestrictions(now());}
     private Map<String,Object> replay(Map<String,Object> previous,long actor,String action,String hash,String operation,LocalDateTime now){Api.require(Store.id(previous,"actor_id")==actor&&action.equals(previous.get("action"))&&hash.equals(previous.get("request_hash")),409,"操作标识已用于其他内容，请按原请求重试");return receipt(Store.id(previous,"restriction_id"),operation,true,policy.effects(previous),now);}
     private Map<String,Object> receipt(long id,String operation,boolean replayed,Map<String,Object> effects,LocalDateTime now){var row=policy.required(id);return Map.of("operation_id",operation,"replayed",replayed,"restriction",policy.detail(id,now,true),"effects",effects,"eligibility",policy.eligibility(Store.id(row,"user_id"),now));}
     private TreeMap<String,Object> intent(long actor,String action,long target,Long version,String reason,String note){var result=new TreeMap<String,Object>();result.put("actor_id",actor);result.put("action",action);result.put("target_id",target);result.put("version",version);result.put("reason",reason);result.put("verification_note",note);result.put("facts_confirmed",true);return result;}

@@ -63,3 +63,34 @@ test('restriction notification links require typed real IDs and never infer an i
   for(const type of ['restriction_started','restriction_released','restriction_cancelled']){const target=page.restrictionTarget({type,restriction_id:90});assert.equal(target.path,'/profile');assert.equal(target.query.restriction_id,90);assert.equal(target.hash,'#restrictions');assert.ok(page.typeMeta[type].text)}
   assert.equal(page.restrictionTarget({type:'restriction_released',content:'限制#90已解除'}),null);assert.equal(page.restrictionTarget({type:'restriction_started',restriction_id:'90'}),null);assert.equal(page.restrictionTarget({type:'system',restriction_id:90}),null)
 })
+
+const sources=()=>[
+  {id:303,type:'occupation_refusal',source:'manual',status:'active',reservation_id:null,occurred_at:'2026-10-01T08:01:00.000001+08:00',registered_at:'2026-10-03T08:01+08:00',reason:'工程模拟来源甲',source_event_id:999,complaint_id:888,reporter:'PRIVATE_REPORTER',private_note:'PRIVATE_FACT',identity_basis:'PRIVATE_IDENTITY'},
+  {id:101,type:'no_show',source:'automatic',status:'active',reservation_id:44,occurred_at:'2026-10-02T08:02+08:00',registered_at:'2026-10-03T08:02+08:00',reason:'工程模拟来源乙'},
+  {id:202,type:'abandon',source:'automatic',status:'revoked',reservation_id:45,occurred_at:'2026-10-02T08:03+08:00',registered_at:'2026-10-03T08:03+08:00',reason:'工程模拟来源丙'},
+]
+const automatic=(extra={})=>record({id:92,source:'automatic',creator_display_name:null,verification_source:'system_rolling_violations',automatic_evaluation:{evaluated_at:'2026-10-31T08:01+08:00',window_start:'2026-10-01T08:01+08:00',window_end:'2026-10-31T08:01+08:00',window_start_inclusive:true,window_end_inclusive:true,threshold:3,duration_hours:168,source_violations:sources()},...extra})
+async function renderRestriction(recordValue){
+  const source=await readFile(new URL('../src/components/RestrictionRecord.vue',import.meta.url),'utf8'),{descriptor}=parse(source),context=vm.createContext({defineProps:()=>({record:recordValue})}),scriptModule=new vm.SourceTextModule(descriptor.scriptSetup.content+'\nexport {restrictionStatuses,violationTypeLabels,completeEvaluation}',{context})
+  await scriptModule.link(()=>new vm.SyntheticModule(['restrictionStatuses'],function(){this.setExport('restrictionStatuses',restrictionStatuses)},{context}));await scriptModule.evaluate()
+  const compiled=compileTemplate({source:descriptor.template.content,filename:'RestrictionRecord.vue',id:'s20record',ssr:true,ssrCssVars:[]}),module=new vm.SourceTextModule(compiled.code,{context});await module.link(specifier=>{const values=specifier==='vue'?vue:ssr;return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})});await module.evaluate();return ssr.renderToString(vue.createSSRApp({props:['record'],setup:()=>scriptModule.namespace,ssrRender:module.namespace.ssrRender},{record:recordValue}))
+}
+test('actual automatic restriction template preserves all three server-ordered sources, original times and current revoked status without private fields',async()=>{
+  const html=await renderRestriction(automatic());assert.match(html,/系统累计自动限制/);assert.match(html,/系统累计评估/);assert.match(html,/2026-10-31T08:01/);assert.match(html,/2026-10-01T08:01/);assert.match(html,/两端均含/);assert.match(html,/168小时/);assert.match(html,/7×24小时/)
+  assert.ok(html.indexOf('违规#303')<html.indexOf('违规#101'));assert.ok(html.indexOf('违规#101')<html.indexOf('违规#202'));for(const entry of sources()){assert.ok(html.includes(entry.occurred_at));assert.ok(html.includes(entry.registered_at));assert.ok(html.includes(entry.reason))}
+  assert.match(html,/当前已撤销/);assert.match(html,/来源关联永久保留/);assert.match(html,/关联预约涉及他人，不公开编号/);assert.match(html,/本人预约#44/);assert.doesNotMatch(html,/PRIVATE_|complaints\/888|source_event_id|#null|未完整返回/)
+})
+test('manual and legacy null evaluations remain their real sources, while automatic missing or incomplete sources are never filled or sliced',async()=>{
+  for(const value of [record({automatic_evaluation:null}),record({source:'legacy',legacy_remaining_only:true,automatic_evaluation:null})]){const html=await renderRestriction(value);assert.doesNotMatch(html,/本次累计评估记录|三条来源数据|系统累计评估/)}
+  const missing=await renderRestriction(automatic({automatic_evaluation:null}));assert.match(missing,/未完整返回/);assert.doesNotMatch(missing,/本次评估时刻：|违规#303/)
+  for(const count of [2,4]){const entries=count===2?sources().slice(0,2):[...sources(),{...sources()[0],id:404,reason:'工程模拟实际多返来源'}],value=automatic();value.automatic_evaluation.source_violations=entries;const html=await renderRestriction(value);assert.match(html,/未完整返回/);assert.equal((html.match(/违规#/g)||[]).length,count);if(count===4)assert.match(html,/违规#404/)}
+  const broken=automatic();broken.automatic_evaluation.source_violations=[...sources().slice(0,2),null];const html=await renderRestriction(broken);assert.match(html,/未完整返回/);assert.match(html,/来源记录缺失/);assert.equal((html.match(/违规#/g)||[]).length,2)
+})
+test('later reads keep a historical evaluation window unchanged and show source revocation without dropping the consumed association',async()=>{
+  const value=automatic({status:'released',released_at:'2026-11-01T10:00+08:00',release_reason:'工程模拟解除。'}),snapshot=structuredClone(value.automatic_evaluation),html=await renderRestriction(value)
+  assert.deepEqual(value.automatic_evaluation,snapshot);assert.match(html,/已解除/);assert.match(html,/违规#202/);assert.match(html,/当前已撤销/);assert.match(html,/当前资格/);assert.doesNotMatch(html,/解除。<[^>]*>。|资格已恢复/)
+})
+test('releasing the last old restriction can return a distinct automatic batch and still block booking',async()=>{
+  let posts=0;const next=automatic(),page=await admin({releaseRestriction:async(id,body)=>{posts++;const released=record({status:'released',version:2,released_at:'2026-11-01T09:01+08:00',release_reason:body.reason,release_notification_id:901,release_notified_at:'2026-11-01T09:01+08:00'});page.setRows([released,next]);return{data:{operation_id:body.operation_id,restriction:released,effects:effects(),eligibility:eligibility([next])}}}})
+  await page.loadList();page.choose(page.items.value[0]);page.releaseForm.value=form();await page.act('release');assert.equal(posts,1);assert.equal(page.receipt.value.restriction.status,'released');assert.equal(page.receipt.value.eligibility.can_book,false);assert.equal(page.receipt.value.eligibility.active_restrictions[0].id,92);assert.match(eligibilityText(page.receipt.value.eligibility),/仍有有效/);assert.match(page.dialogs[0],/可能立即.*新的累计限制/);const html=await renderRestriction(page.receipt.value.eligibility.active_restrictions[0]);assert.match(html,/违规#303/)
+})

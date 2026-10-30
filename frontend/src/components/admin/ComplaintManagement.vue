@@ -61,7 +61,7 @@ async function sendPending(){actionError.value='';const operation=copy(pending.v
       const violation=value?.violation
       if(value?.operation_id!==operation.body.operation_id||!Number.isSafeInteger(violation?.id)||violation.id<=0||violation.source_event_id!==operation.event_id||violation.user_id!==operation.fact.user_id||violation.reservation_id!==operation.fact.reservation_id||violation.type!=='occupation_refusal'||violation.source!=='manual'||violation.reason!==operation.body.reason||explicitInstant(violation.occurred_at)===null||explicitInstant(violation.occurred_at)!==explicitInstant(operation.fact.occurred_at)||!Number.isSafeInteger(violation.notification_id)||violation.notification_id<=0||explicitInstant(violation.notified_at)===null)throw new Error('违规登记回执不完整，请以原操作ID核对')
       unknown.value=false;readPending.value=true
-      writeNotice.value=`违规#${violation.id}已登记${value.replayed?'（原操作幂等回执）':''}，请核对刷新后的登记状态；本次不自动生成预约限制。`
+      writeNotice.value=`违规#${violation.id}已登记${value.replayed?'（原操作幂等回执）':''}，请核对刷新后的登记状态；服务端将按累计规则和当前有效限制统一评估，以实际限制记录与资格为准。`
     }else{
       if(value?.operation_id!==operation.body.operation_id||!Number.isInteger(value.event_id)||value.event_id<=0||value.complaint?.id!==operation.id||!Number.isInteger(value.complaint.version)||!Array.isArray(value.complaint.admin_events))throw new Error('写入回执不完整，请以原操作ID核对')
       unknown.value=false;readPending.value=true;detail.value=value.complaint
@@ -95,7 +95,7 @@ async function actViolation(event){
   if(!reason||reason.length>1000){actionError.value='请独立填写1至1000字面向被登记者的公开事实依据，不要复制私有核实资料';return}
   pending.value={id:detail.value.id,action:'violation',event_id:event.id,body:{operation_id:crypto.randomUUID(),reason},fact:{user_id:event.subject?.id,reservation_id:detail.value.reservation_id,occurred_at:event.occurred_at}}
   const operation=copy(pending.value),ticket=scope;submitting.value=true;actionError.value='';writeNotice.value=''
-  try{try{await confirmDialog(`被登记者：#${event.subject?.id} ${event.subject?.real_name} / ${event.subject?.username}。原预约：#${detail.value.reservation_id}，${detail.value.context_snapshot?.room_name||''} / ${detail.value.context_snapshot?.seat_no||''}。事实发生：${event.occurred_at}。公开事实依据：\n${operation.body.reason}\n\n确认从该不可改核实事件登记拒不配合占座违规？事实由管理员据实核实记录，本次不会自动新增预约限制。`,'确认独立登记违规',{type:'warning'})}catch{return}
+  try{try{await confirmDialog(`被登记者：#${event.subject?.id} ${event.subject?.real_name} / ${event.subject?.username}。原预约：#${detail.value.reservation_id}，${detail.value.context_snapshot?.room_name||''} / ${detail.value.context_snapshot?.seat_no||''}。事实发生：${event.occurred_at}。公开事实依据：\n${operation.body.reason}\n\n确认从该不可改核实事件登记拒不配合占座违规？事实由管理员据实核实记录，登记后由服务端按累计规则和当前有效限制统一评估，以实际限制记录与资格为准。`,'确认独立登记违规',{type:'warning'})}catch{return}
     if(alive&&ticket===scope)await sendPending()
   }finally{if(alive&&ticket===scope)submitting.value=false}
 }
