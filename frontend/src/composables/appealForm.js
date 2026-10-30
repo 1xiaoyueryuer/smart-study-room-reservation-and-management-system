@@ -6,5 +6,17 @@ export function appealPayload(description,items){const text=String(description||
   const attachment_ids=items.map(item=>item.metadata.id);if(new Set(attachment_ids).size!==attachment_ids.length)throw new Error('不能重复关联同一份材料')
   return{description:text,attachment_ids}
 }
-export function validAppealDetail(value){return Number.isSafeInteger(value?.id)&&value.id>0&&Number.isSafeInteger(value.violation_id)&&value.violation_id>0&&typeof value.status==='string'&&Number.isInteger(value.version)&&value.violation_snapshot?.id===value.violation_id&&Number.isSafeInteger(value.notification_basis?.id)&&value.notification_basis.id>0&&offsetInstant(value.notification_basis.notified_at)!==null&&offsetInstant(value.notification_basis.deadline)!==null&&Array.isArray(value.attachments)&&Array.isArray(value.events)}
+export function validAppealDetail(value){return Number.isSafeInteger(value?.id)&&value.id>0&&Number.isSafeInteger(value.violation_id)&&value.violation_id>0&&typeof value.status==='string'&&Number.isInteger(value.version)&&value.violation_snapshot?.id===value.violation_id&&Number.isSafeInteger(value.notification_basis?.id)&&value.notification_basis.id>0&&offsetInstant(value.notification_basis.notified_at)!==null&&offsetInstant(value.notification_basis.deadline)!==null&&Array.isArray(value.attachments)&&Array.isArray(value.events)&&(!['approved','rejected'].includes(value.status)||validPublicReview(value.review,value.status))}
 export function validAppealEligibility(value,id){return value?.violation?.id===id&&typeof value.eligibility?.can_submit==='boolean'&&[null,...Object.keys(appealBlockedText)].includes(value.eligibility.blocked_by)&&(!value.eligibility.can_submit||(Number.isSafeInteger(value.eligibility.notification_id)&&value.eligibility.notification_id>0&&offsetInstant(value.eligibility.notified_at)!==null&&offsetInstant(value.eligibility.deadline)!==null))}
+
+export const appealStatuses={submitted:'待审核',approved:'申诉成立',rejected:'申诉驳回'}
+export function reviewIntent(form,version){
+  const reason=String(form.reason||'').trim(),verification_note=String(form.verification_note||'').trim()
+  if(!['approved','rejected'].includes(form.decision))throw new Error('请选择同意或驳回申诉')
+  if(!reason||reason.length>1000)throw new Error('公开审核理由须1至1000字')
+  if(!verification_note||verification_note.length>2000)throw new Error('管理私有核实依据须1至2000字')
+  if(form.facts_confirmed!==true)throw new Error('请据实确认已核实审核依据')
+  return{version,decision:form.decision,reason,verification_note,facts_confirmed:true}
+}
+
+export function validPublicReview(value,decision){return Number.isSafeInteger(value?.id)&&value.id>0&&value.decision===decision&&typeof value.reason==='string'&&!!value.reason&&offsetInstant(value.reviewed_at)!==null&&Array.isArray(value.automatic_recalculations)}

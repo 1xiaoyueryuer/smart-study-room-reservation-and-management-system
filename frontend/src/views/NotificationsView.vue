@@ -21,6 +21,7 @@ const typeMeta = {
   reservation_cancelled:{ text:'预约取消', color:'var(--text-3)', bg:'var(--surface-3)' },
   management_cancelled:{ text:'资源管理取消', color:'var(--text-3)', bg:'var(--surface-3)', category:'reservation_cancelled' },
   checkin_reminder:   { text: '签到提醒', color: 'var(--primary-active)', bg: 'var(--primary-weak)' },
+  appeal_reviewed:{text:'申诉审核结果',color:'var(--primary-active)',bg:'var(--primary-weak)'},
   restriction_started:{text:'预约限制生效',color:'var(--red-strong)',bg:'var(--red-weak)'},
   restriction_released:{text:'单条预约限制解除',color:'var(--green-strong)',bg:'var(--green-weak)'},
   restriction_cancelled:{text:'限制管理取消预约',color:'var(--text-2)',bg:'var(--surface-3)'},
@@ -58,6 +59,7 @@ async function onMarkAll() {
   load()
 }
 
+function appealTarget(n){return n.type==='appeal_reviewed'&&Number.isSafeInteger(n.appeal_id)&&n.appeal_id>0?`/appeals/${n.appeal_id}`:null}
 function restrictionTarget(n) {return ['restriction_started','restriction_released','restriction_cancelled'].includes(n.type)&&Number.isSafeInteger(n.restriction_id)&&n.restriction_id>0?{path:'/profile',query:{restriction_id:n.restriction_id},hash:'#restrictions'}:null}
 function violationTarget(n) { return n.type === 'violation' && Number.isSafeInteger(n.violation_id) && n.violation_id > 0 ? {path:'/profile',query:{violation_id:n.violation_id},hash:'#violations'} : null }
 function complaintTarget(n) { return ['complaint_feedback','complaint_auto_closed'].includes(n.type) && Number.isSafeInteger(n.complaint_id) && n.complaint_id > 0 ? `/complaints/${n.complaint_id}` : null }
@@ -183,6 +185,7 @@ const { page, pages, pageItems } = usePagination(filtered, filterType)
             </div>
             <span class="msg-time">{{ fmtTime(n.created_at) }}</span>
           </button>
+          <RouterLink v-if="appealTarget(n)" class="complaint-link" :to="appealTarget(n)">查看本人申诉审核结果</RouterLink>
           <RouterLink v-if="restrictionTarget(n)" class="complaint-link" :to="restrictionTarget(n)">查看本人关联限制记录与资格</RouterLink>
           <RouterLink v-if="violationTarget(n)" class="complaint-link" :to="violationTarget(n)">查看本人关联违规记录</RouterLink>
           <RouterLink v-if="complaintTarget(n)" class="complaint-link" :to="complaintTarget(n)">查看关联投诉详情</RouterLink>

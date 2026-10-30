@@ -43,7 +43,7 @@ def model():
             in_note = True
             continue
         raise ValueError("Unsupported Mermaid line: " + line)
-    if in_note or set(states) != {"submitted"} or len(edges) != 1 or edges[0][:2] != ("[*]", "submitted"):
+    if in_note or set(states) != {"submitted", "approved", "rejected"} or {edge[:2] for edge in edges} != {("[*]", "submitted"), ("submitted", "approved"), ("submitted", "rejected")} or len(edges) != 3:
         raise ValueError("SM-04 structure changed; update this renderer explicitly")
     return raw, states, edges, notes
 
@@ -53,35 +53,49 @@ def render():
     bold = Path("C:/Windows/Fonts/msyhbd.ttc")
     if not font.exists() or not bold.exists():
         raise FileNotFoundError("Existing Microsoft YaHei fonts required")
-    fonts = {n: ImageFont.truetype(str(bold if n == 62 else font), n) for n in (28, 34, 38, 42, 50, 62)}
-    image = Image.new("RGB", (1800, 1180), "#f8fafc")
+    fonts = {n: ImageFont.truetype(str(bold if n == 66 else font), n) for n in (28, 34, 38, 42, 50, 66)}
+    image = Image.new("RGB", (2200, 1600), "#f8fafc")
     draw = ImageDraw.Draw(image)
-    draw.text((100, 70), "SM-04 申诉提交状态图", font=fonts[62], fill="#173653")
-    draw.text((100, 170), "FR-06.4 / UC-04 / BR-17 / SC-05 / ST-33 · S21提交范围", font=fonts[34], fill="#475569")
-    draw.ellipse((220, 385, 310, 475), fill="#173653")
-    draw.line((310, 430, 800, 430), fill="#2563a6", width=7)
-    draw.polygon([(800, 430), (770, 413), (770, 447)], fill="#2563a6")
-    draw.text((340, 340), edges[0][2], font=fonts[38], fill="#173653")
-    draw.rounded_rectangle((800, 300, 1540, 540), radius=28, fill="#e0efff", outline="#2563a6", width=5)
-    label = states["submitted"]
-    width = draw.textlength(label, font=fonts[50])
-    draw.text((1170-width/2, 350), label, font=fonts[50], fill="#173653")
-    width = draw.textlength("submitted", font=fonts[38])
-    draw.text((1170-width/2, 435), "submitted", font=fonts[38], fill="#475569")
-    draw.rounded_rectangle((100, 630, 1700, 1030), radius=20, fill="#fff8e6", outline="#b99132", width=3)
-    y = 665
+    draw.text((100, 60), "SM-04 申诉审核状态图", font=fonts[66], fill="#173653")
+    draw.text((100, 160), "FR-06.4 / UC-04 / BR-17 · ST-33/34/35 · 关联违规ST-36", font=fonts[34], fill="#475569")
+    positions = {"submitted": (660, 410), "approved": (1720, 310), "rejected": (1720, 650)}
+    colors = {"submitted": ("#e0efff", "#2563a6"), "approved": ("#e3f5eb", "#29845c"), "rejected": ("#fff0e7", "#b96735")}
+    width, height = 520, 190
+    draw.ellipse((110, 365, 200, 455), fill="#173653")
+    for start, end, label in edges:
+        if start == "[*]":
+            points = [(200,410), (400,410)]
+            text_at = (210,225)
+        else:
+            target_y = positions[end][1]
+            points = [(920,410),(1180,410),(1180,target_y),(1460,target_y)]
+            text_at = (1200, target_y-105)
+        draw.line(points, fill="#2563a6", width=6)
+        x,y=points[-1]
+        draw.polygon([(x,y),(x-26,y-15),(x-26,y+15)], fill="#2563a6")
+        parts=label.split(" ",1)
+        for line_index, part in enumerate(parts):
+            draw.text((text_at[0],text_at[1]+line_index*42),part,font=fonts[34],fill="#173653")
+    for alias, (cx, cy) in positions.items():
+        fill, outline=colors[alias]
+        draw.rounded_rectangle((cx-width/2,cy-height/2,cx+width/2,cy+height/2),radius=25,fill=fill,outline=outline,width=4)
+        for label, size, dy in ((states[alias],50,-60),(alias,38,20)):
+            tw=draw.textlength(label,font=fonts[size])
+            draw.text((cx-tw/2,cy+dy),label,font=fonts[size],fill="#173653")
+    draw.rounded_rectangle((100,800,2100,1480),radius=20,fill="#fff8e6",outline="#b99132",width=3)
+    y=835
     for note in notes:
-        if draw.textlength(note, font=fonts[38]) > 1500:
+        if draw.textlength(note,font=fonts[38])>1920:
             raise ValueError("Source note too wide; wrap source explicitly")
-        draw.text((140, y), note, font=fonts[38], fill="#4c421e")
-        y += 65
-    if y > 1030:
+        draw.text((140,y),note,font=fonts[38],fill="#4c421e")
+        y+=66
+    if y>1480:
         raise ValueError("Source notes overflow")
-    digest = hashlib.sha256(raw.encode()).hexdigest()[:12]
-    draw.text((100, 1095), f"本地Pillow直接解析可编辑源 · 1状态 / 1转换 / {len(notes)}注释 · 源摘要 {digest}", font=fonts[28], fill="#64748b")
+    digest=hashlib.sha256(raw.encode()).hexdigest()[:12]
+    draw.text((100,1530),f"本地Pillow直接解析源 · {len(states)}状态 / {len(edges)}转换 / {len(notes)}注释 · 源摘要 {digest}",font=fonts[28],fill="#64748b")
     OUTPUT.parent.mkdir(exist_ok=True)
     image.save(OUTPUT)
-    print(f"SM-04 rendered: {image.width}x{image.height}; state=1 transition=1 notes={len(notes)} sha={digest}")
+    print(f"SM-04 rendered: {image.width}x{image.height}; states={len(states)} transitions={len(edges)} notes={len(notes)} sha={digest}")
 
 if __name__ == "__main__":
     render()
