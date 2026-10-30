@@ -39,3 +39,7 @@ test('missing or invalid usage duration is never fabricated as zero or inferred 
     assert.match(html,/时长未登记/);assert.doesNotMatch(html,/使用时长：0秒|3600秒/)
   }
 })
+test('correction summary renders public reason and distinct actual operation time without private fields',async()=>{
+ const html=await render({origin:'admin_correction',checkin_at:'2026-10-30T10:01',duration_seconds:60,correction:{operated_at:'2026-10-30T10:02+08:00',reason:'公开补签说明',actor_display_name:'模拟管理员',source:'admin_self_report',verification_note:'PRIVATE_S23'},management_correction:{correction_note:'PRIVATE_S23'}})
+ assert.match(html,/管理员核实补签/);assert.match(html,/公开补签说明/);assert.match(html,/补签实际操作：2026-10-30T10:02/);assert.match(html,/管理员自报/);assert.doesNotMatch(html,/PRIVATE_S23|correction_note|verification_note/)
+})

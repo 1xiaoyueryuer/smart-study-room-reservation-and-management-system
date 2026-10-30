@@ -1,5 +1,6 @@
 <script setup>
 import { ref } from 'vue'
+import CheckinCorrection from '../../components/admin/CheckinCorrection.vue'
 import AppealManagement from '../../components/admin/AppealManagement.vue'
 import RestrictionManagement from '../../components/admin/RestrictionManagement.vue'
 import ComplaintManagement from '../../components/admin/ComplaintManagement.vue'
@@ -9,11 +10,12 @@ import PageHelp from '../../components/PageHelp.vue'
 import AppIcon from '../../components/AppIcon.vue'
 import SButton from '../../components/ui/SButton.vue'
 import STag from '../../components/ui/STag.vue'
+const correctionMounted=ref(false)
 const activeTab = ref('rooms')
 const resources = ref(null), users = ref(null), complaints = ref(null), complaintsMounted = ref(false), restrictions = ref(null), restrictionsMounted = ref(false), appeals=ref(null), appealsMounted=ref(false)
-function selectTab(key) { activeTab.value = key; if (key === 'complaints') complaintsMounted.value = true; if(key==='restrictions')restrictionsMounted.value=true; if(key==='appeals')appealsMounted.value=true }
+function selectTab(key) { activeTab.value = key; if(key==='correction')correctionMounted.value=true; if (key === 'complaints') complaintsMounted.value = true; if(key==='restrictions')restrictionsMounted.value=true; if(key==='appeals')appealsMounted.value=true }
 const roomStats = ref(null), userStats = ref(null)
-const tabs = [{ key: 'rooms', label: '自习室管理', icon: 'building' }, { key: 'users', label: '用户管理', icon: 'users' }, {key:'complaints',label:'投诉管理',icon:'ticket'}, {key:'restrictions',label:'预约限制',icon:'warning'},{key:'appeals',label:'申诉待办',icon:'ticket'}]
+const tabs = [{key:'correction',label:'核实补签',icon:'ticket'},{ key: 'rooms', label: '自习室管理', icon: 'building' }, { key: 'users', label: '用户管理', icon: 'users' }, {key:'complaints',label:'投诉管理',icon:'ticket'}, {key:'restrictions',label:'预约限制',icon:'warning'},{key:'appeals',label:'申诉待办',icon:'ticket'}]
 function refreshAll() { resources.value?.loadRooms(); users.value?.loadUsers(); complaints.value?.loadList(); restrictions.value?.loadList(); appeals.value?.loadList() }
 </script>
 <template>
@@ -23,7 +25,7 @@ function refreshAll() { resources.value?.loadRooms(); users.value?.loadUsers(); 
       <section class="card responsive-compact"><div class="card-title-row"><h3>管理面板</h3><STag type="danger">管理员</STag></div><nav v-active-track class="side-nav"><button v-for="tab in tabs" :key="tab.key" class="side-nav-item" :class="{active:activeTab===tab.key}" @click="selectTab(tab.key)"><span class="side-nav-icon"><AppIcon :name="tab.icon" :size="17" /></span><span class="side-nav-label">{{ tab.label }}</span></button></nav></section>
       <section class="card responsive-compact"><div class="card-title-row"><h3>资源与账号</h3></div><div class="kpi-grid"><div class="kpi"><div class="kpi-num">{{ roomStats?.total ?? '—' }}</div><div class="kpi-label">空间数量</div></div><div class="kpi"><div class="kpi-num">{{ roomStats?.seats ?? '—' }}</div><div class="kpi-label">实际座位数量</div></div><div class="kpi"><div class="kpi-num">{{ roomStats?.capacity ?? '—' }}</div><div class="kpi-label">启用空间有效容量</div></div><div class="kpi"><div class="kpi-num">{{ userStats?.total ?? '—' }}</div><div class="kpi-label">校园账号</div></div></div></section>
       <section class="card responsive-compact"><h3>快速操作</h3><div class="quick-actions"><SButton v-if="activeTab==='rooms'" variant="primary" block @click="resources?.openCreate()">新建自习室</SButton><SButton block @click="refreshAll">刷新数据</SButton></div></section>
-    </div><div class="split-right"><ResourceManagement ref="resources" v-show="activeTab==='rooms'" @summary="roomStats=$event" /><UserManagement ref="users" v-show="activeTab==='users'" @summary="userStats=$event" /><ComplaintManagement v-if="complaintsMounted" v-show="activeTab==='complaints'" ref="complaints" /><RestrictionManagement v-if="restrictionsMounted" v-show="activeTab==='restrictions'" ref="restrictions" /><AppealManagement v-if="appealsMounted" v-show="activeTab==='appeals'" ref="appeals" /></div></div>
+    </div><div class="split-right"><CheckinCorrection v-if="correctionMounted" v-show="activeTab==='correction'"/><ResourceManagement ref="resources" v-show="activeTab==='rooms'" @summary="roomStats=$event" /><UserManagement ref="users" v-show="activeTab==='users'" @summary="userStats=$event" /><ComplaintManagement v-if="complaintsMounted" v-show="activeTab==='complaints'" ref="complaints" /><RestrictionManagement v-if="restrictionsMounted" v-show="activeTab==='restrictions'" ref="restrictions" /><AppealManagement v-if="appealsMounted" v-show="activeTab==='appeals'" ref="appeals" /></div></div>
   </div>
 </template>
 <style scoped>

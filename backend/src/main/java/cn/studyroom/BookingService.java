@@ -22,7 +22,8 @@ public class BookingService {
     private final SeatCodeService codes;
     private final UsageService usage;
     private final RestrictionPolicy restrictions;
-    public BookingService(Store db,Clock clock,OpeningScheduleService opening,BookingPolicy policy,AuditService audit,ViolationService violations,SeatCodeService codes,UsageService usage,RestrictionPolicy restrictions) { this.db=db;this.clock=clock;this.opening=opening;this.policy=policy;this.audit=audit;this.violations=violations;this.codes=codes;this.usage=usage;this.restrictions=restrictions; }
+    private final com.fasterxml.jackson.databind.ObjectMapper json;
+    public BookingService(Store db,Clock clock,OpeningScheduleService opening,BookingPolicy policy,AuditService audit,ViolationService violations,SeatCodeService codes,UsageService usage,RestrictionPolicy restrictions,com.fasterxml.jackson.databind.ObjectMapper json) { this.db=db;this.clock=clock;this.opening=opening;this.policy=policy;this.audit=audit;this.violations=violations;this.codes=codes;this.usage=usage;this.restrictions=restrictions;this.json=json; }
     public List<Map<String,Object>> mine(long uid) {
         db.lockBookings();LocalDateTime now=now();enforceRestrictions(uid,now,null,null);
         var rows=db.list(VIEW+"WHERE rv.user_id=? ORDER BY rv.res_date DESC,rv.start_time DESC,rv.id DESC",uid);
@@ -230,6 +231,39 @@ public class BookingService {
     private void requireOrdinary(long uid) {
         Api.require(AuthService.isOrdinary(db.one("SELECT role FROM users WHERE id=?",uid).get("role")),403,"仅学生和教职工可操作本人预约或候补");
     }
+    private void correctionAdmin(long actor){var user=db.one("SELECT role,status FROM users WHERE id=?",actor);Api.require("admin".equals(user.get("role"))&&"active".equals(user.get("status")),403,"需要启用的管理员权限");}
+    @Transactional(readOnly=true,isolation=org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
+    public Map<String,Object> correctionDetail(long actor,long reservation){correctionAdmin(actor);return correctionView(reservation,now());}
+    private Map<String,Object> correctionView(long reservation,LocalDateTime snapshot){
+        var row=db.one(VIEW+"WHERE rv.id=?",reservation);decorate(row,snapshot);var result=new LinkedHashMap<String,Object>();result.put("reservation",row);result.put("server_now",AttachmentService.offset(snapshot));String blocked=correctionBlocked(row,snapshot);result.put("can_correct",blocked==null);result.put("blocked_reason",blocked);result.put("deadline",AttachmentService.offset(ReservationDeadline.at(row)));
+        var facts=db.list("SELECT correction_note,correction_operation,correction_actor,corrected_at FROM usage_records WHERE reservation_id=? AND origin='admin_correction'",reservation);result.put("management_correction",facts.isEmpty()?null:facts.get(0));return result;
+    }
+    private String correctionBlocked(Map<String,Object> row,LocalDateTime snapshot){
+        if(!"pending".equals(row.get("status")))return "仅待签到预约允许补签；终止或已有使用记录不可恢复或覆盖";
+        if(snapshot.isBefore(starts(row)))return "预约尚未开始";
+        if(ReservationDeadline.expiredPending(row,snapshot)||!snapshot.isBefore(ends(row)))return "原签到期限已到，不能补签或倒填恢复";
+        var user=db.one("SELECT role,status FROM users WHERE id=?",row.get("user_id"));if(!AuthService.isOrdinary(user.get("role"))||!"active".equals(user.get("status")))return "预约主体账号不可使用";
+        if(!Boolean.TRUE.equals(restrictions.eligibility(id(row,"user_id"),snapshot).get("can_book")))return "当前仍存在预约限制";
+        var seat=db.one("SELECT status,room_id FROM seats WHERE id=?",row.get("seat_id"));if(!"available".equals(seat.get("status")))return "座位当前不可使用";
+        if(!opening.calendar(id(seat,"room_id")).day(LocalDate.parse(text(row,"res_date")),id(row,"seat_id")).contains(LocalDate.parse(text(row,"res_date")),snapshot,ends(row)))return "剩余预约不在当前开放范围";
+        var candidates=db.list("SELECT * FROM reservations WHERE id<>? AND res_date=? AND status IN "+ACTIVE+" AND (seat_id=? OR user_id=?) AND start_time<CAST(? AS TIME) AND end_time>CAST(? AS TIME)",row.get("id"),Date.valueOf(text(row,"res_date")),row.get("seat_id"),row.get("user_id"),row.get("end_time"),row.get("start_time"));
+        if(candidates.stream().anyMatch(other->!ReservationDeadline.expiredPending(other,snapshot)&&snapshot.isBefore(ends(other))))return "存在同座位或本人时段冲突";
+        UsageService.requireReservationState("pending",usage.view(id(row,"id"),snapshot),snapshot);return null;
+    }
+    public ActionResult correctCheckin(long actor,long reservation,String rawOperation,String rawBusiness,String rawReason,String rawNote){
+        db.lockBookings();correctionAdmin(actor);String operation=AttachmentService.uuid(rawOperation,"operation_id"),reason=correctionText(rawReason,1000),note=correctionText(rawNote,2000);LocalDateTime business;
+        try{business=OffsetDateTime.parse(rawBusiness).atZoneSameInstant(BookingPolicy.CAMPUS_ZONE).toLocalDateTime();Api.require(business.getNano()%1000==0,400,"补签时刻最多六位小数");}catch(java.time.format.DateTimeParseException|NullPointerException e){throw Api.fail(400,"业务签到时刻须明确时区offset");}
+        String request;try{request=json.writeValueAsString(Map.of("actor",actor,"reservation",reservation,"business",business.toString(),"reason",reason,"note",note));}catch(Exception e){throw new IllegalStateException(e);}
+        var old=db.list("SELECT reservation_id,correction_request=CAST(? AS JSONB) AS same FROM usage_records WHERE correction_operation=CAST(? AS UUID)",request,operation);LocalDateTime snapshot=now();
+        if(!old.isEmpty()){Api.require(Boolean.TRUE.equals(old.get(0).get("same"))&&id(old.get(0),"reservation_id")==reservation,409,"操作标识已用于其他补签内容，请保留原请求核对");var replay=correctionView(reservation,snapshot);replay.put("operation_id",operation);replay.put("replayed",true);return new ActionResult(200,"ok",replay,null);}
+        var before=db.one("SELECT * FROM reservations WHERE id=?",reservation);Api.require(!business.isBefore(starts(before))&&!business.isAfter(snapshot),400,"业务签到时刻须在预约开始至当前操作时刻内");
+        enforceRestrictions(id(before,"user_id"),snapshot,actor,null);var current=db.one("SELECT * FROM reservations WHERE id=?",reservation);String blocked=correctionBlocked(current,snapshot);
+        if(blocked!=null)return new ActionResult(409,blocked,Map.of(),correctionView(reservation,snapshot));
+        usage.startCorrection(reservation,business,snapshot,actor,operation,reason,note,request);db.update("UPDATE reservations SET status='checked_in',updated_at=CURRENT_TIMESTAMP WHERE id=?",reservation);
+        notify(id(before,"user_id"),"reservation_corrected_checkin","管理员已核实补签","预约#"+reservation+"已补签。公开依据："+reason+"。业务签到："+AttachmentService.offset(business)+"；实际操作："+AttachmentService.offset(snapshot)+"。这是管理员核实自报记录。");audit.record(actor,"reservation.correct_checkin","reservation",Long.toString(reservation),reason,Map.of("status",before.get("status")),Map.of("status","checked_in","operation_id",operation,"business_checkin_at",AttachmentService.offset(business),"operated_at",AttachmentService.offset(snapshot),"verification_source","admin_self_report"));
+        var result=correctionView(reservation,snapshot);result.put("operation_id",operation);result.put("replayed",false);return new ActionResult(200,"ok",result,null);
+    }
+    private String correctionText(String raw,int limit){String value=raw==null?"":raw.trim();Api.require(!value.isEmpty()&&value.length()<=limit,400,"公开理由及私有核实依据必填且须在长度限制内");return value;}
     private LocalDateTime now() { return LocalDateTime.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MICROS); }
     private LocalDateTime starts(Map<String,Object> r) { return Slot.endpoint(LocalDate.parse(text(r,"res_date")),text(r,"start_time")); }
     private LocalDateTime ends(Map<String,Object> r) { return Slot.endpoint(LocalDate.parse(text(r,"res_date")),text(r,"end_time")); }

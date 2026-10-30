@@ -4,7 +4,7 @@
 
 基于 [imicola/smart-study-room](https://github.com/imicola/smart-study-room) 的课程项目二次开发：保留原 Vue 3 前端，后端改为 Java 17 + Spring Boot，使用 Docker PostgreSQL 17 和已有 Redis，已移除智能助手。保留原作者 MIT 许可证。
 
-当前已接入校园账号、开放安排、预约签到与使用结算、三种连续空档找座方案、资源变更善后，以及投诉材料、管理核实、独立提醒、反馈确认结案、处理目标提示、核实事件的手动违规登记，以及独立预约限制、30天累计触发、统一资格和本人申诉、审核与违规限制重算。核实补签等仍待后续落实，详见 [迁移说明与需求差距](docs/MIGRATION.md)。
+当前已接入校园账号、开放安排、预约签到与使用结算、三种连续空档找座方案、资源变更善后，以及投诉材料、管理核实、独立提醒、反馈确认结案、处理目标提示、核实事件的手动违规登记，以及独立预约限制、30天累计触发、统一资格和本人申诉、审核与违规限制重算。核实补签也已接入；评价及后续查询、统计等仍待后续落实，详见 [迁移说明与需求差距](docs/MIGRATION.md)。
 
 ## 后续开发从这里开始
 
@@ -111,3 +111,6 @@ Java 从 `.local/server.jar` 独立副本运行，不锁定 Maven 构建产物�
 后端入口为 `backend/src/main/java/cn/studyroom/`：`Requests` 定义前端契约，控制器提供接口，`AuthService`/`WebSecurity` 负责权限，`UserService` 维护校园账号，`ResourceService` 管理资源，`OpeningScheduleService` 计算合法窗口，`ResourceChangeService` 编排预览与管理取消，`Slot`/`BookingService` 统一预约时间与事务，`UsageService` 记录实际使用，`RestrictionPolicy` 维护限制事实与资格、`RestrictionWorkflow` 编排限制及既有预约善后，`AvailabilityService` 计算连续空档，`StatsService` 汇总统计，`Store` 处理 SQL 和保真时间映射。
 
 应用仅监听127.0.0.1。上游来源和许可证在本项目中保留；原作者材料不能作为本组的实现或测试结果。
+
+
+核实补签：管理端“核实补签”按真实预约编号查询，填写业务签到时刻、公开理由及私有核实依据，明确自报后确认。仅原签到期限内仍有效、账号与资源可用且无冲突的待签到预约允许操作；截止、已终止或已有使用记录不能补签恢复。本人使用记录展示补签来源、业务时刻与真实操作时刻，可沿原流程签退；私有依据仅管理员可见。

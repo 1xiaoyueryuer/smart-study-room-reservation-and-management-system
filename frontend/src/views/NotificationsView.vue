@@ -17,6 +17,7 @@ const loading = ref(false)
 const filterType = ref('all')
 
 const typeMeta = {
+  reservation_corrected_checkin:{text:'管理员核实补签',color:'var(--primary-active)',bg:'var(--primary-weak)'},
   reservation_success: { text: '预约成功', color: 'var(--green-strong)', bg: 'var(--green-weak)' },
   reservation_cancelled:{ text:'预约取消', color:'var(--text-3)', bg:'var(--surface-3)' },
   management_cancelled:{ text:'资源管理取消', color:'var(--text-3)', bg:'var(--surface-3)', category:'reservation_cancelled' },
