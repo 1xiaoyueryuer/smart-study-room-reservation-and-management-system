@@ -1,9 +1,10 @@
 <script setup>
 import PageHelp from '../components/PageHelp.vue'
-import SAnimatedNumber from '../components/ui/SAnimatedNumber.vue'
-import { usePagination } from '../composables/usePagination'
-import SPagination from '../components/ui/SPagination.vue'
-import { ref, computed, onMounted } from 'vue'
+import {createRecordPager,recordFields} from '../composables/recordPage.js'
+import RecordFilters from '../components/RecordFilters.vue'
+import RecordPageControls from '../components/RecordPageControls.vue'
+
+import { ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {reviewReservationParam} from '../composables/reviewManagement.js'
 import { message, confirmDialog } from '../components/ui/feedback'
@@ -11,7 +12,6 @@ import {
   listMyReservations, cancelReservation, abandonReservation,
   checkoutReservation
 } from '../api/reservation'
-import AppIcon from '../components/AppIcon.vue'
 import SButton from '../components/ui/SButton.vue'
 import STag from '../components/ui/STag.vue'
 import SEmpty from '../components/ui/SEmpty.vue'
@@ -23,11 +23,9 @@ import ReviewEditor from '../components/ReviewEditor.vue'
 const router = useRouter()
 const route=useRoute()
 const reviewEditor=ref(null)
-const list = ref([])
-const loading = ref(false)
-const error = ref(''), actionError = ref(''), busyId = ref(null), violations = ref(null)
-const filterStatus = ref('all')
-let loadSequence = 0
+const pager=createRecordPager(listMyReservations,{initial:{record_type:'reservation'},blocked:()=>busyId.value!==null}),fields=recordFields('reservation')
+const {items:list,loading,error,filters,snapshot,snapshotQuery}=pager
+const actionError = ref(''), busyId = ref(null), violations = ref(null)
 
 const statusMeta = {
   pending:     { text: '待签到',   type: 'warning' },
@@ -40,19 +38,8 @@ const statusMeta = {
 const sourceMeta = { manual: '手动选座', auto: '历史智能分配', waitlist: '历史候补递补' }
 const terminationLabels = {user_cancelled:'开始前本人取消',abandon:'开始后主动放弃',no_show:'到签到期限仍未签到',legacy_violation:'历史违约状态，仅作溯源，未转为新独立违规',early_checkout:'提前签退',auto_end:'到期自动结束',legacy_unclassified:'历史结束，具体方式未记录',demo_completed:'演示模拟结束',temp_leave_timeout:'旧暂离流程结束（历史）',admin_resource_change:'资源管理取消（不记用户违约）',admin_restriction:'预约限制管理取消（不记用户违约）'}
 
-async function load() {
-  const sequence = ++loadSequence
-  loading.value = true
-  error.value = ''
-  try {
-    const resp = await listMyReservations()
-    if (sequence !== loadSequence) return
-    list.value = resp.data || []
-  } catch (failure) { if (sequence === loadSequence) error.value = failure.message }
-  finally {
-    if (sequence === loadSequence) loading.value = false
-  }
-}
+const load=()=>pager.refresh(true)
+onBeforeUnmount(pager.dispose)
 
 const actionVariant = {
   primary: 'primary',
@@ -103,29 +90,10 @@ async function doAction(row, key) {
   } finally { busyId.value = null }
 }
 
-// 左栏状态快筛
-const statusBuckets = computed(() => {
-  const b = { all: list.value.length, pending: 0, checked_in: 0, completed: 0, cancelled:0, unused_ended:0, violation: 0 }
-  list.value.forEach((r) => { if (b[r.status] !== undefined) b[r.status]++ })
-  return b
-})
-const filtered = computed(() => {
-  if (filterStatus.value === 'all') return list.value
-  return list.value.filter((r) => r.status === filterStatus.value)
-})
-
-const statusNav = [
-  { key: 'all',        label: '全部',   icon: 'reservations' },
-  { key: 'pending',    label: '待签到', icon: 'waitlist' },
-  { key: 'checked_in', label: '使用中', icon: 'circle-success' },
-  { key: 'completed',  label: '已结束', icon: 'check' },
-  { key:'cancelled',label:'已取消',icon:'circle-muted' },
-  { key:'unused_ended',label:'未使用结束',icon:'circle-muted' },
-  { key:'violation',label:'旧违约状态',icon:'warning' }
-]
+const filtered=list,pageItems=list
 
 onMounted(async()=>{await refreshAll();const target=reviewReservationParam(route.query.review_reservation_id);if(target!==null)await reviewEditor.value?.open(target)})
-const { page, pages, pageItems } = usePagination(filtered, filterStatus)
+
 </script>
 
 <template>
@@ -140,48 +108,13 @@ const { page, pages, pageItems } = usePagination(filtered, filterStatus)
       </PageHelp></header>
     <!-- 我的预约：页面级双栏 = 左状态筛选 | 右列表 -->
     <div class="split mine-split">
-    <div class="split-left">
-      <section class="card responsive-compact">
-        <div class="card-title-row">
-          <h3>预约概览</h3>
-          <SButton size="sm" variant="secondary" :loading="loading" :disabled="busyId !== null" @click="refreshAll"><AppIcon name="refresh" :size="14" />刷新</SButton>
-        </div>
-        <div class="kpi-grid kpi-lg">
-          <div class="kpi"><div class="kpi-num"><SAnimatedNumber v-if="!loading && !error" :value="statusBuckets.all" /><span v-else>—</span></div><div class="kpi-label">累计预约</div></div>
-          <div class="kpi kpi-warn"><div class="kpi-num"><SAnimatedNumber v-if="!loading && !error" :value="statusBuckets.pending" /><span v-else>—</span></div><div class="kpi-label">待签到预约</div></div>
-          <div class="kpi kpi-ok"><div class="kpi-num">{{ loading || error ? '—' : statusBuckets.checked_in }}</div><div class="kpi-label">当前进行中</div></div>
-          <div class="kpi kpi-bad"><div class="kpi-num"><SAnimatedNumber v-if="!loading && !error" :value="statusBuckets.unused_ended" /><span v-else>—</span></div><div class="kpi-label">未使用结束预约</div></div>
-        </div>
-      </section>
-
-      <section class="card responsive-compact">
-        <div class="card-title-row">
-          <h3>状态筛选</h3>
-        </div>
-        <nav v-active-track class="side-nav">
-          <button
-            v-for="s in statusNav"
-            :key="s.key"
-            class="side-nav-item"
-            :class="{ active: filterStatus === s.key }"
-            @click="filterStatus = s.key"
-          >
-            <span class="side-nav-icon"><AppIcon :name="s.icon" :size="16" /></span>
-            <span class="side-nav-label">{{ s.label }}</span>
-            <span class="side-nav-count">{{ loading || error ? '—' : statusBuckets[s.key] ?? 0 }}</span>
-          </button>
-        </nav>
-      </section>
-
-      
-    </div>
-
+    <div class="split-left"><section class="card"><h3>预约与使用记录筛选</h3><RecordFilters v-model="filters" :fields="fields" :disabled="loading||busyId!==null" @apply="pager.apply"/><SButton :disabled="loading||busyId!==null" @click="refreshAll">刷新已应用条件</SButton><p>状态数量与总数均以当前服务端查询为准，不从当前页推算全部记录。</p></section></div>
     <div class="split-right">
       <section class="card">
         <div class="card-title-row">
           <h3>
             预约记录
-            <span class="muted">共 {{ filtered.length }} 条</span>
+            <span class="muted">共 {{ snapshot?.total ?? '—' }} 条</span>
           </h3>
         </div>
 
@@ -242,7 +175,7 @@ const { page, pages, pageItems } = usePagination(filtered, filterStatus)
             <SEmpty v-if="!filtered.length && !loading && !error" description="当前筛选条件下暂无预约记录" />
           </div>
         </div>
-        <SPagination v-model="page" :pages="pages" :total="filtered.length" />
+        <RecordPageControls :snapshot="snapshot" :query="snapshotQuery" :fields="fields" :disabled="loading||busyId!==null" @page="pager.turn"/>
       </section>
       <ViolationsPanel ref="violations" :auto-load="false" />
       <ReviewEditor ref="reviewEditor"/>

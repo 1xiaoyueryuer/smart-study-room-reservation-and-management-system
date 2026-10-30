@@ -97,9 +97,9 @@ class UnusedLifecycleIntegrationTest {
         assertEquals("unused_ended",row(id).get("status"));assertEquals(1,db.count("SELECT count(*) FROM violations WHERE reservation_id=?",id));
         assertEquals(base.atTime(9,15),LocalDateTime.parse(row(id).get("ended_at").toString()));
         at(9,17,0);
-        http.perform(get("/api/reservations/mine").header("Authorization","Bearer "+staffToken)).andExpect(status().isOk()).andExpect(jsonPath("$.data[0].status").value("unused_ended")).andExpect(jsonPath("$.data[0].allowed_actions").isEmpty());
+        http.perform(get("/api/reservations/mine").header("Authorization","Bearer "+staffToken)).andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].status").value("unused_ended")).andExpect(jsonPath("$.data.items[0].allowed_actions").isEmpty());
         var delayed=db.one("SELECT occurred_at,registered_at FROM violations WHERE reservation_id=?",other);assertEquals(base.atTime(9,15),LocalDateTime.parse(delayed.get("occurred_at").toString()));assertEquals(base.atTime(9,17),LocalDateTime.parse(delayed.get("registered_at").toString()));
-        var own=http.perform(get("/api/violations/mine").header("Authorization","Bearer "+studentToken)).andExpect(status().isOk()).andExpect(jsonPath("$.data.length()").value(1)).andExpect(jsonPath("$.data[0].reservation_id").value(id)).andExpect(jsonPath("$.data[0].event_key").doesNotExist()).andExpect(jsonPath("$.data[0].user_id").doesNotExist()).andReturn();
+        var own=http.perform(get("/api/violations/mine").header("Authorization","Bearer "+studentToken)).andExpect(status().isOk()).andExpect(jsonPath("$.data.items.length()").value(1)).andExpect(jsonPath("$.data.items[0].reservation_id").value(id)).andExpect(jsonPath("$.data.items[0].event_key").doesNotExist()).andExpect(jsonPath("$.data.items[0].user_id").doesNotExist()).andReturn();
         assertFalse(own.getResponse().getContentAsString().contains("s08_staff"));
         http.perform(get("/api/health")).andExpect(status().isOk()).andExpect(jsonPath("$.data.database_name").value("studyroom_java_test")).andExpect(jsonPath("$.data.database").value("PostgreSQL"));
     }
@@ -140,7 +140,7 @@ class UnusedLifecycleIntegrationTest {
             at(9,15,0);http.perform(get("/api/reservations/mine").header("Authorization","Bearer "+staffToken)).andExpect(status().isInternalServerError());
             assertEquals("pending",row(due).get("status"));assertEquals(0,db.count("SELECT count(*) FROM violations"));assertEquals(2,db.count("SELECT count(*) FROM notifications"));
         } finally { db.update("ALTER TABLE audit_events DROP CONSTRAINT s08_failure"); }
-        http.perform(get("/api/reservations/mine").header("Authorization","Bearer "+staffToken)).andExpect(status().isOk()).andExpect(jsonPath("$.data[0].status").value("unused_ended"));
+        http.perform(get("/api/reservations/mine").header("Authorization","Bearer "+staffToken)).andExpect(status().isOk()).andExpect(jsonPath("$.data.items[0].status").value("unused_ended"));
         assertEquals(1,db.count("SELECT count(*) FROM violations"));
     }
     @Test void oldCreditAndRestrictionAreReadOnlyUntilOriginalDeadlineWithoutNewLowScoreBan() throws Exception {

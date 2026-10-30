@@ -36,7 +36,7 @@ public class ApiController {
     @GetMapping("/rooms/{id}/seats") Object seats(@PathVariable long id,@RequestParam String date,@RequestParam String start,@RequestParam String end) { return ok(resources.seatMap(id,date,start,end)); }
     @PostMapping("/reservations") Object create(HttpServletRequest req,@Valid @RequestBody Requests.Reservation body) { return actionResponse(bookings.createForClient(uid(req),body)); }
     @PostMapping("/reservations/auto") Object allocate(HttpServletRequest req,@Valid @RequestBody Requests.Allocation body) { return ok(bookings.allocate(uid(req),body)); }
-    @GetMapping("/reservations/mine") Object mine(HttpServletRequest req) { return ok(bookings.mine(uid(req))); }
+    @GetMapping("/reservations/mine") Object mine(HttpServletRequest req,@RequestParam Map<String,String> parameters) { return ok(bookings.records(uid(req),parameters,false)); }
     @GetMapping("/reservations/{id}") Object detail(HttpServletRequest req,@PathVariable long id) { return ok(bookings.detail(uid(req),id)); }
     @PostMapping("/reservations/{id}/checkin") Object checkin(HttpServletRequest req,@PathVariable long id,@RequestBody Map<String,Object> body) {
         Api.require(body.keySet().equals(java.util.Set.of("seat_code"))&&body.get("seat_code") instanceof String,400,"签到仅接受座位码 seat_code");
@@ -50,7 +50,11 @@ public class ApiController {
         if(result.status()!=200) throw Api.fail(result.status(),result.message(),result.details());
         return ok(result.data());
     }
-    @GetMapping("/violations/mine") Object violations(HttpServletRequest req) { return ok(bookings.violationsMine(uid(req))); }
+    @GetMapping("/violations/mine") Object violations(HttpServletRequest req,@RequestParam Map<String,String> parameters) { return ok(bookings.violationRecords(uid(req),parameters,false)); }
+    @GetMapping("/violations/{id}") Object violationDetail(HttpServletRequest req,@PathVariable long id){return ok(bookings.violationDetail(uid(req),id));}
+    @GetMapping("/admin/violations") Object adminViolations(HttpServletRequest req,@RequestParam Map<String,String> parameters){return ok(bookings.violationRecords(uid(req),parameters,true));}
+    @GetMapping("/admin/reservations") Object adminReservations(HttpServletRequest req,@RequestParam Map<String,String> parameters){return ok(bookings.records(uid(req),parameters,true));}
+    @GetMapping("/admin/reservations/{id}") Object adminReservation(HttpServletRequest req,@PathVariable long id){return ok(bookings.correctionDetail(uid(req),id));}
     @GetMapping("/credit") Object credit(HttpServletRequest req) { return ok(bookings.legacyCredit(uid(req))); }
     @GetMapping("/notifications") Object notifications(HttpServletRequest req) { return ok(db.list("SELECT * FROM notifications WHERE user_id=? ORDER BY id DESC LIMIT 200",uid(req))); }
     @GetMapping("/notifications/unread_count") Object unread(HttpServletRequest req) { return ok(Map.of("count",db.count("SELECT count(*) FROM notifications WHERE user_id=? AND is_read=FALSE",uid(req)))); }

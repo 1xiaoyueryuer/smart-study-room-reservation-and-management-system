@@ -11,10 +11,14 @@ import SInput from './ui/SInput.vue'
 import SSelect from './ui/SSelect.vue'
 import SButton from './ui/SButton.vue'
 import SBanner from './ui/SBanner.vue'
+import {createRecordPager,recordFields} from '../composables/recordPage.js'
+import RecordFilters from './RecordFilters.vue'
+import RecordPageControls from './RecordPageControls.vue'
+const choicesPager=createRecordPager(listMyReservations,{blocked:()=>locked.value}),choicesFields=recordFields('reservation')
 const props = defineProps({ initialType:{type:String,default:'service'}, initialReservationId:{type:[String,Number],default:null} })
 const emit = defineEmits(['created'])
 const type=ref('service'), description=ref(''), useReservation=ref(false), reservationId=ref(null), roomId=ref(null), context=ref(null)
-const rooms=ref([]), choices=ref([]), roomsError=ref(''), choicesError=ref(''), contextError=ref(''), contextLoading=ref(false), roomsLoading=ref(false), choicesLoading=ref(false)
+const rooms=ref([]), choices=choicesPager.items, roomsError=ref(''), choicesError=choicesPager.error, contextError=ref(''), contextLoading=ref(false), roomsLoading=ref(false), choicesLoading=choicesPager.loading
 const submitting=ref(false), uncertain=ref(false), error=ref(''), receipt=ref(null), record=ref(null), reading=ref(false), readError=ref('')
 const locked=computed(()=>submitting.value || uncertain.value || !!receipt.value)
 defineExpose({targetReadBlocked:computed(()=>submitting.value||uncertain.value||reading.value||uploading.value)})
@@ -29,7 +33,7 @@ let alive=true, contextSequence=0, readSequence=0, scope=0, frozenBody=null, fin
 const queue=useEvidenceUploadQueue({uploadFile:uploadComplaintAttachment,isLocked:()=>locked.value,isActive:()=>alive,setError:text=>{error.value=text},validateFile:validateEvidenceFile,newKey:()=>crypto.randomUUID()})
 const {items,uploading,uploadItem,selectFiles,removeItem}=queue
 async function loadRooms() {roomsLoading.value=true;try{const response=await getRooms();if(alive){rooms.value=response.data;roomsError.value=''}}catch(failure){if(alive)roomsError.value=failure.message}finally{if(alive)roomsLoading.value=false}}
-async function loadChoices() {choicesLoading.value=true;try{const response=await listMyReservations();if(alive){choices.value=response.data;choicesError.value=''}}catch(failure){if(alive)choicesError.value=failure.message}finally{if(alive)choicesLoading.value=false}}
+const loadChoices=()=>choicesPager.refresh()
 async function selectReservation(value) {
   if(locked.value) return
   const ticket=++contextSequence
@@ -85,7 +89,7 @@ function applyInitial() {
 }
 watch(()=>[props.initialType,props.initialReservationId],applyInitial,{immediate:true})
 onMounted(loadRooms)
-onBeforeUnmount(()=>{queue.dispose();alive=false;scope++;contextSequence++;readSequence++})
+onBeforeUnmount(()=>{queue.dispose();alive=false;choicesPager.dispose();scope++;contextSequence++;readSequence++})
 </script>
 <template>
   <section class="card complaint-form">
@@ -94,7 +98,7 @@ onBeforeUnmount(()=>{queue.dispose();alive=false;scope++;contextSequence++;readS
       <form class="fields" @submit.prevent="submit">
         <label>类型<SSelect :model-value="type" :options="typeOptions" :disabled="locked" @update:model-value="changeType" /></label>
         <label v-if="type==='service'"><span><input v-model="useReservation" type="checkbox" :disabled="locked" @change="toggleReservation" /> 关联本人预约（可选）</span></label>
-        <div v-if="useReservation" class="fields"><label>关联本人预约（含历史）<SSelect :model-value="reservationId" :options="reservationOptions" :disabled="locked" placeholder="从本人预约选择" @update:model-value="selectReservation" /></label><RouterLink to="/mine">前往我的预约选择求助记录</RouterLink><p v-if="choicesLoading" role="status">正在读取本人预约选项…</p><p v-if="choicesError" role="alert">预约选项读取失败：{{ choicesError }} <SButton size="sm" :disabled="locked" @click="loadChoices">重试选项</SButton></p><p v-if="contextLoading" role="status">正在核对本人预约…</p><p v-if="contextError" role="alert">{{ contextError }} <SButton size="sm" :disabled="locked" @click="selectReservation(reservationId)">重试预约</SButton></p><div v-if="context" class="context">{{ context.room_name }} · 座位{{ context.seat_no }} · {{ context.res_date }} {{ context.start_time }}—{{ context.end_time }}<br />当前状态：{{ reservationStatuses[context.status] || context.status }}；{{ context.building || '楼栋未登记' }} · {{ context.floor || '楼层未登记' }} · {{ context.location || '位置未登记' }}</div></div>
+        <div v-if="useReservation" class="fields"><label>关联本人预约（含历史）<SSelect :model-value="reservationId" :options="reservationOptions" :disabled="locked" placeholder="从本人预约选择" @update:model-value="selectReservation" /></label><RouterLink to="/mine">前往我的预约选择求助记录</RouterLink><RecordFilters v-model="choicesPager.filters.value" :fields="choicesFields" :disabled="locked||choicesLoading" @apply="choicesPager.apply"/><RecordPageControls :snapshot="choicesPager.snapshot.value" :query="choicesPager.snapshotQuery.value" :fields="choicesFields" :disabled="locked||choicesLoading" @page="choicesPager.turn"/><p v-if="choicesLoading" role="status">正在读取本人预约选项…</p><p v-if="choicesError" role="alert">预约选项读取失败：{{ choicesError }} <SButton size="sm" :disabled="locked" @click="loadChoices">重试选项</SButton></p><p v-if="contextLoading" role="status">正在核对本人预约…</p><p v-if="contextError" role="alert">{{ contextError }} <SButton size="sm" :disabled="locked" @click="selectReservation(reservationId)">重试预约</SButton></p><div v-if="context" class="context">{{ context.room_name }} · 座位{{ context.seat_no }} · {{ context.res_date }} {{ context.start_time }}—{{ context.end_time }}<br />当前状态：{{ reservationStatuses[context.status] || context.status }}；{{ context.building || '楼栋未登记' }} · {{ context.floor || '楼层未登记' }} · {{ context.location || '位置未登记' }}</div></div>
         <label v-else>关联空间（可选）<SSelect v-model="roomId" :options="roomOptions" :disabled="locked" /></label><p v-if="roomsLoading" role="status">正在读取空间选项…</p><p v-if="roomsError" role="alert">空间选项读取失败：{{ roomsError }} <SButton size="sm" :disabled="locked" @click="loadRooms">重试空间</SButton></p>
         <label>情况说明<SInput v-model="description" type="textarea" :rows="5" required maxlength="2000" :disabled="locked" placeholder="描述发生的情况；不必知道或猜测占用者的身份" /></label><p class="muted">{{ description.trim().length }}/2000字。仅文字也可提交，请勿填写不必要的个人信息。</p>
         <EvidenceUploadQueue :items="items" :disabled="locked" :uploading="uploading" @select="selectFiles" @retry="uploadItem" @remove="removeItem" />

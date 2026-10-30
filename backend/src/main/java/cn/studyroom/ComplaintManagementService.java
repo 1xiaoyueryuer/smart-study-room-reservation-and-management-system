@@ -23,8 +23,10 @@ public class ComplaintManagementService {
     }
     List<Map<String,Object>> listAt(long actor,String status,String type,Long room,LocalDateTime now) {
         requireAdmin(actor);validateFilters(status,type,room);
-        var where=new StringBuilder("WHERE 1=1");var args=new ArrayList<Object>();if(status!=null) {where.append(" AND c.status=?");args.add(status);}if(type!=null) {where.append(" AND c.type=?");args.add(type);}if(room!=null) {where.append(" AND c.room_id=?");args.add(room);}
-        var result=complaints.summariesInternal(where.toString(),args.toArray());if(result.isEmpty()) return result;
+        var filters=new HashMap<String,String>();if(status!=null)filters.put("status",status);if(type!=null)filters.put("type",type);if(room!=null)filters.put("room_id",room.toString());var selected=RecordPage.legacy(filters,RecordPage.Domain.COMPLAINT,true).select(db,RecordPage.Domain.COMPLAINT,null,now);return pageItems(selected.ids(),now);
+    }
+    List<Map<String,Object>> pageItems(List<Long> selected,LocalDateTime now){
+        var result=selected.isEmpty()?new ArrayList<Map<String,Object>>():complaints.summariesInternal("WHERE c.id IN ("+RecordPage.marks(selected)+")",selected.toArray());if(result.isEmpty())return result;
         var ids=result.stream().map(item->item.get("id")).toArray();String marks=String.join(",",Collections.nCopies(ids.length,"?"));var people=new HashMap<Long,Map<String,Object>>();for(var row:db.list("SELECT c.id,u.id AS reporter_id,u.username,u.real_name,u.campus_id,c.handler_id,COALESCE(NULLIF(h.real_name,''),h.username) AS handler_name FROM complaints c JOIN users u ON u.id=c.user_id LEFT JOIN users h ON h.id=c.handler_id WHERE c.id IN ("+marks+")",ids)) people.put(Store.id(row,"id"),row);
         for(var item:result) {var row=people.get(Store.id(item,"id"));var reporter=new LinkedHashMap<String,Object>();reporter.put("id",row.get("reporter_id"));for(String key:List.of("username","real_name","campus_id")) reporter.put(key,row.get(key));item.put("reporter",reporter);if(row.get("handler_id")!=null) item.put("handler",Map.of("id",row.get("handler_id"),"display_name",row.get("handler_name")));}phases.decorate(result,now,true);return result;
     }

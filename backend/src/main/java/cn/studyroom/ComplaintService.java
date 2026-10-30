@@ -32,7 +32,8 @@ public class ComplaintService {
     }
     @Transactional(readOnly=true)
     public List<Map<String,Object>> mine(long actor) {return mineAt(actor,now());}
-    List<Map<String,Object>> mineAt(long actor,LocalDateTime now) {attachments.requireOrdinary(actor);var rows=summariesInternal("WHERE c.user_id=?",actor);phases.decorate(rows,now,false);return rows;}
+    List<Map<String,Object>> mineAt(long actor,LocalDateTime now) {attachments.requireOrdinary(actor);var selected=RecordPage.legacy(Map.of(),RecordPage.Domain.COMPLAINT,false).select(db,RecordPage.Domain.COMPLAINT,actor,now);return pageItems(selected.ids(),now);}
+    List<Map<String,Object>> pageItems(List<Long> ids,LocalDateTime now){var rows=ids.isEmpty()?new ArrayList<Map<String,Object>>():summariesInternal("WHERE c.id IN ("+RecordPage.marks(ids)+")",ids.toArray());phases.decorate(rows,now,false);return rows;}
     @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
     public Map<String,Object> detail(long actor,long complaint) {return detailAt(actor,complaint,now());}
     Map<String,Object> detailAt(long actor,long complaint,LocalDateTime now) {attachments.requireOrdinary(actor);Api.require(Store.id(db.one("SELECT user_id FROM complaints WHERE id=?",complaint),"user_id")==actor,403,"无权读取他人的投诉");return detailInternal(complaint,now);}

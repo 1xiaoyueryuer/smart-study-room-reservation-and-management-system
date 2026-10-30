@@ -1,7 +1,7 @@
 import request from './request'
 export const getAppealEligibility=id=>request.get(`/violations/${id}/appeal-eligibility`,{silent:true})
 export const createAppeal=(id,body)=>request.post(`/violations/${id}/appeals`,body,{silent:true,timeout:120000})
-export const listMyAppeals=()=>request.get('/appeals/mine',{silent:true})
+export const listMyAppeals=params=>request.get('/appeals/mine',{params,silent:true})
 export const getAppeal=id=>request.get(`/appeals/${id}`,{silent:true})
 export const listAdminAppeals=params=>request.get('/admin/appeals',{params,silent:true})
 export const getAdminAppeal=id=>request.get(`/admin/appeals/${id}`,{silent:true})

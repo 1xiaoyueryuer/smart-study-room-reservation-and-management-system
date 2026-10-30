@@ -25,6 +25,10 @@ public class ComplaintWorkflowService {
         db.lockBookings();requireAdmin(actor);ComplaintManagementService.validateFilters(status,type,room);var where=new StringBuilder("1=1");var args=new ArrayList<Object>();if(type!=null){where.append(" AND c.type=?");args.add(type);}if(room!=null){where.append(" AND c.room_id=?");args.add(room);}var now=now();targets.recordScope(where.toString(),args,now);reconcile(where.toString(),args,now);return management.listAt(actor,status,type,room,now);
     }
     @Transactional
+    public Map<String,Object> records(long actor,Map<String,String> parameters,boolean admin){
+        var query=RecordPage.parse(parameters,RecordPage.Domain.COMPLAINT,admin);db.lockBookings();if(admin)requireAdmin(actor);else attachments.requireOrdinary(actor);var snapshot=now();Long user=admin?query.user():Long.valueOf(actor);var scopeFilters=new HashMap<>(query.filters);scopeFilters.remove("status");var scope=RecordPage.legacy(scopeFilters,RecordPage.Domain.COMPLAINT,admin).select(db,RecordPage.Domain.COMPLAINT,user,snapshot);if(!scope.ids().isEmpty()){String where="c.id IN ("+RecordPage.marks(scope.ids())+")";targets.recordScope(where,scope.ids(),snapshot);reconcile(where,scope.ids(),snapshot);}var selected=query.select(db,RecordPage.Domain.COMPLAINT,user,snapshot);var rows=admin?management.pageItems(selected.ids(),snapshot):complaints.pageItems(selected.ids(),snapshot);return query.result(rows,selected.total(),snapshot);
+    }
+    @Transactional
     public Map<String,Object> managementDetail(long actor,long id) {db.lockBookings();requireAdmin(actor);required(id);var now=now();targets.recordOne(id,now);reconcile("c.id=?",List.of(id),now);return management.detailAt(actor,id,now);}
     @Transactional
     public Map<String,Object> feedback(long actor,long id,Requests.ComplaintFeedback request) {

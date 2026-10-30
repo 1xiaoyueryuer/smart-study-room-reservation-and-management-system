@@ -24,11 +24,15 @@ public class BookingService {
     private final RestrictionPolicy restrictions;
     private final com.fasterxml.jackson.databind.ObjectMapper json;
     public BookingService(Store db,Clock clock,OpeningScheduleService opening,BookingPolicy policy,AuditService audit,ViolationService violations,SeatCodeService codes,UsageService usage,RestrictionPolicy restrictions,com.fasterxml.jackson.databind.ObjectMapper json) { this.db=db;this.clock=clock;this.opening=opening;this.policy=policy;this.audit=audit;this.violations=violations;this.codes=codes;this.usage=usage;this.restrictions=restrictions;this.json=json; }
-    public List<Map<String,Object>> mine(long uid) {
-        db.lockBookings();LocalDateTime now=now();enforceRestrictions(uid,now,null,null);
-        var rows=db.list(VIEW+"WHERE rv.user_id=? ORDER BY rv.res_date DESC,rv.start_time DESC,rv.id DESC",uid);
-        for(var row:rows) decorate(row,now);return rows;
+    public List<Map<String,Object>> mine(long uid) {return RecordPage.items(records(uid,RecordPage.legacy(Map.of(),RecordPage.Domain.RESERVATION,false),false));}
+    public Map<String,Object> records(long actor,Map<String,String> parameters,boolean admin){return records(actor,RecordPage.parse(parameters,RecordPage.Domain.RESERVATION,admin),admin);}
+    private Map<String,Object> records(long actor,RecordPage query,boolean admin){
+        db.lockBookings();if(admin)correctionAdmin(actor);LocalDateTime snapshot=now();Long user=admin?query.user():Long.valueOf(actor);if(user==null)settleRestrictions(snapshot);else if(db.count("SELECT count(*) FROM users WHERE id=?",user)>0)enforceRestrictions(user,snapshot,null,null);var selected=query.select(db,RecordPage.Domain.RESERVATION,user,snapshot);var rows=selected.ids().isEmpty()?new ArrayList<Map<String,Object>>():db.list(VIEW+"WHERE rv.id IN ("+RecordPage.marks(selected.ids())+") ORDER BY rv.res_date DESC,rv.start_time DESC,rv.id DESC",selected.ids().toArray());for(var row:rows)decorate(row,snapshot);return query.result(rows,selected.total(),snapshot);
     }
+    public Map<String,Object> violationRecords(long actor,Map<String,String> parameters,boolean admin){
+        var query=RecordPage.parse(parameters,RecordPage.Domain.VIOLATION,admin);db.lockBookings();if(admin)correctionAdmin(actor);var snapshot=now();Long user=admin?query.user():Long.valueOf(actor);if(user==null)settleRestrictions(snapshot);else if(db.count("SELECT count(*) FROM users WHERE id=?",user)>0)enforceRestrictions(user,snapshot,null,null);return violations.records(query,user,snapshot,admin);
+    }
+    public Map<String,Object> violationDetail(long actor,long id){db.lockBookings();requireOrdinary(actor);Api.require(Store.id(db.one("SELECT user_id FROM violations WHERE id=?",id),"user_id")==actor,403,"无权读取他人违规");enforceRestrictions(actor,now(),null,null);return ViolationService.safeOne(db,id);}
     public Map<String,Object> detail(long uid,long resId) {
         db.lockBookings();requireOrdinary(uid);var row=db.one(VIEW+"WHERE rv.id=?",resId);
         Api.require(id(row,"user_id")==uid,403,"无权查看他人的预约");LocalDateTime now=now();

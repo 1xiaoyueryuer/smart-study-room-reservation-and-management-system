@@ -30,9 +30,14 @@ public class Store {
             if(rs.getMetaData().getColumnType(i)==java.sql.Types.TIME) { result.put(label,rs.getString(i));continue; }
             Object value=rs.getObject(i);
             // 日期与业务时间戳分别映射，保持前端 YYYY-MM-DD 契约。
-            if(label.equals("res_date")&&value!=null) value=rs.getDate(i).toLocalDate().toString();
-            else if(value instanceof Timestamp t) value=t.toLocalDateTime().toString();
-            else if(value instanceof java.sql.Date d) value=d.toLocalDate().toString();
+            if(label.equals("res_date")&&value!=null) value=rs.getObject(i,java.time.LocalDate.class).toString();
+            else if(value instanceof Timestamp) {
+                // JDBC legacy Date/Timestamp silently apply the mixed Julian/Gregorian calendar.
+                // Business timestamps are local campus time; timestamptz retains its actual offset.
+                boolean zoned=rs.getMetaData().getColumnType(i)==java.sql.Types.TIMESTAMP_WITH_TIMEZONE||"timestamptz".equals(rs.getMetaData().getColumnTypeName(i));
+                value=zoned?rs.getObject(i,java.time.OffsetDateTime.class).toString():rs.getObject(i,java.time.LocalDateTime.class).toString();
+            }
+            else if(value instanceof java.sql.Date) value=rs.getObject(i,java.time.LocalDate.class).toString();
             result.put(label,value);
         }
         return result;

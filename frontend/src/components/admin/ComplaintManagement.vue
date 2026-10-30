@@ -14,6 +14,10 @@ import SSelect from '../ui/SSelect.vue'
 import SInput from '../ui/SInput.vue'
 import SButton from '../ui/SButton.vue'
 import SBanner from '../ui/SBanner.vue'
+import {recordQuery,validRecordPage,recordFields} from '../../composables/recordPage.js'
+import RecordFilters from '../RecordFilters.vue'
+import RecordPageControls from '../RecordPageControls.vue'
+const snapshot=ref(null),snapshotQuery=ref(null),fields=recordFields('complaint',true)
 const filters=ref({status:null,type:null,room_id:null}),appliedFilters=ref(null),items=ref([]),loaded=ref(false),listLoading=ref(false),listError=ref('')
 const selectedId=ref(null),detail=ref(null),detailLoading=ref(false),detailError=ref(''),users=ref([]),rooms=ref([]),optionsError=ref('')
 const submitting=ref(false),unknown=ref(false),readPending=ref(false),actionError=ref(''),writeNotice=ref(''),pending=ref(null)
@@ -34,13 +38,7 @@ function explicitInstant(value){
 }
 const targetClock=useServiceTargetClock({records:computed(()=>[...items.value,...(detail.value?[detail.value]:[])]),blocked:computed(()=>busy.value||listLoading.value||detailLoading.value),onDue:()=>Promise.all([loadList(true),selectedId.value?readDetail(selectedId.value):Promise.resolve()])})
 async function loadOptions(){optionsError.value='';try{const [accounts,resources]=await Promise.all([listUsers(),getRooms()]);if(alive){users.value=accounts.data;rooms.value=resources.data}}catch(failure){if(alive)optionsError.value=failure.message}}
-async function loadList(force=false){if(busy.value&&force!==true)return false;const ticket=++listSequence;const source=force===true&&appliedFilters.value?appliedFilters.value:filters.value;const query={};if(source.status)query.status=source.status;if(source.type)query.type=source.type
-  try{const id=positiveId(source.room_id);if(id)query.room_id=id}catch(failure){listError.value=failure.message;return false}
-  listLoading.value=true;listError.value='';appliedFilters.value=copy(source)
-  try{const response=await listAdminComplaints(query);if(!alive||ticket!==listSequence)return false;if(!Array.isArray(response.data))throw new Error('管理列表返回不完整');items.value=response.data;loaded.value=true;return true}
-  catch(failure){if(alive&&ticket===listSequence)listError.value=failure.message;return false}
-  finally{if(alive&&ticket===listSequence)listLoading.value=false}
-}
+async function loadList(force=true,next){if(busy.value&&force!==true)return false;const ticket=++listSequence,source=force===false?filters.value:appliedFilters.value||filters.value;let query;try{query=recordQuery(source,force===false?1:next||snapshot.value?.page||1)}catch(e){listError.value=e.message;return false}listLoading.value=true;listError.value='';try{const {data}=await listAdminComplaints(query);if(!alive||ticket!==listSequence)return false;if(!validRecordPage(data,query))throw new Error('管理投诉分页返回不完整');items.value=data.items;appliedFilters.value={...source};snapshot.value=data;snapshotQuery.value={...query};loaded.value=true;return true}catch(failure){if(alive&&ticket===listSequence)listError.value=failure.message;return false}finally{if(alive&&ticket===listSequence)listLoading.value=false}}
 async function readDetail(id,{afterWrite=false}={}){const ticket=++detailSequence;detailLoading.value=true;detailError.value=''
   try{const response=await getAdminComplaint(id);if(!alive||ticket!==detailSequence)return false;const value=response.data;if(value?.id!==id||!Array.isArray(value.admin_events)||!Number.isInteger(value.version))throw new Error('管理详情返回不完整');detail.value=value
     if(afterWrite){readPending.value=false;if(pending.value?.action==='verification')form.value=blank();if(pending.value?.action==='feedback')feedbackForm.value={result:'',basis:''};if(pending.value?.action==='violation')delete violationReasons.value[pending.value.event_id];pending.value=null}return true
@@ -108,7 +106,7 @@ defineExpose({loadList})
 <template>
   <section class="complaint-management">
     <section class="card"><h3>投诉管理</h3><p>受理表示开始核查，核实记录与公开进度分别保留。提醒不计违规，投诉人不自动成为待核对象。</p>
-      <form class="filter-fields" @submit.prevent="loadList()"><label>状态<SSelect v-model="filters.status" :disabled="busy||listLoading" :options="[{value:null,label:'全部状态'},...Object.entries(complaintStatuses).map(([value,label])=>({value,label}))]" /></label><label>类型<SSelect v-model="filters.type" :disabled="busy||listLoading" :options="[{value:null,label:'全部类型'},...Object.entries(complaintTypes).map(([value,label])=>({value,label}))]" /></label><label>空间<SSelect v-model="filters.room_id" :disabled="busy||listLoading" :options="roomOptions" /></label><SButton type="submit" :loading="listLoading" :disabled="busy">应用筛选并刷新</SButton></form>
+      <RecordFilters v-model="filters" :fields="fields" :disabled="busy||listLoading" @apply="loadList(false)"/><RecordPageControls :snapshot="snapshot" :query="snapshotQuery" :fields="fields" :disabled="busy||listLoading" @page="loadList(true,$event)"/>
       <p v-if="appliedFilters" class="muted">已应用：{{ complaintStatuses[appliedFilters.status]||'全部状态' }} / {{ complaintTypes[appliedFilters.type]||'全部类型' }} / {{ appliedFilters.room_id?'空间#'+appliedFilters.room_id:'全部空间' }}。修改筛选后请应用，列表不会自动冒充新条件。</p>
       <p v-if="listLoading" role="status">正在读取管理列表…</p><SBanner v-if="listError" type="error" :title="listError" /><p v-if="!loaded&&!listLoading&&!listError">尚未读取管理列表。</p><p v-if="loaded&&!listLoading&&!listError&&!items.length">当前条件暂无投诉。</p>
       <p v-if="loaded&&listError">下列保留上次成功读取的列表快照，不代表本次筛选或当前状态，请重试核对。</p><div v-if="loaded&&!listLoading" class="table-wrap"><div class="table-scroll" tabindex="0" aria-label="管理投诉列表，可横向滚动"><table class="table management-table"><thead><tr><th>记录</th><th>类型/状态</th><th>提交时间</th><th>首受理人</th><th>服务目标</th><th>详情</th></tr></thead><tbody><tr v-for="item in items" :key="item.id"><td>#{{ item.id }}</td><td>{{ complaintTypes[item.type] || item.type }} / {{ complaintStatuses[item.status] || item.status }}</td><td>{{ item.submitted_at }}</td><td>{{ item.handler?.display_name || '尚未受理' }}</td><td><ServiceTargetSummary :record="item" :progress="targetClock.progress(item)" compact /></td><td><SButton size="sm" :disabled="busy" @click="openDetail(item.id)">打开详情</SButton></td></tr></tbody></table></div></div>

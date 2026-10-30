@@ -1,3 +1,4 @@
+import {recordTestImport} from './record-fixtures.js'
 import * as reviewManagement from '../src/composables/reviewManagement.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
@@ -9,7 +10,7 @@ async function script(file, mocks, exports, extra={}) {
   const context=vm.createContext({defineExpose(){},defineProps:()=>({autoLoad:false}),...extra})
   const module=new vm.SourceTextModule(source+`\nexport {${exports}}`,{context})
   await module.link(specifier=>{
-    const values=mocks[specifier]||(specifier.endsWith('/reviewManagement.js')?reviewManagement:null)||(specifier.endsWith('.vue')?{default:{}}:null)
+    const values=recordTestImport(specifier,mocks[specifier])||(specifier.endsWith('/reviewManagement.js')?reviewManagement:null)||(specifier.endsWith('.vue')?{default:{}}:null)
     assert.ok(values,specifier)
     return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})
   })
@@ -21,12 +22,12 @@ async function mine(overrides={}) {
   const calls=[],confirmations=[]
   const api={listMyReservations:async()=>{calls.push('mine');return{data:[waiting([])]}},...Object.fromEntries(['cancel','abandon','checkin','leave','return','checkout'].map(key=>[`${key}Reservation`,async id=>{calls.push(key);return{data:{id}}}])),...overrides}
   const page=await script('../src/views/MyReservationsView.vue',{
-    vue:{ref,computed,onMounted(){}},
+    vue:{ref,computed,onMounted(){},onBeforeUnmount(){}},
     'vue-router':{useRoute:()=>({query:{}}),useRouter:()=>({push:async location=>{calls.push(location)}})},
     '../composables/usePagination':{usePagination:items=>({page:ref(1),pages:computed(()=>1),pageItems:items})},
     '../components/ui/feedback':{message:{success(){}},confirmDialog:overrides.confirmDialog|| (async text=>{confirmations.push(text)})},
     '../api/reservation':api
-  },'list,loading,error,actionError,busyId,violations,actionsOf,doAction,refreshAll,terminationLabels,statusBuckets,requestOccupationHelp')
+  },'list,loading,error,actionError,busyId,violations,actionsOf,doAction,refreshAll,terminationLabels,snapshot,requestOccupationHelp')
   page.violations.value={refresh:async()=>{calls.push('violations')}}
   return{...page,calls,confirmations}
 }
@@ -77,21 +78,21 @@ test('legacy terminal state is explained without fabricating an independent viol
   const page=await mine()
   page.list.value=[{id:10,status:'unused_ended',legacy_status:'violation',termination_reason:'legacy_violation',allowed_actions:[]}]
   assert.match(page.terminationLabels.legacy_violation,/未转为新独立违规/)
-  assert.equal(page.statusBuckets.value.unused_ended,1)
+  assert.equal(page.snapshot.value,null)
   const source=await readFile(new URL('../src/views/MyReservationsView.vue',import.meta.url),'utf8')
-  assert.match(source,/待签到预约/)
+  assert.match(source,/服务端查询/)
   assert.doesNotMatch(source,/今日待签到|kpi-label">违约记录/)
 })
 async function violations(loader) {
   return script('../src/components/ViolationsPanel.vue',{
-    vue:{ref,computed,onMounted(){},onBeforeUnmount(){},watch(){},nextTick:async()=>{}},'vue-router':{useRoute:()=>({query:{}})},'../api/violation':{listMyViolations:loader}
-  },'items,error,loading,loaded,activeCount,refresh')
+    vue:{ref,computed,onMounted(){},onBeforeUnmount(){},watch(){},nextTick:async()=>{}},'vue-router':{useRoute:()=>({query:{}})},'../api/violation':{listMyViolations:loader,getMyViolation:async()=>{throw new Error('无关联目标')}}
+  },'items,error,loading,loaded,snapshot,refresh')
 }
 test('independent effective count uses record status and preserves revoked records',async()=>{
   const page=await violations(async()=>({data:[{id:1,status:'active',type:'no_show'},{id:2,status:'revoked',type:'abandon'}]}))
   await page.refresh()
   assert.equal(page.items.value.length,2)
-  assert.equal(page.activeCount.value,1)
+  assert.deepEqual(Array.from(page.items.value,row=>row.status),['active','revoked']);assert.equal(page.snapshot.value.total,2)
 })
 test('violation failure is separate from empty data and can recover through actual retry',async()=>{
   let fail=true

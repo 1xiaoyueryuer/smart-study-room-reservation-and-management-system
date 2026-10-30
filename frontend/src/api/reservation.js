@@ -5,8 +5,8 @@ export function createReservation(data) {
   return request.post('/reservations', data, { silent: true })
 }
 
-export function listMyReservations() {
-  return request.get('/reservations/mine')
+export function listMyReservations(params) {
+  return request.get('/reservations/mine',{params,silent:true})
 }
 
 export function cancelReservation(id) {
@@ -32,3 +32,6 @@ export function getBookingPolicy() {
 export function abandonReservation(id) {
   return request.post(`/reservations/${id}/abandon`, null, { silent:true })
 }
+
+export const listAdminReservations=params=>request.get('/admin/reservations',{params,silent:true})
+export const getAdminReservation=id=>request.get(`/admin/reservations/${id}`,{silent:true})

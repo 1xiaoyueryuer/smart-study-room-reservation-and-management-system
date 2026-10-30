@@ -39,6 +39,12 @@ public class RestrictionWorkflow {
     @Transactional
     public List<Map<String,Object>> list(long actor,Long user,String status){db.lockBookings();admin(actor);RestrictionPolicy.validateFilter(user,status);var now=now();if(user!=null){db.one("SELECT id FROM users WHERE id=?",user);bookings.enforceRestrictions(user,now,null,null);}else bookings.settleRestrictions(now);return policy.list(user,status,now,true);}
     @Transactional
+    public Map<String,Object> records(long actor,Map<String,String> parameters,boolean management){var query=RecordPage.parse(parameters,RecordPage.Domain.RESTRICTION,management);db.lockBookings();if(management)admin(actor);else auth.profile(actor);var snapshot=now();Long user=management?query.user():Long.valueOf(actor);if(user==null)bookings.settleRestrictions(snapshot);else if(db.count("SELECT count(*) FROM users WHERE id=?",user)>0)bookings.enforceRestrictions(user,snapshot,null,null);return policy.records(query,user,snapshot,management);}
+    @Transactional
+    public Map<String,Object> detail(long actor,long id){db.lockBookings();auth.profile(actor);var row=policy.required(id);Api.require(Store.id(row,"user_id")==actor,403,"无权读取他人限制");bookings.enforceRestrictions(actor,now(),null,null);return policy.detail(id,now(),false);}
+    @Transactional
+    public Map<String,Object> managementDetail(long actor,long id){db.lockBookings();admin(actor);var before=policy.required(id);var snapshot=now();bookings.enforceRestrictions(Store.id(before,"user_id"),snapshot,null,null);return policy.detail(id,snapshot,true);}
+    @Transactional
     public void settle(){db.lockBookings();bookings.settleRestrictions(now());}
     private Map<String,Object> replay(Map<String,Object> previous,long actor,String action,String hash,String operation,LocalDateTime now){Api.require(Store.id(previous,"actor_id")==actor&&action.equals(previous.get("action"))&&hash.equals(previous.get("request_hash")),409,"操作标识已用于其他内容，请按原请求重试");return receipt(Store.id(previous,"restriction_id"),operation,true,policy.effects(previous),now);}
     private Map<String,Object> receipt(long id,String operation,boolean replayed,Map<String,Object> effects,LocalDateTime now){var row=policy.required(id);return Map.of("operation_id",operation,"replayed",replayed,"restriction",policy.detail(id,now,true),"effects",effects,"eligibility",policy.eligibility(Store.id(row,"user_id"),now));}

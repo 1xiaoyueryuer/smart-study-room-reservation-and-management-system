@@ -30,6 +30,13 @@ def check(name, condition):
     if not condition:
         raise AssertionError(name)
 
+def page_items(response):
+    value=response['data']
+    assert isinstance(value,dict) and set(value)=={'items','total','page','page_size','server_now'}
+    assert isinstance(value['items'],list) and type(value['total']) is int and value['total']>=0
+    assert type(value['page']) is int and value['page']>0 and type(value['page_size']) is int and 1<=value['page_size']<=50
+    return value['items']
+
 def main():
     status, body = call('GET', '/health')
     check('Java + PostgreSQL + Redis 健康检查', status == 200 and body['data']['backend'] == 'java' and body['data']['database'] == 'PostgreSQL')
@@ -55,8 +62,9 @@ def main():
     status, eligibility = call('GET', '/booking-eligibility', token=student)
     check('本人资格读取服务端独立限制集合',status == 200 and isinstance(eligibility['data']['can_book'],bool) and isinstance(eligibility['data']['active_restrictions'],list) and eligibility['data']['campus_zone'] == 'Asia/Shanghai')
     status, restrictions = call('GET', '/restrictions/mine', token=student)
-    check('本人独立限制历史不公开管理私有核实依据',status == 200 and isinstance(restrictions['data'],list) and all(not any(key in item for key in ('verification_note','release_verification_note','subject')) for item in restrictions['data']))
-    check('自动限制仅展示真实三来源批次快照', all('automatic_evaluation' in item and (item['automatic_evaluation'] is None if item['source'] != 'automatic' else item['automatic_evaluation']['threshold'] == 3 and item['automatic_evaluation']['duration_hours'] == 168 and len(item['automatic_evaluation']['source_violations']) == 3 and all(not any(key in source for key in ('source_event_id','complaint_id','reporter_id','verification_note')) for source in item['automatic_evaluation']['source_violations'])) for item in restrictions['data']))
+    restriction_items=page_items(restrictions)
+    check('本人独立限制历史不公开管理私有核实依据',status == 200 and isinstance(restriction_items,list) and all(not any(key in item for key in ('verification_note','release_verification_note','subject')) for item in restriction_items))
+    check('自动限制仅展示真实三来源批次快照', all('automatic_evaluation' in item and (item['automatic_evaluation'] is None if item['source'] != 'automatic' else item['automatic_evaluation']['threshold'] == 3 and item['automatic_evaluation']['duration_hours'] == 168 and len(item['automatic_evaluation']['source_violations']) == 3 and all(not any(key in source for key in ('source_event_id','complaint_id','reporter_id','verification_note')) for source in item['automatic_evaluation']['source_violations'])) for item in restriction_items))
     check('普通用户不能读取全校限制管理',call('GET','/admin/restrictions',token=student)[0] == 403)
     date = policy['data']['dates'][1]
     status, available = call('GET',f'/availability?room_id={room}&date={date}&strategy=earliest',token=student)
@@ -85,8 +93,11 @@ def main():
         check('旧无座位码签到请求被拒绝',call('POST',f'/reservations/{res_id}/checkin',{},student)[0] == 400)
         check('旧暂离和返回入口退出',all(call('POST',f'/reservations/{res_id}/{action}',{},student)[0] == 410 for action in ('leave','return')))
         status, body = call('GET','/reservations/mine',token=student)
-        check('我的预约包含座位与房间',status == 200 and any(r['id']==res_id and 'room_name' in r for r in body['data']))
-        check('未签到预约没有伪造使用记录',next(r for r in body['data'] if r['id']==res_id)['usage_record'] is None)
+        reservation_items=page_items(body)
+        check('我的预约真实分页含座位与房间字段',status == 200 and body['data']['total'] >= 1 and all('room_name' in r and 'seat_no' in r for r in reservation_items))
+        status, current_reservation = call('GET',f'/reservations/{res_id}',token=student)
+        check('独立本人详情定位目标不依赖当前页',status == 200 and current_reservation['data']['id'] == res_id and 'room_name' in current_reservation['data'])
+        check('未签到预约没有伪造使用记录',current_reservation['data']['usage_record'] is None)
         time.sleep(1.1)
         status, _ = call('POST','/reservations',{**request,'start_time':'10:01','end_time':'10:30'},student)
         check('不足30分钟返回400',status == 400)
@@ -94,19 +105,22 @@ def main():
         if res_id:
             check('本人取消释放座位',call('POST',f'/reservations/{res_id}/cancel',{},student)[0] == 200)
     status, body = call('GET','/violations/mine',token=student)
-    check('本人独立违规明细',status == 200 and isinstance(body['data'],list))
-    check('违规通知时间只来自可靠关联且不公开核实私有资料',all('notified_at' in item and 'notification_id' in item and not any(key in item for key in ('source_event_id','complaint_id','reporter','private_note','identity_basis')) and (item['source'] != 'manual' or item['reservation_id'] is None) for item in body['data']))
-    check('开始前取消未登记独立违规',all(v['reservation_id'] != res_id for v in body['data']))
+    violation_items=page_items(body)
+    check('本人独立违规明细',status == 200 and isinstance(violation_items,list))
+    check('违规通知时间只来自可靠关联且不公开核实私有资料',all('notified_at' in item and 'notification_id' in item and not any(key in item for key in ('source_event_id','complaint_id','reporter','private_note','identity_basis')) and (item['source'] != 'manual' or item['reservation_id'] is None) for item in violation_items))
+    check('开始前取消未登记独立违规',all(v['reservation_id'] != res_id for v in violation_items))
     status, appeals = call('GET','/appeals/mine',token=student)
-    check('本人申诉进度与原通知依据',status == 200 and isinstance(appeals['data'],list) and all('notification_basis' in item and 'violation_snapshot' in item and not any(key in item for key in ('subject','management_context','source_event_id','complaint_id','private_note')) for item in appeals['data']))
-    check('审核结果三态与私有依据隔离',all(item['status'] in ('submitted','approved','rejected') and 'review' in item and (item['review'] is None or (item['review']['decision'] in ('approved','rejected') and not any(key in item['review'] for key in ('verification_note','facts_confirmed')))) for item in appeals['data']))
+    appeal_items=page_items(appeals)
+    check('本人申诉进度与原通知依据',status == 200 and isinstance(appeal_items,list) and all('notification_basis' in item and 'violation_snapshot' in item and not any(key in item for key in ('subject','management_context','source_event_id','complaint_id','private_note')) for item in appeal_items))
+    check('审核结果三态与私有依据隔离',all(item['status'] in ('submitted','approved','rejected') and 'review' in item and (item['review'] is None or (item['review']['decision'] in ('approved','rejected') and not any(key in item['review'] for key in ('verification_note','facts_confirmed')))) for item in appeal_items))
     check('普通账号不能查看管理申诉待办',call('GET','/admin/appeals',token=student)[0] == 403)
     review_probe = {'version':1,'decision':'rejected','reason':'API工程模拟越权必须拒绝','verification_note':'API_TEST_ONLY','facts_confirmed':True}
     check('普通账号不能预览管理审核',call('POST','/admin/appeals/1/review/preview',review_probe,student)[0] == 403)
     status, admin_appeals = call('GET','/admin/appeals',token=admin)
-    check('管理历史列表不泄私有审核依据',status == 200 and isinstance(admin_appeals['data'],list) and all('management_context' not in item and (item.get('review') is None or 'verification_note' not in item['review']) for item in admin_appeals['data']))
-    if body['data']:
-        status, appeal_context = call('GET',f"/violations/{body['data'][0]['id']}/appeal-eligibility",token=student)
+    admin_appeal_items=page_items(admin_appeals)
+    check('管理历史列表不泄私有审核依据',status == 200 and isinstance(admin_appeal_items,list) and all('management_context' not in item and (item.get('review') is None or 'verification_note' not in item['review']) for item in admin_appeal_items))
+    if violation_items:
+        status, appeal_context = call('GET',f"/violations/{violation_items[0]['id']}/appeal-eligibility",token=student)
         check('申诉条件读取服务端通知期限而非客户端推断',status == 200 and isinstance(appeal_context['data']['eligibility']['can_submit'],bool) and 'deadline' in appeal_context['data']['eligibility'] and appeal_context['data']['campus_zone'] == 'Asia/Shanghai')
     complaint_req = {'type':'occupation','reservation_id':res_id,'description':'API工程模拟：关联本人取消历史留证，不延期或复活预约','attachment_ids':[],'operation_id':str(uuid.uuid4())}
     check('不能关联他人预约求助',call('POST','/complaints',{**complaint_req,'operation_id':str(uuid.uuid4())},other)[0] == 403)
@@ -119,7 +133,8 @@ def main():
     check('本人详情保留提交事件',status == 200 and any(event['type'] == 'submitted' for event in detail['data']['events']))
     check('他人不能读投诉详情',call('GET',f'/complaints/{complaint_id}',token=other)[0] == 403)
     status, complaints = call('GET','/complaints/mine',token=student)
-    check('刷新仍能查到本人投诉',status == 200 and any(item['id'] == complaint_id for item in complaints['data']))
+    complaint_items=page_items(complaints)
+    check('刷新仍能查到本人投诉',status == 200 and any(item['id'] == complaint_id for item in complaint_items))
     service_req = {'type':'service','description':'API工程模拟：无预约的一般服务投诉','attachment_ids':[],'operation_id':str(uuid.uuid4())}
     status, service = call('POST','/complaints',service_req,student)
     check('一般服务投诉可无预约或图片',status == 200 and service['data']['reservation_id'] is None and service['data']['attachment_count'] == 0)

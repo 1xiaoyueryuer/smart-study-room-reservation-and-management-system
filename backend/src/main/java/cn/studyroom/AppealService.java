@@ -31,11 +31,14 @@ public class AppealService {
         audit.record(actor,"appeal.submit","appeal",Long.toString(id),"本人提交申诉，当前待审核，原违规与限制保持",Map.of(),Map.of("violation_id",violation,"notification_id",eligibility.get("notification_id"),"notified_at",eligibility.get("notified_at"),"deadline",eligibility.get("deadline"),"submitted_at",AttachmentService.offset(now),"attachment_count",ids.size(),"status","submitted"));return receipt(id,operation,false,now);
     }
     @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
-    public List<Map<String,Object>> mine(long actor){attachments.requireOrdinary(actor);var now=now();return db.list("SELECT id FROM appeals WHERE user_id=? ORDER BY submitted_at DESC,id DESC",actor).stream().map(row->detailInternal(Store.id(row,"id"),now,false,false)).toList();}
+    public List<Map<String,Object>> mine(long actor){return RecordPage.items(records(actor,RecordPage.legacy(Map.of(),RecordPage.Domain.APPEAL,false),false));}
+    @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
+    public Map<String,Object> records(long actor,Map<String,String> parameters,boolean admin){return records(actor,RecordPage.parse(parameters,RecordPage.Domain.APPEAL,admin),admin);}
+    private Map<String,Object> records(long actor,RecordPage query,boolean management){if(management)admin(actor);else attachments.requireOrdinary(actor);var snapshot=now();var selection=query.select(db,RecordPage.Domain.APPEAL,management?query.user():Long.valueOf(actor),snapshot);var rows=selection.ids().stream().map(id->detailInternal(id,snapshot,management,false)).toList();return query.result(rows,selection.total(),snapshot);}
     @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
     public Map<String,Object> detail(long actor,long id){attachments.requireOrdinary(actor);Api.require(Store.id(db.one("SELECT user_id FROM appeals WHERE id=?",id),"user_id")==actor,403,"无权读取他人的申诉");return detailInternal(id,now(),false);}
     @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
-    public List<Map<String,Object>> listAdmin(long actor,String status){admin(actor);Api.require(status==null||Set.of("submitted","approved","rejected").contains(status),400,"申诉状态筛选错误");var now=now();return db.list("SELECT id FROM appeals"+(status==null?"":" WHERE status=?")+" ORDER BY submitted_at,id",status==null?new Object[]{}:new Object[]{status}).stream().map(row->detailInternal(Store.id(row,"id"),now,true,false)).toList();}
+    public List<Map<String,Object>> listAdmin(long actor,String status){return RecordPage.items(records(actor,RecordPage.legacy(status==null?Map.of():Map.of("status",status),RecordPage.Domain.APPEAL,true),true));}
     @Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
     public Map<String,Object> detailAdmin(long actor,long id){return detailAdminAt(actor,id,now());}
     Map<String,Object> detailAdminAt(long actor,long id,LocalDateTime now){admin(actor);var result=detailInternal(id,now,true);result.put("management_context",managementContext(((Number)result.get("violation_id")).longValue()));return result;}

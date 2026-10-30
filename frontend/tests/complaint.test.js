@@ -1,3 +1,4 @@
+import {recordTestImport} from './record-fixtures.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
@@ -8,7 +9,7 @@ import {useEvidenceUploadQueue} from '../src/composables/useEvidenceUploadQueue.
 const tick=()=>new Promise(resolve=>setImmediate(resolve))
 async function script(file,mocks,exports,extra={}) {
   const context=vm.createContext({defineExpose(){},...extra}),source=(await readFile(new URL(file,import.meta.url),'utf8')).split('<script setup>')[1].split('</script>')[0],module=new vm.SourceTextModule(source+`\nexport {${exports}}`,{context})
-  await module.link(specifier=>{const values=mocks[specifier]||(specifier.endsWith('useServiceTargetClock.js')?{useServiceTargetClock:()=>({progress:()=>null})}:specifier.endsWith('.vue')?{default:{}}:null);assert.ok(values,specifier);return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})});await module.evaluate();return module.namespace
+  await module.link(specifier=>{const values=recordTestImport(specifier,mocks[specifier])||(specifier.endsWith('useServiceTargetClock.js')?{useServiceTargetClock:()=>({progress:()=>null})}:specifier.endsWith('.vue')?{default:{}}:null);assert.ok(values,specifier);return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})});await module.evaluate();return module.namespace
 }
 const meta={id:'00000000-0000-4000-8000-000000000001',display_name:'material-test.png',content_type:'image/png',size_bytes:100,width:10,height:10,sha256:'testhash',created_at:'2026-10-30T12:00+08:00',expires_at:'2026-10-31T12:00+08:00'}
 const detail=body=>({id:77,operation_id:body.operation_id,type:body.type,status:'submitted',description:body.description,reservation_id:body.reservation_id||null,room_id:body.room_id||null,context_snapshot:null,submitted_at:'2026-10-30T12:00+08:00',attachment_count:body.attachment_ids.length,attachments:body.attachment_ids.map(id=>({...meta,id,expires_at:null})),events:[{id:1,type:'submitted',created_at:'2026-10-30T12:00+08:00',source:'user_submit'}]})

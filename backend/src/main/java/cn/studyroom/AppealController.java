@@ -14,8 +14,8 @@ public class AppealController {
     @PostMapping("/violations/{id}/appeals") Object create(HttpServletRequest req,@PathVariable long id,@RequestBody Map<String,Object> body){
         Api.require(Set.of("operation_id","description","attachment_ids").containsAll(body.keySet())&&body.keySet().containsAll(Set.of("operation_id","description")),400,"申诉仅接受操作标识、本人说明和申诉材料编号");Api.require(body.get("operation_id") instanceof String&&body.get("description") instanceof String,400,"操作标识和申诉说明须为文本");Object ids=body.get("attachment_ids");Api.require(ids==null||ids instanceof List<?> list&&list.stream().allMatch(idValue->idValue instanceof String),400,"材料编号须为UUID文本数组");Requests.Appeal request;try{request=json.convertValue(body,Requests.Appeal.class);}catch(IllegalArgumentException e){throw Api.fail(400,"申诉参数格式错误");}return Api.ok(appeals.create(WebSecurity.uid(req),id,request));
     }
-    @GetMapping("/appeals/mine") Object mine(HttpServletRequest req){return Api.ok(appeals.mine(WebSecurity.uid(req)));}
+    @GetMapping("/appeals/mine") Object mine(HttpServletRequest req,@RequestParam Map<String,String> parameters){return Api.ok(appeals.records(WebSecurity.uid(req),parameters,false));}
     @GetMapping("/appeals/{id}") Object detail(HttpServletRequest req,@PathVariable long id){return Api.ok(appeals.detail(WebSecurity.uid(req),id));}
-    @GetMapping("/admin/appeals") Object adminList(HttpServletRequest req,@RequestParam(required=false) String status){return Api.ok(appeals.listAdmin(WebSecurity.uid(req),status));}
+    @GetMapping("/admin/appeals") Object adminList(HttpServletRequest req,@RequestParam Map<String,String> parameters){return Api.ok(appeals.records(WebSecurity.uid(req),parameters,true));}
     @GetMapping("/admin/appeals/{id}") Object adminDetail(HttpServletRequest req,@PathVariable long id){return Api.ok(appeals.detailAdmin(WebSecurity.uid(req),id));}
 }
