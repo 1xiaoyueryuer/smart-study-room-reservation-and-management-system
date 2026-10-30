@@ -14,7 +14,7 @@ import org.springframework.transaction.annotation.*;
 /** 本人提交事实与公开进度的唯一投影；管理私有核实不进入公开DTO。 */
 @Service
 public class ComplaintService {
-    private static final String BASIC="SELECT c.id,c.operation_id,c.type,c.status,c.description,c.reservation_id,c.room_id,c.context_snapshot,c.submitted_at,c.version,c.accepted_at,(SELECT COALESCE(NULLIF(h.real_name,''),h.username) FROM users h WHERE h.id=c.handler_id) AS handler_name,count(a.id) AS attachment_count FROM complaints c LEFT JOIN complaint_attachments a ON a.complaint_id=c.id ";
+    private static final String BASIC="SELECT c.id,c.operation_id,c.type,c.status,c.description,c.reservation_id,c.room_id,c.context_snapshot,c.submitted_at,c.version,c.accepted_at,(SELECT COALESCE(NULLIF(h.real_name,''),h.username) FROM users h WHERE h.id=c.handler_id) AS handler_name,count(a.id) AS attachment_count FROM complaints c LEFT JOIN evidence_attachments a ON a.complaint_id=c.id ";
     private final Store db;private final AttachmentService attachments;private final AuditService audit;private final ObjectMapper json;private final Validator validator;private final Clock clock;private final ComplaintPhaseProjection phases;private final ComplaintTargetService targets;
     public ComplaintService(Store db,AttachmentService attachments,AuditService audit,ObjectMapper json,Validator validator,Clock clock,ComplaintPhaseProjection phases,ComplaintTargetService targets) { this.db=db;this.attachments=attachments;this.audit=audit;this.json=json;this.validator=validator;this.clock=clock;this.phases=phases;this.targets=targets; }
     @Transactional

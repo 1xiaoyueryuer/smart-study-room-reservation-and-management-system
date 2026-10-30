@@ -4,6 +4,7 @@ import vm from 'node:vm'
 import { readFile } from 'node:fs/promises'
 import { ref, computed } from 'vue'
 import { complaintPayload, validateEvidenceFile, positiveId, complaintTypes, complaintStatuses, reservationStatuses, ownerComplaintActions } from '../src/composables/complaintForm.js'
+import {useEvidenceUploadQueue} from '../src/composables/useEvidenceUploadQueue.js'
 const tick=()=>new Promise(resolve=>setImmediate(resolve))
 async function script(file,mocks,exports,extra={}) {
   const context=vm.createContext({defineExpose(){},...extra}),source=(await readFile(new URL(file,import.meta.url),'utf8')).split('<script setup>')[1].split('</script>')[0],module=new vm.SourceTextModule(source+`\nexport {${exports}}`,{context})
@@ -16,7 +17,7 @@ async function form(overrides={}) {
   const api={createComplaint:async body=>{calls.push(['create',body]);saved=detail(body);return{data:saved}},getComplaint:async id=>{calls.push(['detail',id]);return{data:saved}},uploadComplaintAttachment:async file=>{calls.push(['upload',file]);return{data:meta}},...overrides}
   const page=await script('../src/components/ComplaintForm.vue',{
     vue:{ref,computed,onMounted(){},onBeforeUnmount:handler=>cleanup.push(handler),watch:(source,callback)=>callback()},
-    '../api/complaint':api,'../api/room':{getRooms:async()=>({data:[]})},'../api/reservation':{getReservation:overrides.getReservation|| (async id=>({data:{id,room_name:'模拟空间',seat_no:'A1',res_date:'2026-10-29',start_time:'08:00',end_time:'09:00',status:'completed'}})),listMyReservations:async()=>({data:[]})},
+    '../composables/useEvidenceUploadQueue.js':{useEvidenceUploadQueue},'../api/complaint':api,'../api/room':{getRooms:async()=>({data:[]})},'../api/reservation':{getReservation:overrides.getReservation|| (async id=>({data:{id,room_name:'模拟空间',seat_no:'A1',res_date:'2026-10-29',start_time:'08:00',end_time:'09:00',status:'completed'}})),listMyReservations:async()=>({data:[]})},
     '../composables/complaintForm.js':{complaintPayload,positiveId,complaintTypes,complaintStatuses,reservationStatuses,validateEvidenceFile:overrides.validateEvidenceFile|| (async()=>{})}
   },'type,description,useReservation,reservationId,roomId,context,contextError,choices,reservationOptions,items,uploading,submitting,uncertain,error,receipt,record,readError,locked,submit,selectFiles,uploadItem,removeItem,selectReservation,reset,refreshCreated',{defineProps:()=>({initialType:'service',initialReservationId:null}),defineEmits:()=>()=>{},crypto:{randomUUID:()=>`00000000-0000-4000-8000-${String(++uuid).padStart(12,'0')}`}})
   page.description.value='工程模拟：一般服务情况';return{...page,calls,cleanup}

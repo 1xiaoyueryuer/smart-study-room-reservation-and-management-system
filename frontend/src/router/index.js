@@ -53,6 +53,14 @@ const routes = [
         meta: { title: '求助与投诉详情', requiresAuth: true, allowedRoles: ['student', 'staff'] }
       },
       {
+        path:'/appeals/new',name:'appeal-create',component:()=>import('../views/AppealCreateView.vue'),
+        meta:{title:'本人违规申诉',requiresAuth:true,allowedRoles:['student','staff']}
+      },
+      {
+        path:'/appeals/:id',name:'appeal-detail',component:()=>import('../views/AppealDetailView.vue'),props:true,
+        meta:{title:'本人申诉详情',requiresAuth:true,allowedRoles:['student','staff']}
+      },
+      {
         path: '/waitlist',
         name: 'waitlist',
         component: () => import('../views/WaitlistView.vue'),

@@ -1,0 +1,24 @@
+[
+  {
+    "name": "qr-notfound-regression",
+    "width": 384,
+    "height": 384,
+    "png": "qr-notfound-regression.png",
+    "rgba": "qr-notfound-regression.rgba.deflate",
+    "png_sha256": "43e09fea7ec28c89276fc6a8f712f19b6c2941180ed5f0f33035c1186a47f8e6",
+    "rgba_sha256": "de758609eb3dc12bd6fb2e574dda25654ae748127a3a8b4610ab7333f3d8420a",
+    "decoded_sha256": "421c145983bae9832b706e3d932ea2ba45ba6a1fb48248fcb9a8253225d66d76",
+    "origin": "SeatCodeService generated engineering-only random QR, not registered in any database; original PNG decoded to RGBA with Pillow for this fixed regression"
+  },
+  {
+    "name": "qr-detector-regression",
+    "width": 384,
+    "height": 384,
+    "png": "qr-detector-regression.png",
+    "rgba": "qr-detector-regression.rgba.deflate",
+    "png_sha256": "30dcc74131d66a9c00a937cd665af869d30b59abc750040337d4ff59461adb06",
+    "rgba_sha256": "6c04444769d1826ba0a47d2d6f1959b8131992a46c214584cae551361e215319",
+    "decoded_sha256": "b4e99fb1d05c4ba31b4c17ad74f59edb9aa77a0bd1edb0882dc22ed55c9cc143",
+    "origin": "SeatCodeService generated engineering-only random QR, not registered in any database; original PNG decoded to RGBA with Pillow for this fixed regression"
+  }
+]

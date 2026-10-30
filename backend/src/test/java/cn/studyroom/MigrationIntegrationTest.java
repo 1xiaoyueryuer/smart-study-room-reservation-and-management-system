@@ -55,7 +55,7 @@ class MigrationIntegrationTest {
     }
     @Test void emptyInstallationAndRepeatedStartup() throws Exception {
         var f=flyway(); DatabaseMigrations.migrate(f,false); DatabaseMigrations.migrate(f,false);
-        assertEquals(17,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(18,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".booking_mutex WHERE id=1"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".audit_events"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"));
@@ -73,7 +73,7 @@ class MigrationIntegrationTest {
         assertEquals(1,count("SELECT count(*) FROM "+schema+".seats WHERE version=1 AND resource_reason IS NULL"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".reservations WHERE user_id=1 AND seat_id=1 AND status='pending'"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"),"历史座位不能被伪造成已经配置真实贴码");
-        assertEquals(17,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(18,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE username='known-campus' AND campus_id='OLD-01' AND student_no='OLD-01'"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE type='BASELINE'"));
     }
@@ -239,6 +239,24 @@ class MigrationIntegrationTest {
     @Test void automaticBatchDeferredCardinalityAllowsAtomicCreationAndWholeDomainCleanup() throws Exception {
         DatabaseMigrations.migrate(flyway(),false);transactionSql("INSERT INTO users(username,password_hash) VALUES('one','hash'); INSERT INTO rooms(name,seat_rows,seat_cols) VALUES('simulation',1,1); INSERT INTO seats(room_id,seat_no,row_no,col_no) VALUES(1,'01',1,1); INSERT INTO reservations(id,user_id,seat_id,res_date,start_time,end_time,status) SELECT x,1,1,'2026-10-29','09:00','10:00','unused_ended' FROM generate_series(1,3) x; INSERT INTO violations(id,user_id,reservation_id,type,event_key,occurred_at,registered_at,reason,source) SELECT x,1,x,'no_show','unused:'||x,'2026-10-29 09:15','2026-10-29 09:16','simulation','automatic' FROM generate_series(1,3) x;"+batchRestriction(1,1)+batchEvaluation(1,1)+batchSources(1,1,1,3));assertEquals(3,count("SELECT count(*) FROM "+schema+".restriction_evaluation_sources"));transactionSql("DELETE FROM restriction_evaluation_sources;DELETE FROM restriction_evaluations;DELETE FROM restrictions;");assertEquals(0,count("SELECT count(*) FROM "+schema+".restrictions"));
     }
+    @Test void sharedEvidenceRenamePreservesExistingComplaintBytesAndBindingExactly() throws Exception {
+        var previous=Flyway.configure().dataSource(source).defaultSchema(schema).schemas(schema).cleanDisabled(true).baselineOnMigrate(false).target("17").locations("classpath:db/migration").load();DatabaseMigrations.migrate(previous,false);
+        transactionSql("INSERT INTO users(username,password_hash) VALUES('old','hash'); INSERT INTO complaints(user_id,operation_id,request_hash,type,status,description,submitted_at) VALUES(1,'a1111111-1111-4111-8111-111111111111','hash','service','submitted','original description','2026-10-29 09:00'); INSERT INTO complaint_attachments(id,owner_id,complaint_id,position,bound_at,display_name,content_type,size_bytes,width,height,sha256,file_bytes,created_at,expires_at) VALUES('a2222222-2222-4222-8222-222222222222',1,1,0,'2026-10-29 09:01','original.png','image/png',3,1,1,repeat('a',64),decode('010203','hex'),'2026-10-29 09:00','2026-10-30 09:00');");
+        DatabaseMigrations.migrate(flyway(),false);assertEquals(0,count("SELECT count(*) FROM information_schema.tables WHERE table_schema='"+schema+"' AND table_name='complaint_attachments'"));assertEquals(1,count("SELECT count(*) FROM "+schema+".evidence_attachments WHERE purpose='complaint' AND complaint_id=1 AND appeal_id IS NULL AND position=0 AND bound_at=TIMESTAMP '2026-10-29 09:01' AND file_bytes=decode('010203','hex') AND sha256=repeat('a',64) AND display_name='original.png' AND created_at=TIMESTAMP '2026-10-29 09:00'"));assertEquals(0,count("SELECT count(*) FROM "+schema+".appeals"));assertEquals(0,count("SELECT count(*) FROM "+schema+".appeal_events"));
+    }
+    void appealFacts() throws Exception {
+        transactionSql("INSERT INTO users(username,password_hash) VALUES('owner','hash'),('other','hash'); INSERT INTO rooms(name,seat_rows,seat_cols) VALUES('S21 schema simulation',1,1); INSERT INTO seats(room_id,seat_no,row_no,col_no) VALUES(1,'01',1,1); INSERT INTO reservations(id,user_id,seat_id,res_date,start_time,end_time,status) VALUES(1,1,1,'2026-10-29','09:00','10:00','unused_ended'),(2,1,1,'2026-10-29','10:00','11:00','unused_ended'); INSERT INTO violations(id,user_id,reservation_id,type,event_key,occurred_at,registered_at,reason,source) VALUES(1,1,1,'no_show','unused:1','2026-10-29 09:15','2026-10-29 09:16','safe public','automatic'),(2,1,2,'no_show','unused:2','2026-10-29 10:15','2026-10-29 10:16','safe public','automatic'); INSERT INTO notifications(id,user_id,type,title,content,violation_id,created_at) VALUES(1,1,'violation','typed','real basis',1,'2026-10-29 09:16'); INSERT INTO complaints(user_id,operation_id,request_hash,type,status,description,submitted_at) VALUES(1,'a1111111-1111-4111-8111-111111111111','hash','service','submitted','separate complaint','2026-10-29 09:00');");
+    }
+    String validAppeal(String operation){return "INSERT INTO appeals(id,user_id,violation_id,operation_id,request_hash,description,submitted_at,notification_id,notified_at,deadline,violation_snapshot) VALUES(1,1,1,'"+operation+"','hash','appeal description','2026-10-29 09:17',1,'2026-10-29 09:16','2026-11-05 09:16','{}');";}
+    String appealEvidence(String uuid,int owner,String purpose,String complaint,String appeal,String position){return "INSERT INTO evidence_attachments(id,owner_id,purpose,complaint_id,appeal_id,position,bound_at,display_name,content_type,size_bytes,width,height,sha256,file_bytes,created_at,expires_at) VALUES('"+uuid+"',"+owner+",'"+purpose+"',"+complaint+","+appeal+","+position+",'2026-10-29 09:17','safe.png','image/png',1,1,1,repeat('a',64),decode('01','hex'),'2026-10-29 09:16','2026-10-30 09:16');";}
+    @org.junit.jupiter.params.ParameterizedTest @org.junit.jupiter.params.provider.ValueSource(strings={"notification_wrong_owner","notification_wrong_violation","notification_wrong_time","deadline_wrong","submitted_before_notification","submitted_at_deadline","snapshot_array","duplicate_pending","event_wrong_owner","event_wrong_time","evidence_wrong_purpose","evidence_dual_binding","evidence_position_null","evidence_wrong_owner","evidence_duplicate_position"})
+    void appealConstraintsKeepRealNotificationWindowOwnershipAndEvidenceDomain(String problem) throws Exception {
+        DatabaseMigrations.migrate(flyway(),false);appealFacts();String valid=validAppeal("b1111111-1111-4111-8111-111111111111"),invalid;
+        if(problem.startsWith("notification_")||problem.startsWith("submitted_")||problem.equals("deadline_wrong")||problem.equals("snapshot_array")){
+            invalid=switch(problem){case "notification_wrong_owner"->valid.replace("VALUES(1,1,1,","VALUES(1,2,1,");case "notification_wrong_violation"->valid.replace("VALUES(1,1,1,","VALUES(1,1,2,");case "notification_wrong_time"->valid.replace("'2026-10-29 09:16','2026-11-05 09:16'","'2026-10-29 09:15','2026-11-05 09:15'");case "deadline_wrong"->valid.replace("2026-11-05 09:16","2026-11-05 09:17");case "submitted_before_notification"->valid.replace("2026-10-29 09:17","2026-10-29 09:15");case "submitted_at_deadline"->valid.replace("2026-10-29 09:17","2026-11-05 09:16");default->valid.replace("'{}'","'[]'");};
+        }else{transactionSql(valid);if(problem.equals("duplicate_pending"))invalid=validAppeal("b2222222-2222-4222-8222-222222222222").replace("VALUES(1,1,1,","VALUES(2,1,1,");else if(problem.startsWith("event_"))invalid="INSERT INTO appeal_events(appeal_id,actor_id,event_type,source,occurred_at) VALUES(1,"+(problem.equals("event_wrong_owner")?"2":"1")+",'submitted','user_submit','"+(problem.equals("event_wrong_time")?"2026-10-29 09:18":"2026-10-29 09:17")+"');";else{if(problem.equals("evidence_duplicate_position"))transactionSql(appealEvidence("c1111111-1111-4111-8111-111111111111",1,"appeal","NULL","1","0"));invalid=appealEvidence("c2222222-2222-4222-8222-222222222222",problem.equals("evidence_wrong_owner")?2:1,problem.equals("evidence_wrong_purpose")?"complaint":"appeal",problem.equals("evidence_dual_binding")?"1":"NULL","1",problem.equals("evidence_position_null")?"NULL":"0");}}
+        assertThrows(SQLException.class,()->transactionSql(invalid));
+    }
     @Test void failedMigrationIsDiagnosticAndTransactional() throws Exception {
         var f=flyway(); DatabaseMigrations.migrate(f,false);
         Files.writeString(scripts.resolve("V9999__broken.sql"),"CREATE TABLE rollback_probe(id bigint); INSERT INTO missing_table VALUES(1);");
@@ -246,6 +264,6 @@ class MigrationIntegrationTest {
         var error=assertThrows(FlywayException.class,()->DatabaseMigrations.migrate(broken,false));
         assertTrue(error.getMessage().contains("V9999__broken.sql"));
         assertEquals(0,count("SELECT count(*) FROM information_schema.tables WHERE table_schema='"+schema+"' AND table_name='rollback_probe'"));
-        assertEquals(17,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(18,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
     }
 }

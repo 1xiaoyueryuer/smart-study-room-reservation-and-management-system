@@ -1,4 +1,5 @@
 import { BrowserQRCodeReader } from '@zxing/browser'
+import { DecodeHintType } from '@zxing/library'
 
 export function scanFailure(error) {
   const messages = {
@@ -12,7 +13,7 @@ export function scanFailure(error) {
 }
 
 // 每个页面只管理自己的流与图片URL；generation废弃离页后的异步结果。
-export function createSeatScanner({ onCode, onError, onCamera = () => {}, reader = new BrowserQRCodeReader(), mediaDevices = globalThis.navigator?.mediaDevices, urls = globalThis.URL, ImageClass = globalThis.Image } = {}) {
+export function createSeatScanner({ onCode, onError, onCamera = () => {}, reader = new BrowserQRCodeReader(), pureReader = new BrowserQRCodeReader(new Map([[DecodeHintType.PURE_BARCODE, true]])), mediaDevices = globalThis.navigator?.mediaDevices, urls = globalThis.URL, ImageClass = globalThis.Image } = {}) {
   let generation = 0, stream = null, controls = null, video = null, imageUrl = null, locked = false
   function stopCamera() {
     generation++
@@ -44,8 +45,19 @@ export function createSeatScanner({ onCode, onError, onCamera = () => {}, reader
         image.src = url
       })
       if (ticket !== generation) return
-      const result = await reader.decodeFromImageUrl(url)
-      await deliver(result.getText(), ticket)
+      let result
+      try { result = await reader.decodeFromImageUrl(url) }
+      catch (primaryError) {
+        if (ticket !== generation) return
+        // Generated clean PNGs can defeat the generic finder-pattern detector.
+        // Retry the same image pixels with ZXing's pure-barcode extraction only.
+        try { result = await pureReader.decodeFromImageUrl(url) }
+        catch { throw primaryError }
+      }
+      if (ticket !== generation) return
+      const text = result.getText()
+      if (!/^studyroom-seat:v1:[A-Za-z0-9_-]{43}$/.test(text)) throw new Error('座位码格式错误，请选择真实座位码图片。')
+      await deliver(text, ticket)
     } catch (error) { if (ticket === generation) onError('图片中未能识别有效二维码：' + scanFailure(error)) }
     finally { if (imageUrl === url) releaseImage() }
   }

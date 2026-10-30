@@ -97,6 +97,12 @@ def main():
     check('本人独立违规明细',status == 200 and isinstance(body['data'],list))
     check('违规通知时间只来自可靠关联且不公开核实私有资料',all('notified_at' in item and 'notification_id' in item and not any(key in item for key in ('source_event_id','complaint_id','reporter','private_note','identity_basis')) and (item['source'] != 'manual' or item['reservation_id'] is None) for item in body['data']))
     check('开始前取消未登记独立违规',all(v['reservation_id'] != res_id for v in body['data']))
+    status, appeals = call('GET','/appeals/mine',token=student)
+    check('本人申诉进度与原通知依据',status == 200 and isinstance(appeals['data'],list) and all('notification_basis' in item and 'violation_snapshot' in item and not any(key in item for key in ('subject','source_event_id','complaint_id','private_note')) for item in appeals['data']))
+    check('普通账号不能查看管理申诉待办',call('GET','/admin/appeals',token=student)[0] == 403)
+    if body['data']:
+        status, appeal_context = call('GET',f"/violations/{body['data'][0]['id']}/appeal-eligibility",token=student)
+        check('申诉条件读取服务端通知期限而非客户端推断',status == 200 and isinstance(appeal_context['data']['eligibility']['can_submit'],bool) and 'deadline' in appeal_context['data']['eligibility'] and appeal_context['data']['campus_zone'] == 'Asia/Shanghai')
     complaint_req = {'type':'occupation','reservation_id':res_id,'description':'API工程模拟：关联本人取消历史留证，不延期或复活预约','attachment_ids':[],'operation_id':str(uuid.uuid4())}
     check('不能关联他人预约求助',call('POST','/complaints',{**complaint_req,'operation_id':str(uuid.uuid4())},other)[0] == 403)
     status, submitted = call('POST','/complaints',complaint_req,student)

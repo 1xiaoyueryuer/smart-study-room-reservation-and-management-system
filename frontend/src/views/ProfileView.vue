@@ -10,6 +10,7 @@ import { useAuthStore } from '../stores/auth'
 import { getCreditOverview } from '../api/credit'
 import SEmpty from '../components/ui/SEmpty.vue'
 import RemindersPanel from '../components/RemindersPanel.vue'
+import AppealsPanel from '../components/AppealsPanel.vue'
 import RestrictionsPanel from '../components/RestrictionsPanel.vue'
 import ViolationsPanel from '../components/ViolationsPanel.vue'
 import SBanner from '../components/ui/SBanner.vue'
@@ -132,7 +133,7 @@ const { page, pages, pageItems } = usePagination(creditLogs, null)
     </div>
 
     <div v-if="auth.isOrdinary" class="split-right">
-      <RestrictionsPanel /><ViolationsPanel /><RemindersPanel />
+      <RestrictionsPanel /><ViolationsPanel /><AppealsPanel /><RemindersPanel />
       <section class="card">
         <div class="card-title-row">
           <h3>历史信用流水（只读）</h3>

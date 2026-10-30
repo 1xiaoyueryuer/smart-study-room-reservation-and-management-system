@@ -1,10 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
+import { inflateSync } from 'node:zlib'
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { ref, computed } from 'vue'
 import { BrowserQRCodeReader } from '@zxing/browser'
-import { QRCodeWriter, BarcodeFormat } from '@zxing/library'
+import { QRCodeWriter, BarcodeFormat, DecodeHintType } from '@zxing/library'
 import { createSeatScanner, scanFailure } from '../src/composables/seatScanner.js'
 const code='studyroom-seat:v1:'+'a'.repeat(43)
 const usage={id:12,checkin_at:'2026-10-30T08:00:00.125+08:00',ended_at:null,end_reason:null,settled_at:null,duration_seconds:0.125,observed_at:'2026-10-30T08:00:00.250+08:00',origin:'seat_code'}
@@ -166,4 +168,25 @@ test('checkin detail can display subsequent management cancellation without hidi
   let reads=0
   const page=await checkin({getReservation:async()=>({data:{status:++reads===1?'pending':'cancelled',allowed_actions:reads===1?['checkin']:[],termination_reason:reads===1?null:'admin_resource_change',termination_note:'工程模拟：当次公开检修原因',usage_record:reads===1?null:{...usage,ended_at:'2026-10-30T08:01:00.125+08:00',end_reason:'admin_resource_change',duration_seconds:60}}})})
   await page.submitCode(code);assert.equal(page.success.value,false);assert.match(page.scanNotice.value,/资源管理取消/);assert.equal(page.reservation.value.usage_record.duration_seconds,60);assert.equal(page.reservation.value.termination_note,'工程模拟：当次公开检修原因')
+})
+
+test('fixed clean generated PNG regressions fail generic detection but production file fallback decodes the actual original pixels exactly',async()=>{
+  const fixtures=JSON.parse(await readFile(new URL('./fixtures/qr-detector-regressions.json',import.meta.url),'utf8')),digest=value=>createHash('sha256').update(value).digest('hex')
+  for(const fixture of fixtures){
+    const png=await readFile(new URL(`./fixtures/${fixture.png}`,import.meta.url)),pixels=inflateSync(await readFile(new URL(`./fixtures/${fixture.rgba}`,import.meta.url)))
+    assert.equal(digest(png),fixture.png_sha256);assert.equal(digest(pixels),fixture.rgba_sha256);assert.equal(pixels.length,fixture.width*fixture.height*4)
+    const canvas={width:fixture.width,height:fixture.height,getContext:()=>({getImageData:()=>({data:new Uint8ClampedArray(pixels)})})},generic=new BrowserQRCodeReader(),pure=new BrowserQRCodeReader(new Map([[DecodeHintType.PURE_BARCODE,true]]))
+    assert.throws(()=>generic.decodeFromCanvas(canvas));let primaryCalls=0,pureCalls=0;const decodedHashes=[]
+    const page=scanner({reader:{decodeFromImageUrl:async url=>{assert.equal(url,'blob:test-image');primaryCalls++;return generic.decodeFromCanvas(canvas)}},pureReader:{decodeFromImageUrl:async url=>{assert.equal(url,'blob:test-image');pureCalls++;return pure.decodeFromCanvas(canvas)}},onCode:async text=>decodedHashes.push(digest(text))})
+    await page.instance.file({type:'image/png',size:png.length});assert.equal(primaryCalls,1);assert.equal(pureCalls,1);assert.equal(decodedHashes.length,1);assert.equal(decodedHashes[0],fixture.decoded_sha256);assert.equal(page.errors.length,0);assert.deepEqual(page.revoked,['blob:test-image'])
+  }
+})
+test('file fallback is unused after default success, preserves failures and rejects non-seat content without submitting it',async()=>{
+  let pureCalls=0;const normal=scanner({pureReader:{decodeFromImageUrl:async()=>{pureCalls++;throw new Error('不得执行')}}});await normal.instance.file({type:'image/png',size:100});assert.equal(pureCalls,0);assert.equal(normal.decoded.length,1)
+  const broken=scanner({reader:{decodeFromImageUrl:async()=>{throw new Error('原图未识别')}},pureReader:{decodeFromImageUrl:async()=>{throw new Error('纯图也未识别')}}});await broken.instance.file({type:'image/png',size:100});assert.match(broken.errors[0],/原图未识别/);assert.equal(broken.decoded.length,0);assert.deepEqual(broken.revoked,['blob:test-image'])
+  for(const reader of [{decodeFromImageUrl:async()=>({getText:()=> 'not-a-seat-code'})},{decodeFromImageUrl:async()=>{throw new Error('默认未识别')}}]){const page=scanner({reader,pureReader:{decodeFromImageUrl:async()=>({getText:()=> 'studyroom-seat:v1:invalid'})}});await page.instance.file({type:'image/png',size:100});assert.match(page.errors[0],/座位码格式错误/);assert.equal(page.decoded.length,0);assert.deepEqual(page.revoked,['blob:test-image'])}
+})
+test('leaving during default or pure file decode prevents fallback delivery and revokes only the owned image URL',async()=>{
+  const primary=deferred();let pureCalls=0;const before=scanner({reader:{decodeFromImageUrl:()=>primary.promise},pureReader:{decodeFromImageUrl:async()=>{pureCalls++;return{getText:()=>code}}}});const first=before.instance.file({type:'image/png',size:100});await tick();before.instance.stop();primary.resolve(Promise.reject(new Error('旧读取失败')));await first;assert.equal(pureCalls,0);assert.equal(before.decoded.length,0);assert.equal(before.errors.length,0);assert.deepEqual(before.revoked,['blob:test-image'])
+  const fallback=deferred(),during=scanner({reader:{decodeFromImageUrl:async()=>{throw new Error('默认未识别')}},pureReader:{decodeFromImageUrl:()=>fallback.promise}});const second=during.instance.file({type:'image/png',size:100});await tick();during.instance.stop();fallback.resolve({getText:()=>code});await second;assert.equal(during.decoded.length,0);assert.equal(during.errors.length,0);assert.deepEqual(during.revoked,['blob:test-image'])
 })

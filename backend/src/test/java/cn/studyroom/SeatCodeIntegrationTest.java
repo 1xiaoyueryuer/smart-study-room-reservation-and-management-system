@@ -29,6 +29,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class SeatCodeIntegrationTest {
     @TestConfiguration static class TimeConfig { @Bean @Primary MinuteBookingIntegrationTest.TestClock testClock() { var c=new MinuteBookingIntegrationTest.TestClock();c.set(LocalDate.now(BookingPolicy.CAMPUS_ZONE).minusDays(1).atTime(9,0));return c; } }
     @Autowired Store db;
+    @Autowired org.springframework.transaction.support.TransactionTemplate transactions;
     @Autowired BookingService bookings;
     @Autowired SeatCodeService codes;
     @Autowired OpeningScheduleService opening;
@@ -66,8 +67,9 @@ class SeatCodeIntegrationTest {
     Map<String,Object> row(long id) { return db.one("SELECT * FROM reservations WHERE id=?",id); }
     static String decode(byte[] png) throws Exception {
         assertArrayEquals(new byte[]{(byte)137,80,78,71,13,10,26,10},Arrays.copyOf(png,8));var image=ImageIO.read(new ByteArrayInputStream(png));
-        int width=image.getWidth(),height=image.getHeight();var source=new RGBLuminanceSource(width,height,image.getRGB(0,0,width,height,null,0,width));
-        return new QRCodeReader().decode(new BinaryBitmap(new HybridBinarizer(source))).getText();
+        int width=image.getWidth(),height=image.getHeight();assertEquals(384,width);assertEquals(384,height);var source=new RGBLuminanceSource(width,height,image.getRGB(0,0,width,height,null,0,width));
+        // This helper consumes the service's clean, unrotated monochrome raster, not a camera photograph.
+        try{return new QRCodeReader().decode(new BinaryBitmap(new HybridBinarizer(source)),Map.of(DecodeHintType.PURE_BARCODE,true)).getText();}finally{image.flush();}
     }
     @Test void actualPngRoundTripsAndPublicViewsNeverExposeCode() throws Exception {
         String adminToken=token("admin"),userToken=token("student");
@@ -92,6 +94,14 @@ class SeatCodeIntegrationTest {
         assertEquals(current(seat1),decode(currentPng));assertNotEquals(original,decode(currentPng));
         byte[] compatiblePng=http.perform(auth(get(path(seat1)+"/png"),token)).andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();assertEquals(decode(currentPng),decode(compatiblePng));
         http.perform(auth(get(path(seat1)+"/png?expected_version=0"),token)).andExpect(status().isBadRequest());
+    }
+    @Test void knownDetectorEdgePatternsRoundTripThroughRealAuthorizedPngEndpoint() throws Exception {
+        String token=token("admin");code(seat1);
+        // Fixed work-only counterexamples; never real deployed seat credentials. Keep random generation in the original test.
+        for(String value:List.of("studyroom-seat:v1:S8_9Q7yi3Am81cSm3Ne3jGy6iPIeZOCdiR8pamMBpMM","studyroom-seat:v1:q7hrVYmMs4ENyCWQpfQIePBXc5DXiMIwCAjoysjA4IU")){
+            transactions.executeWithoutResult(status->{db.lockBookings();db.update("UPDATE seat_codes SET code_value=? WHERE seat_id=?",value,seat1);});
+            byte[] png=http.perform(auth(get(path(seat1)+"/png").param("expected_version","1"),token)).andExpect(status().isOk()).andExpect(content().contentType("image/png")).andExpect(header().string("Cache-Control","no-store")).andReturn().getResponse().getContentAsByteArray();assertEquals(value,decode(png));assertEquals(current(seat1),decode(png));
+        }
     }
     @Test void adminOnlyVersionedRotationEnableAndRedactedAudit() throws Exception {
         String token=token("admin"),user=token("student"),staffToken=token("staff");String old=code(seat1);

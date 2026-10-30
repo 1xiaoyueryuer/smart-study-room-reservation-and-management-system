@@ -15,7 +15,7 @@ final class TestDatabaseCleanup {
         transactions.executeWithoutResult(status->{
             if(!"studyroom_java_test".equals(db.one("SELECT current_database() AS name").get("name")))throw new IllegalStateException("test database only");
             db.lockBookings();
-            for(String table:List.of("notifications","restriction_operations","restriction_evaluation_sources","restriction_evaluations","restrictions","violations","complaint_target_events","complaint_targets","reminders","complaint_attachments","complaint_events","complaints","resource_change_operations","usage_records","seat_codes","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","waitlist","reservations","seats","rooms","users"))db.update("DELETE FROM "+table);
+            for(String table:List.of("evidence_attachments","appeal_events","appeals","notifications","restriction_operations","restriction_evaluation_sources","restriction_evaluations","restrictions","violations","complaint_target_events","complaint_targets","reminders","complaint_events","complaints","resource_change_operations","usage_records","seat_codes","resource_unavailability","opening_windows","opening_schedules","audit_events","credit_logs","waitlist","reservations","seats","rooms","users"))db.update("DELETE FROM "+table);
         });
     }
 }
