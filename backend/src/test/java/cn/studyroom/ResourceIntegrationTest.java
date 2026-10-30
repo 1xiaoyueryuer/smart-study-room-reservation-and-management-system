@@ -131,13 +131,15 @@ class ResourceIntegrationTest {
         assertEquals(1,db.count("SELECT count(*) FROM audit_events WHERE action='room.seats.batch' AND object_id=? AND reason='生成模拟座位'",Long.toString(closedEmpty)));
         long other=db.insert("INSERT INTO rooms(name,seat_rows,seat_cols) VALUES('另一个模拟空间',1,1)");
         opening.initializeDefaults(other);
+        // This one current-statistics seat is open all day, independent of test wall-clock hour.
+        db.update("UPDATE opening_windows SET start_minute=0,end_minute=1440 WHERE schedule_id IN (SELECT id FROM opening_schedules WHERE room_id=?)",other);
         db.insert("INSERT INTO seats(room_id,seat_no,row_no,col_no) VALUES(?,'01',1,1)",other);
         db.update("INSERT INTO waitlist(user_id,room_id,res_date,start_time,end_time) VALUES(?,?,?,TIME '10:00',TIME '11:00')",ids.get("staff"),other,java.sql.Date.valueOf(booking(seat1).date()));
         bookings.tick();
         assertEquals("waiting",db.one("SELECT status FROM waitlist WHERE user_id=?",ids.get("student")).get("status"));
         assertEquals("waiting",db.one("SELECT status FROM waitlist WHERE user_id=?",ids.get("staff")).get("status"));
         assertEquals(0,db.count("SELECT count(*) FROM reservations"));
-        http.perform(get("/api/stats/overview").header("Authorization","Bearer "+admin)).andExpect(status().isOk()).andExpect(jsonPath("$.data.total_seats").value(1));
+        http.perform(get("/api/stats/overview").header("Authorization","Bearer "+admin)).andExpect(status().isOk()).andExpect(jsonPath("$.data.current.open_available_seats").value(1));
     }
     @Test void auditFailureRollsBackResourceAndRoomVersionTogether() throws Exception {
         String admin=token("admin");db.update("ALTER TABLE audit_events ADD CONSTRAINT s05_reject_audit CHECK (false) NOT VALID");

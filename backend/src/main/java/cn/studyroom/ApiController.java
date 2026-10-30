@@ -64,11 +64,8 @@ public class ApiController {
     @PostMapping("/waitlist") Object join(HttpServletRequest req,@Valid @RequestBody Requests.Wait body) { return ok(bookings.join(uid(req),body)); }
     @GetMapping("/waitlist/mine") Object waitMine(HttpServletRequest req) { return ok(bookings.waitMine(uid(req))); }
     @PostMapping("/waitlist/{id}/cancel") Object cancelWait(HttpServletRequest req,@PathVariable long id) { bookings.cancelWait(uid(req),id);return ok(Map.of("cancelled",id)); }
-    @GetMapping("/stats/overview") Object overview() { return ok(stats.overview()); }
-    @GetMapping("/stats/heatmap") Object heatmap(@RequestParam("room_id") long roomId,@RequestParam(required=false) String date) { return ok(stats.heatmap(roomId,date)); }
-    @GetMapping("/stats/trend") Object trend(@RequestParam(defaultValue="14") int days) { return ok(stats.trend(days)); }
-    @GetMapping("/stats/peak") Object peak(@RequestParam(defaultValue="14") int days) { return ok(stats.peak(days)); }
-    @GetMapping("/stats/top-seats") Object top(@RequestParam(defaultValue="14") int days,@RequestParam(defaultValue="10") int limit) { return ok(stats.top(days,limit)); }
+    @GetMapping("/stats/overview") Object overview(HttpServletRequest req,@RequestParam Map<String,String> parameters) { return ok(stats.overview(uid(req),parameters)); }
+    @GetMapping("/stats/heatmap") Object heatmap(HttpServletRequest req,@RequestParam Map<String,String> parameters) { return ok(stats.heatmap(uid(req),parameters)); }
     @GetMapping("/admin/users") Object users(HttpServletRequest req) { return ok(users.list(uid(req))); }
     @PostMapping("/admin/users") Object createUser(HttpServletRequest req,@Valid @RequestBody Requests.UserChange body) { return ok(users.save(uid(req),null,body)); }
     @PutMapping("/admin/users/{id}") Object updateUser(HttpServletRequest req,@PathVariable long id,@Valid @RequestBody Requests.UserChange body) { return ok(users.save(uid(req),id,body)); }

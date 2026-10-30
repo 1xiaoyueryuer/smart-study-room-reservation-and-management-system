@@ -201,9 +201,9 @@ def main():
     status, repeated_read_all = call('POST','/notifications/read_all',{},student)
     check('重复一键已读不重复计算',status == 200 and repeated_read_all['data']['marked'] == 0)
     status, body = call('GET','/stats/overview',token=admin)
-    check('统计总览字段',status == 200 and len(body['data']['trend_14']) == 14)
+    check('统计七日事实与当前比例独立',status == 200 and len(body['data']['trend']) == 7 and len(body['data']['peak']) == 24 and set(body['data']) == {'snapshot_at','campus_zone','scope','day','current','trend','peak','top_seats'} and body['data']['campus_zone'] == 'Asia/Shanghai')
     status, body = call('GET',f'/stats/heatmap?room_id={room}&date={date}',token=admin)
-    check('热力矩阵尺寸',status == 200 and len(body['data']['cells']) == len(body['data']['seats']) and len(body['data']['cells'][0]) == len(body['data']['hours']))
+    check('真实使用24小时热力矩阵',status == 200 and len(body['data']['cells']) == len(body['data']['seats']) and len(body['data']['hours']) == 24 and body['data']['ends'][-1] == '24:00' and all(len(row) == 24 and all(value in (0,1) for value in row) for row in body['data']['cells']))
     room_req = {'name':'API临时验证_'+str(time.time_ns()),'location':'验证楼','seat_rows':1,'seat_cols':2,'description':'','building':'API验证楼','floor':'B1','enabled':True,'reason':'API模拟资源验证'}
     status, body = call('POST','/admin/rooms',room_req,admin)
     check('管理端创建房间',status == 200)

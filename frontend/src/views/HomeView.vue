@@ -7,6 +7,7 @@ import { useAuthStore } from '../stores/auth'
 import { useNotificationStore } from '../stores/notification'
 import { getRooms, getOpeningWindows } from '../api/room'
 import { getOverview } from '../api/stats'
+import { validOverview, ratioText } from '../composables/statsForm.js'
 import AppIcon from '../components/AppIcon.vue'
 import SBanner from '../components/ui/SBanner.vue'
 import SButton from '../components/ui/SButton.vue'
@@ -46,10 +47,13 @@ const roomsError = ref('')
 const roomsLoading = ref(false)
 const unread = computed(() => notifStore.unread)
 let unreadTimer = null
+let disposed = false
+let statsRequest = 0
 
-const totalSeats = computed(() => statsOverview.value?.total_seats ?? null)
-const inUseNow = computed(() => statsOverview.value?.in_use_now ?? null)
-const availableSeats = computed(() => totalSeats.value === null || inUseNow.value === null ? null : Math.max(0, totalSeats.value - inUseNow.value))
+const openAvailableSeats = computed(() => statsOverview.value?.current.open_available_seats ?? null)
+const inUseNow = computed(() => statsOverview.value?.current.in_use_now ?? null)
+const currentUsageText = computed(() => statsOverview.value ? ratioText(statsOverview.value.current.usage_ratio) : '尚未读取')
+const statsSnapshotText = computed(() => statsOverview.value ? new Date(statsOverview.value.snapshot_at).toLocaleString('zh-CN', {timeZone:'Asia/Shanghai',hour12:false}) : '')
 const roomCount = computed(() => rooms.value.length)
 const openHours = computed(() => {
   const available = rooms.value.find(room => room.enabled && todayOpenings.value[room.id]?.windows?.length)
@@ -80,25 +84,33 @@ async function loadRooms() {
 
 async function loadStats() {
   if (!auth.isAdmin || statsLoading.value) return
+  const sequence = ++statsRequest
+  const actor = auth.user?.id
   statsLoading.value = true
   statsError.value = ''
   try {
     const statsResp = await getOverview()
+    if (disposed || sequence !== statsRequest || !auth.isAdmin || auth.user?.id !== actor) return
+    if (!validOverview(statsResp.data)) throw new Error('统计回执不完整，请重新读取')
     statsOverview.value = statsResp.data
   } catch (error) {
+    if (disposed || sequence !== statsRequest || !auth.isAdmin || auth.user?.id !== actor) return
     statsError.value = error.message
   } finally {
-    statsLoading.value = false
+    if (!disposed && sequence === statsRequest) statsLoading.value = false
   }
 }
 
 onMounted(async () => {
   await Promise.all([loadRooms(), loadStats()])
+  if (disposed) return
   refreshUnread()
   unreadTimer = setInterval(refreshUnread, 30000)
 })
 
 onUnmounted(() => {
+  disposed = true
+  ++statsRequest
   if (unreadTimer) {
     clearInterval(unreadTimer)
     unreadTimer = null
@@ -107,7 +119,7 @@ onUnmounted(() => {
 
 const shortcuts = computed(() => auth.isAdmin
   ? [
-      { title: '热力图统计', desc: '座位利用率 · 高峰时段', icon: 'analytics', to: '/analytics', tone: 'warm' },
+      { title: '热力图统计', desc: '真实使用记录 · 近七日趋势', icon: 'analytics', to: '/analytics', tone: 'warm' },
       { title: '管理端', desc: '自习室 · 座位 · 用户', icon: 'admin', to: '/admin', tone: 'primary' },
       { title: '个人中心', desc: '查看管理员账户信息', icon: 'profile', to: '/profile', tone: 'violet' }
     ]
@@ -175,7 +187,8 @@ const cardToneClass = {
           <span class="role-pill role-pill--admin">管理员</span>
         </div>
         <p v-if="statsLoading" class="muted">正在加载统计…</p>
-        <SBanner v-if="statsError" type="error" :title="statsError"><SButton size="sm" @click="loadStats">重试统计</SButton></SBanner>
+        <SBanner v-if="statsError" type="error" :title="statsError"><p>保留上次成功快照。</p><SButton size="sm" @click="loadStats">重试统计</SButton></SBanner>
+        <p v-if="statsOverview" class="muted">全校快照：{{ statsSnapshotText }}（校园时区）；所选日 {{ statsOverview.scope.selected_date }}</p>
         <div class="kpi-grid">
           <div class="kpi">
             <div class="kpi-num"><SAnimatedNumber v-if="!roomsLoading && !roomsError" :value="roomCount" /><span v-else>—</span></div>
@@ -183,13 +196,13 @@ const cardToneClass = {
           </div>
           <div class="kpi kpi-ok">
             <div class="kpi-num">
-              <SAnimatedNumber v-if="availableSeats !== null" :value="availableSeats" /><span v-else>—</span><span class="kpi-slash">/</span><span class="kpi-total">{{ totalSeats ?? '—' }}</span>
+              <SAnimatedNumber v-if="inUseNow !== null" :value="inUseNow" /><span v-else>—</span><span class="kpi-slash">/</span><span class="kpi-total">{{ openAvailableSeats ?? '—' }}</span>
             </div>
-            <div class="kpi-label">可用 / 总座位</div>
+            <div class="kpi-label">使用中 / 开放可用座位</div>
           </div>
           <div class="kpi">
-            <div class="kpi-num">2</div>
-            <div class="kpi-label">管理模块</div>
+            <div class="kpi-num">{{ currentUsageText }}</div>
+            <div class="kpi-label">快照时刻使用比例</div>
           </div>
           <div class="kpi">
             <div class="kpi-num kpi-time">
@@ -241,7 +254,7 @@ const cardToneClass = {
           <li>定期检查自习室开放时间与座位规模是否准确</li>
           <li>维护中的座位不会开放给普通用户预约</li>
           <li>可在用户管理中启用或禁用普通用户账号</li>
-          <li>通过热力图了解座位利用率和高峰时段</li>
+          <li>通过热力图查看实际使用记录相交时段，近七日图表汇总真实使用小时与签到人次</li>
         </ul>
             </StudyTips>
       <section class="card rooms-card">
@@ -293,7 +306,7 @@ const cardToneClass = {
           </div>
           <div class="intro-cell">
             <div class="intro-label">运营分析</div>
-            <div class="intro-text">查看座位利用率和时段热力分布，为资源配置与开放安排提供参考。</div>
+            <div class="intro-text">查看当前使用比例、真实使用时长与近七日趋势；热力图表示实际使用记录与小时相交情况。</div>
           </div>
         </div>
       </section>

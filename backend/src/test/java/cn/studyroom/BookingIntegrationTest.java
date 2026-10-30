@@ -82,7 +82,7 @@ class BookingIntegrationTest {
         assertEquals(1,db.count("SELECT count(*) FROM violations WHERE reservation_id=? AND type='no_show'",id));
         assertEquals(0,db.count("SELECT count(*) FROM credit_logs WHERE reservation_id=?",id));
         assertEquals(100,db.count("SELECT credit_score FROM users WHERE id=?",u1));
-        assertEquals(0.0,((Number)stats.overview().get("today_utilization")).doubleValue());
+        @SuppressWarnings("unchecked") var today=(Map<String,Object>)stats.overview(admin,Map.of()).get("day");assertEquals(0,((java.math.BigDecimal)today.get("usage_seconds")).signum());
     }
     @Test void retiredWaitlistNeverPromotesAndHistoricalPreferencesRemainCancellable() {
         resources.updateSeat(admin,s2,seatRequest(s2,"quiet",true,true,"available"));

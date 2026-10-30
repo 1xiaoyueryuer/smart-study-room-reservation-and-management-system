@@ -1,91 +1,201 @@
 package cn.studyroom;
 
-import java.sql.Date;
+import java.math.BigDecimal;
 import java.time.*;
+import java.time.temporal.ChronoUnit;
 import java.util.*;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.*;
 import static cn.studyroom.Store.*;
 
-/** 根据签到与结算时间聚合使用情况，不把未到场违约计入实际使用。 */
+/** One read-only aggregation of persisted reservation, Usage and policy facts. */
 @Service
-@Transactional(readOnly=true,isolation=org.springframework.transaction.annotation.Isolation.REPEATABLE_READ)
+@Transactional(readOnly=true,isolation=Isolation.REPEATABLE_READ)
 public class StatsService {
     private final Store db;
     private final Clock clock;
     private final OpeningScheduleService opening;
-    public StatsService(Store db,Clock clock,OpeningScheduleService opening) { this.db=db;this.clock=clock;this.opening=opening; }
-    private List<Map<String,Object>> used(LocalDate from,LocalDate until) {
-        return db.list("SELECT rv.*,ur.checkin_at AS usage_checkin_at,ur.ended_at AS usage_ended_at,s.room_id,s.seat_no,r.name AS room_name FROM usage_records ur JOIN reservations rv ON rv.id=ur.reservation_id JOIN seats s ON s.id=rv.seat_id JOIN rooms r ON r.id=s.room_id WHERE rv.res_date>=? AND rv.res_date<=?",Date.valueOf(from),Date.valueOf(until));
+    private final AuthService auth;
+
+    public StatsService(Store db,Clock clock,OpeningScheduleService opening,AuthService auth) {
+        this.db=db;this.clock=clock;this.opening=opening;this.auth=auth;
     }
-    private LocalDateTime from(Map<String,Object> row) { return LocalDateTime.parse(text(row,"usage_checkin_at")); }
-    private LocalDateTime to(Map<String,Object> row) {
-        LocalDateTime scheduled=Slot.endpoint(LocalDate.parse(text(row,"res_date")),text(row,"end_time"));
-        LocalDateTime actual=row.get("usage_ended_at")==null?LocalDateTime.now(clock):LocalDateTime.parse(text(row,"usage_ended_at"));
-        return actual.isBefore(scheduled)?actual:scheduled;
+
+    private record Snapshot(Instant instant,LocalDateTime local,LocalDate selected,Long room) {
+        LocalDate today(){return local.toLocalDate();}
+        LocalDate trendFrom(){return today().minusDays(6);}
+        String offset(){return instant.atZone(BookingPolicy.CAMPUS_ZONE).toOffsetDateTime().toString();}
     }
-    private double hours(Map<String,Object> row) { return seconds(Duration.between(from(row),to(row)))/3600.0; }
-    private double seconds(Duration duration) { if(duration.isNegative()) throw new IllegalStateException("使用统计存在反向时长");return duration.getSeconds()+duration.getNano()/1_000_000_000.0; }
-    private List<OpeningScheduleService.Calendar> calendars() { return db.list("SELECT id FROM rooms ORDER BY id").stream().map(row->opening.calendar(id(row,"id"))).toList(); }
-    private double capacity(LocalDate day,List<OpeningScheduleService.Calendar> calendars) {
-        double minutes=0;
-        for(var calendar:calendars) for(var seat:calendar.seats) for(var window:calendar.day(day,id(seat,"id")).windows()) minutes+=window.endMinute()-window.startMinute();
-        return minutes/60.0;
-    }
-    public List<Map<String,Object>> trend(int days) {
-        days=bound(days,1,90);LocalDate today=LocalDate.now(clock);var rows=used(today.minusDays(days),today.minusDays(1));
-        var result=new ArrayList<Map<String,Object>>();var calendars=calendars();
-        for(int d=days;d>0;d--) {
-            double cap=capacity(today.minusDays(d),calendars);String date=today.minusDays(d).toString();var day=rows.stream().filter(x->date.equals(x.get("res_date"))).toList();
-            result.add(Map.of("date",date,"count",day.size(),"utilization",cap==0?0:day.stream().mapToDouble(this::hours).sum()/cap));
-        }
-        return result;
-    }
-    public List<Map<String,Object>> peak(int days) {
-        var rows=used(LocalDate.now(clock).minusDays(bound(days,1,90)),LocalDate.now(clock).minusDays(1));var result=new ArrayList<Map<String,Object>>();
-        for(int h=0;h<24;h++) { final int hour=h;result.add(Map.of("hour",String.format("%02d:00",h),"count",rows.stream().filter(x->Slot.endpoint(LocalDate.parse(text(x,"res_date")),text(x,"start_time")).getHour()==hour).count())); }
-        return result;
-    }
-    public List<Map<String,Object>> top(int days,int limit) {
-        var rows=used(LocalDate.now(clock).minusDays(bound(days,1,90)),LocalDate.now(clock).minusDays(1));Map<Long,List<Map<String,Object>>> groups=new LinkedHashMap<>();
-        for(var row:rows) groups.computeIfAbsent(id(row,"seat_id"),k->new ArrayList<>()).add(row);
-        var result=new ArrayList<Map<String,Object>>();
-        for(var group:groups.values()) result.add(Map.of("seat_no",group.get(0).get("seat_no"),"room_name",group.get(0).get("room_name"),"hours",group.stream().mapToDouble(this::hours).sum(),"count",group.size()));
-        result.sort(Comparator.<Map<String,Object>>comparingDouble(x->((Number)x.get("hours")).doubleValue()).reversed());
-        return result.subList(0,Math.min(bound(limit,1,50),result.size()));
-    }
-    public Map<String,Object> overview() {
-        LocalDate today=LocalDate.now(clock);double cap=capacity(today,calendars()),hours=used(today,today).stream().mapToDouble(this::hours).sum();
-        return Map.of("total_seats",db.count("SELECT count(*) FROM seats s JOIN rooms r ON r.id=s.room_id WHERE s.status='available' AND r.enabled"),
-                "active_today",db.count("SELECT count(*) FROM reservations WHERE res_date=? AND status<>'cancelled'",Date.valueOf(today)),
-                "in_use_now",db.count("SELECT count(*) FROM usage_records ur JOIN reservations rv ON rv.id=ur.reservation_id WHERE rv.res_date=? AND rv.status='checked_in' AND ur.ended_at IS NULL AND ur.checkin_at<=? AND rv.res_date+rv.end_time>?",Date.valueOf(today),java.sql.Timestamp.valueOf(LocalDateTime.now(clock)),java.sql.Timestamp.valueOf(LocalDateTime.now(clock))),
-                "today_utilization",cap==0?0:hours/cap,"trend_14",trend(14),"peak",peak(14),"top_seats",top(14,10));
-    }
-    public Map<String,Object> heatmap(long roomId,String date) {
-        LocalDate day;try { day=date==null||date.isBlank()?LocalDate.now(clock):LocalDate.parse(date); }catch(DateTimeException e) { throw Api.fail(400,"日期格式错误"); }
-        var calendar=opening.calendar(roomId);var room=new LinkedHashMap<>(calendar.room);room.remove("open_time");room.remove("close_time");room.put("opening_windows",calendar.day(day,null).view());room.put("campus_zone",OpeningScheduleService.ZONE);
-        var seats=calendar.seats;var rows=used(day,day).stream().filter(x->id(x,"room_id")==roomId).toList();
-        // 以正式窗口和座位临停边界切分，热力单元不会跨越闭馆段。
-        var edges=new TreeSet<Integer>();
-        for(var window:calendar.day(day,null).windows()) { edges.add(window.startMinute());edges.add(window.endMinute());for(int t=window.startMinute();t<window.endMinute();t+=60) edges.add(t); }
-        for(var seat:seats) for(var window:calendar.day(day,id(seat,"id")).windows()) { edges.add(window.startMinute());edges.add(window.endMinute()); }
-        var points=new ArrayList<>(edges);var times=new ArrayList<LocalDateTime>();var ends=new ArrayList<LocalDateTime>();
-        for(int i=0;i+1<points.size();i++) {
-            var left=day.atStartOfDay().plusMinutes(points.get(i));var right=day.atStartOfDay().plusMinutes(points.get(i+1));
-            if(calendar.day(day,null).contains(day,left,right)) { times.add(left);ends.add(right); }
-        }
-        var cells=new ArrayList<List<Integer>>();double[] hourly=new double[times.size()];long[] eligible=new long[times.size()];
-        for(var seat:seats) {
-            var cell=new ArrayList<Integer>();var seatDay=calendar.day(day,id(seat,"id"));
-            for(int h=0;h<times.size();h++) {
-                LocalDateTime left=times.get(h),right=ends.get(h);boolean legal=seatDay.contains(day,left,right);
-                boolean occupied=rows.stream().anyMatch(x->id(x,"seat_id")==id(seat,"id")&&from(x).isBefore(right)&&to(x).isAfter(left));
-                cell.add(occupied?1:0);if(legal) { eligible[h]++;if(occupied) hourly[h]++; }
+    private record Used(long seat,long room,String seatNo,String roomName,LocalDateTime start,
+                        LocalDateTime end,LocalDateTime plannedEnd,boolean unfinished) {}
+
+    public Map<String,Object> overview(long actor,Map<String,String> parameters) {
+        Snapshot snapshot=snapshot(actor,parameters,false);
+        var usage=used(snapshot);
+        var metrics=new TreeMap<LocalDate,Map<String,Object>>();
+        for(int i=0;i<7;i++)metrics.put(snapshot.trendFrom().plusDays(i),emptyDay());
+        metrics.putIfAbsent(snapshot.selected(),emptyDay());
+        counts(metrics,snapshot,"created_count","r.created_at","reservations r JOIN seats s ON s.id=r.seat_id","s.room_id","");
+        counts(metrics,snapshot,"cancelled_count","r.ended_at","reservations r JOIN seats s ON s.id=r.seat_id","s.room_id"," AND r.status='cancelled'");
+        counts(metrics,snapshot,"active_violation_count","v.occurred_at","violations v LEFT JOIN reservations r ON r.id=v.reservation_id LEFT JOIN seats s ON s.id=r.seat_id","s.room_id"," AND v.status='active'");
+        for(var entry:metrics.entrySet()) {
+            LocalDateTime left=entry.getKey().atStartOfDay(),right=left.plusDays(1);
+            long checkins=0;BigDecimal duration=BigDecimal.ZERO;
+            for(var row:usage) {
+                if(!row.start().isBefore(left)&&row.start().isBefore(right))checkins++;
+                duration=duration.add(overlap(row,left,right));
             }
-            cells.add(cell);
+            entry.getValue().put("checkin_count",checkins);
+            entry.getValue().put("usage_seconds",duration);
         }
-        for(int i=0;i<hourly.length;i++) hourly[i]=eligible[i]==0?0:hourly[i]/eligible[i];
-        return Map.of("room",room,"seats",seats,"hours",times.stream().map(x->x.toLocalTime().toString()).toList(),"cells",cells,"hourly_usage",hourly);
+        var trend=new ArrayList<Map<String,Object>>();
+        for(int i=0;i<7;i++) {
+            LocalDate date=snapshot.trendFrom().plusDays(i);
+            var item=new LinkedHashMap<>(metrics.get(date));item.put("date",date.toString());trend.add(item);
+        }
+        var scope=new LinkedHashMap<String,Object>();
+        scope.put("room_id",snapshot.room());scope.put("selected_date",snapshot.selected().toString());
+        scope.put("trend_from",snapshot.trendFrom().toString());scope.put("trend_to",snapshot.today().toString());
+        return Map.of("snapshot_at",snapshot.offset(),"campus_zone",OpeningScheduleService.ZONE,
+            "scope",scope,"day",metrics.get(snapshot.selected()),"current",current(snapshot,usage),
+            "trend",trend,"peak",peak(snapshot,usage),"top_seats",top(snapshot,usage));
     }
-    private int bound(int n,int min,int max) { return Math.max(min,Math.min(n,max)); }
+
+    public Map<String,Object> heatmap(long actor,Map<String,String> parameters) {
+        Snapshot snapshot=snapshot(actor,parameters,true);
+        var room=db.one("SELECT id,name FROM rooms WHERE id=?",snapshot.room());
+        var seats=db.list("SELECT id,seat_no,row_no,col_no FROM seats WHERE room_id=? ORDER BY row_no,col_no,id",snapshot.room());
+        var usage=used(snapshot);
+        var hours=new ArrayList<String>();var ends=new ArrayList<String>();
+        for(int h=0;h<24;h++){hours.add(String.format("%02d:00",h));ends.add(String.format("%02d:00",h+1));}
+        var cells=new ArrayList<List<Integer>>();
+        for(var seat:seats) {
+            var row=new ArrayList<Integer>();long seatId=id(seat,"id");
+            for(int h=0;h<24;h++) {
+                LocalDateTime left=snapshot.selected().atStartOfDay().plusHours(h),right=left.plusHours(1);
+                row.add(usage.stream().anyMatch(value->value.seat()==seatId&&overlap(value,left,right).signum()>0)?1:0);
+            }
+            cells.add(row);
+        }
+        return Map.of("snapshot_at",snapshot.offset(),"campus_zone",OpeningScheduleService.ZONE,
+            "date",snapshot.selected().toString(),"room",room,"seats",seats,"hours",hours,"ends",ends,"cells",cells);
+    }
+
+    private Snapshot snapshot(long actor,Map<String,String> parameters,boolean requireRoom) {
+        var user=auth.profile(actor);
+        Api.require("admin".equals(user.get("role"))&&"active".equals(user.get("status")),403,"仅启用管理员可查询统计");
+        Api.require(Set.of("room_id","date").containsAll(parameters.keySet()),400,"统计查询包含不允许的参数");
+        Instant instant=clock.instant().truncatedTo(ChronoUnit.MICROS);
+        LocalDateTime local=LocalDateTime.ofInstant(instant,BookingPolicy.CAMPUS_ZONE);
+        Long room=parameters.containsKey("room_id")?positive(parameters.get("room_id")):null;
+        Api.require(!requireRoom||room!=null,400,"热力图必须选择空间");
+        if(room!=null)db.one("SELECT id FROM rooms WHERE id=?",room);
+        LocalDate selected=parameters.containsKey("date")?date(parameters.get("date")):local.toLocalDate();
+        return new Snapshot(instant,local,selected,room);
+    }
+
+    private void counts(Map<LocalDate,Map<String,Object>> metrics,Snapshot snapshot,String key,
+                        String time,String from,String roomColumn,String extra) {
+        var args=periodArgs(snapshot);
+        String sql="SELECT CAST("+time+" AS DATE) AS metric_date,count(*) AS amount FROM "+from+
+            " WHERE "+period(time)+extra;
+        if(snapshot.room()!=null){sql+=" AND "+roomColumn+"=?";args.add(snapshot.room());}
+        sql+=" GROUP BY CAST("+time+" AS DATE)";
+        for(var row:db.list(sql,args.toArray())) {
+            var target=metrics.get(LocalDate.parse(text(row,"metric_date")));
+            if(target!=null)target.put(key,id(row,"amount"));
+        }
+    }
+    private String period(String time) {
+        return "(("+time+">=CAST(? AS DATE)::timestamp AND "+time+"<(CAST(? AS DATE)+INTERVAL '1 day')) OR ("+
+            time+">=CAST(? AS DATE)::timestamp AND "+time+"<(CAST(? AS DATE)+INTERVAL '1 day')))";
+    }
+    private ArrayList<Object> periodArgs(Snapshot snapshot) {
+        return new ArrayList<>(List.of(snapshot.trendFrom().toString(),snapshot.today().toString(),
+            snapshot.selected().toString(),snapshot.selected().toString()));
+    }
+
+    private List<Used> used(Snapshot snapshot) {
+        // Select by actual Usage intervals, including check-ins before reservation midnight.
+        String sql="SELECT u.checkin_at,u.ended_at,r.res_date,r.end_time,s.id AS seat_id,s.room_id,s.seat_no,rm.name AS room_name "+
+            "FROM usage_records u JOIN reservations r ON r.id=u.reservation_id JOIN seats s ON s.id=r.seat_id JOIN rooms rm ON rm.id=s.room_id "+
+            "WHERE ((u.checkin_at<(CAST(? AS DATE)+INTERVAL '1 day') AND (u.ended_at IS NULL OR u.ended_at>=CAST(? AS DATE)::timestamp OR u.ended_at<u.checkin_at)) "+
+            "OR (u.checkin_at<(CAST(? AS DATE)+INTERVAL '1 day') AND (u.ended_at IS NULL OR u.ended_at>=CAST(? AS DATE)::timestamp OR u.ended_at<u.checkin_at)))";
+        var args=new ArrayList<Object>(List.of(snapshot.today().toString(),snapshot.trendFrom().toString(),
+            snapshot.selected().toString(),snapshot.selected().toString()));
+        if(snapshot.room()!=null){sql+=" AND s.room_id=?";args.add(snapshot.room());}
+        var result=new ArrayList<Used>();
+        for(var row:db.list(sql,args.toArray())) {
+            LocalDateTime start=LocalDateTime.parse(text(row,"checkin_at"));
+            LocalDateTime planned=Slot.endpoint(LocalDate.parse(text(row,"res_date")),text(row,"end_time"));
+            boolean unfinished=row.get("ended_at")==null;
+            LocalDateTime actual=unfinished?snapshot.local():LocalDateTime.parse(text(row,"ended_at"));
+            LocalDateTime end=actual.isBefore(planned)?actual:planned;
+            if(end.isBefore(start))throw new IllegalStateException("使用统计存在反向时长，请核查使用事实");
+            result.add(new Used(id(row,"seat_id"),id(row,"room_id"),text(row,"seat_no"),text(row,"room_name"),start,end,planned,unfinished));
+        }
+        return result;
+    }
+
+    private Map<String,Object> current(Snapshot snapshot,List<Used> usage) {
+        var rooms=snapshot.room()==null?db.list("SELECT id FROM rooms ORDER BY id"):List.of(Map.<String,Object>of("id",snapshot.room()));
+        var eligible=new HashSet<Long>();
+        for(var room:rooms) {
+            var calendar=opening.calendar(id(room,"id"));
+            for(var seat:calendar.seats) {
+                long seatId=id(seat,"id");
+                boolean open=calendar.day(snapshot.today(),seatId).windows().stream().anyMatch(window->{
+                    var left=snapshot.today().atStartOfDay().plusMinutes(window.startMinute());
+                    var right=snapshot.today().atStartOfDay().plusMinutes(window.endMinute());
+                    return !snapshot.local().isBefore(left)&&snapshot.local().isBefore(right);
+                });
+                if(open)eligible.add(seatId);
+            }
+        }
+        long inUse=usage.stream().filter(row->eligible.contains(row.seat())&&row.unfinished()&&
+            !row.start().isAfter(snapshot.local())&&row.plannedEnd().isAfter(snapshot.local())).map(Used::seat).distinct().count();
+        var args=new ArrayList<Object>();String roomFilter="";
+        if(snapshot.room()!=null){roomFilter=" AND room_id=?";args.add(snapshot.room());}
+        long todo=db.count("SELECT count(*) FROM complaints WHERE status IN('submitted','processing')"+roomFilter,args.toArray());
+        long awaiting=db.count("SELECT count(*) FROM complaints WHERE status='awaiting_confirmation'"+roomFilter,args.toArray());
+        var result=new LinkedHashMap<String,Object>();result.put("open_available_seats",eligible.size());result.put("in_use_now",inUse);
+        result.put("usage_ratio",eligible.isEmpty()?null:(double)inUse/eligible.size());result.put("complaint_todo_count",todo);result.put("complaint_awaiting_count",awaiting);
+        return result;
+    }
+
+    private List<Map<String,Object>> peak(Snapshot snapshot,List<Used> usage) {
+        var result=new ArrayList<Map<String,Object>>();
+        for(int h=0;h<24;h++) {
+            BigDecimal duration=BigDecimal.ZERO;long checkins=0;
+            for(int d=0;d<7;d++) {
+                var left=snapshot.trendFrom().plusDays(d).atStartOfDay().plusHours(h);var right=left.plusHours(1);
+                for(var row:usage){duration=duration.add(overlap(row,left,right));if(!row.start().isBefore(left)&&row.start().isBefore(right))checkins++;}
+            }
+            result.add(Map.of("hour",String.format("%02d:00",h),"usage_seconds",duration,"checkin_count",checkins));
+        }
+        return result;
+    }
+    private List<Map<String,Object>> top(Snapshot snapshot,List<Used> usage) {
+        var groups=new HashMap<Long,Map<String,Object>>();
+        var left=snapshot.trendFrom().atStartOfDay();var right=snapshot.today().plusDays(1).atStartOfDay();
+        for(var row:usage) {
+            BigDecimal duration=overlap(row,left,right);long checkin=!row.start().isBefore(left)&&row.start().isBefore(right)?1:0;
+            if(duration.signum()==0&&checkin==0)continue;
+            var item=groups.computeIfAbsent(row.seat(),ignored->{var value=new LinkedHashMap<String,Object>();
+                value.put("seat_id",row.seat());value.put("room_id",row.room());value.put("room_name",row.roomName());value.put("seat_no",row.seatNo());
+                value.put("usage_seconds",BigDecimal.ZERO);value.put("checkin_count",0L);return value;});
+            item.put("usage_seconds",((BigDecimal)item.get("usage_seconds")).add(duration));item.put("checkin_count",id(item,"checkin_count")+checkin);
+        }
+        return groups.values().stream().sorted(Comparator.<Map<String,Object>,BigDecimal>comparing(row->(BigDecimal)row.get("usage_seconds")).reversed()
+            .thenComparingLong(row->id(row,"room_id")).thenComparing(row->text(row,"seat_no")).thenComparingLong(row->id(row,"seat_id"))).limit(10).toList();
+    }
+    private BigDecimal overlap(Used row,LocalDateTime left,LocalDateTime right) {
+        LocalDateTime start=row.start().isAfter(left)?row.start():left,end=row.end().isBefore(right)?row.end():right;
+        if(!end.isAfter(start))return BigDecimal.ZERO;
+        Duration duration=Duration.between(start,end);
+        return BigDecimal.valueOf(duration.getSeconds()).add(BigDecimal.valueOf(duration.getNano(),9));
+    }
+    private Map<String,Object> emptyDay(){var result=new LinkedHashMap<String,Object>();for(String key:List.of("created_count","cancelled_count","checkin_count","active_violation_count"))result.put(key,0L);result.put("usage_seconds",BigDecimal.ZERO);return result;}
+    private long positive(String value){try{Api.require(value!=null&&value.matches("[0-9]+"),400,"空间编号须为正整数");long id=Long.parseLong(value);Api.require(id>0,400,"空间编号须为正整数");return id;}catch(NumberFormatException e){throw Api.fail(400,"空间编号超出范围");}}
+    private LocalDate date(String value){try{Api.require(value!=null&&value.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}"),400,"日期须为正四位年ISO自然日");LocalDate date=LocalDate.parse(value);Api.require(date.getYear()>0,400,"日期年份须为0001至9999");return date;}catch(java.time.format.DateTimeParseException e){throw Api.fail(400,"日期无效");}}
 }

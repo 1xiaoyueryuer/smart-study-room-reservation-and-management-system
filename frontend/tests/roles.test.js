@@ -4,6 +4,7 @@ import vm from 'node:vm'
 import { readFile } from 'node:fs/promises'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAuthStore } from '../src/stores/auth.js'
+import * as statsForm from '../src/composables/statsForm.js'
 
 async function auth(role) {
   const values = new Map()
@@ -80,7 +81,8 @@ for (const role of ['student', 'staff', 'admin']) {
       '../stores/auth': { useAuthStore: () => store },
       '../stores/notification': { useNotificationStore: () => ({ unread: 0, refresh() {} }) },
       '../api/room': { getRooms: async () => ({ data: [] }), getOpeningWindows: async () => ({ data: { windows: [], closed_reasons: [] } }) },
-      '../api/stats': { getOverview: async () => { statsCalls++; return { data: { total_seats: 0, in_use_now: 0 } } } },
+      '../api/stats': { getOverview: async () => { statsCalls++; return { data: {} } } },
+      '../composables/statsForm.js': statsForm,
       '../api/credit': { getCreditOverview: async () => ({ data: { score: 100 } }) }
     }
     for (const component of ['StudyTips', 'ui/SAnimatedNumber', 'AppIcon', 'ui/SBanner', 'ui/SButton']) mocks[`../components/${component}.vue`] = { default: {} }
@@ -109,6 +111,7 @@ test('homepage reads each room opening for campus date and shows a real open roo
       getOpeningWindows: async (id,date) => { calls.push({id,date}); return {data:{windows:id===1?[]:[{start:'09:00',end:'12:00'},{start:'14:00',end:'18:00'}],closed_reasons:id===1?['日期闭馆']:[]}} }
     },
     '../api/stats': { getOverview: async () => ({data:{}}) },
+    '../composables/statsForm.js': statsForm,
     '../api/credit': { getCreditOverview: async () => ({data:{score:100}}) }
   }
   for (const component of ['StudyTips','ui/SAnimatedNumber','AppIcon','ui/SBanner','ui/SButton']) mocks[`../components/${component}.vue`]={default:{}}

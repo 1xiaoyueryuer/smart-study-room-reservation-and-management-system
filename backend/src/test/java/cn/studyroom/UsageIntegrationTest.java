@@ -134,7 +134,10 @@ class UsageIntegrationTest {
         long id=reservation(student,seat1);String payload=code(seat1);at(10,0,0);bookings.checkin(student,id,payload);at(10,30,0);bookings.action(student,id,"checkout");
         // 原列保留兼容溯源，读消费者必须从唯一usage取事实。
         db.update("UPDATE reservations SET checkin_at=?,checkout_at=? WHERE id=?",java.sql.Timestamp.valueOf(base.atTime(8,0)),java.sql.Timestamp.valueOf(base.atTime(8,1)),id);
-        clock.set(base.plusDays(1).atTime(9,0));assertEquals(0.5,((Number)stats.top(14,10).get(0).get("hours")).doubleValue(),0.0000001);assertNotNull(stats.heatmap(room,base.toString()));
+        clock.set(base.plusDays(1).atTime(9,0));
+        @SuppressWarnings("unchecked") var top=(List<Map<String,Object>>)stats.overview(admin,Map.of()).get("top_seats");
+        assertEquals(1800.0,((Number)top.get(0).get("usage_seconds")).doubleValue(),0.0000001);
+        assertNotNull(stats.heatmap(admin,Map.of("room_id",Long.toString(room),"date",base.toString())));
         var current=bookings.detail(student,id);@SuppressWarnings("unchecked") var actual=(Map<String,Object>)current.get("usage_record");assertEquals(base.atTime(10,0),LocalDateTime.parse(actual.get("checkin_at").toString()));assertEquals(0,new java.math.BigDecimal("1800").compareTo((java.math.BigDecimal)actual.get("duration_seconds")));
         long unused=Store.id(bookings.create(student,new Requests.Reservation(seat2,base.plusDays(1).toString(),"10:00","11:00")),"id");bookings.action(student,unused,"cancel");assertNull(bookings.detail(student,unused).get("usage_record"));assertEquals(1,db.count("SELECT count(*) FROM usage_records"));assertEquals(0,db.count("SELECT count(*) FROM violations"));
     }

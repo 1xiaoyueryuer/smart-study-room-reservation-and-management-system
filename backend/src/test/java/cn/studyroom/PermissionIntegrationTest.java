@@ -73,7 +73,7 @@ class PermissionIntegrationTest {
             String token=token(role);
             http.perform(get("/api/auth/profile").header("Authorization","Bearer "+token)).andExpect(status().isOk()).andExpect(jsonPath("$.data.role").value(role));
             http.perform(get("/api/admin/users").header("Authorization","Bearer "+token)).andExpect(status().isForbidden());
-            for(String path:List.of("overview","heatmap","trend","peak","top-seats")) http.perform(get("/api/stats/"+path).param("room_id",""+room).header("Authorization","Bearer "+token)).andExpect(status().isForbidden());
+            for(String path:List.of("overview","heatmap")) http.perform(get("/api/stats/"+path).param("room_id",""+room).header("Authorization","Bearer "+token)).andExpect(status().isForbidden());
             // Spring MVC accepts matrix parameters; authorization uses the matched route, not raw URI prefixes.
             http.perform(get("/api/stats;ignored/overview").header("Authorization","Bearer "+token)).andExpect(status().isForbidden());
         }
@@ -82,7 +82,9 @@ class PermissionIntegrationTest {
     @Test void adminCanManageAndReadStatsButCannotBook() throws Exception {
         String token=token("admin");
         http.perform(get("/api/admin/users").header("Authorization","Bearer "+token)).andExpect(status().isOk());
-        for(String path:List.of("overview","heatmap","trend","peak","top-seats")) http.perform(get("/api/stats/"+path).param("room_id",""+room).header("Authorization","Bearer "+token)).andExpect(status().isOk());
+        for(String path:List.of("overview","heatmap")) http.perform(get("/api/stats/"+path).param("room_id",""+room).header("Authorization","Bearer "+token)).andExpect(status().isOk());
+        // These retired endpoints have no parallel aggregation implementation.
+        for(String path:List.of("trend","peak","top-seats")) http.perform(get("/api/stats/"+path).header("Authorization","Bearer "+token)).andExpect(status().isNotFound());
         http.perform(post("/api/reservations").header("Authorization","Bearer "+token).contentType("application/json").content(booking(seat1))).andExpect(status().isForbidden());
         http.perform(post("/api/reservations/auto").header("Authorization","Bearer "+token).contentType("application/json").content("{}")).andExpect(status().isForbidden());
         http.perform(post("/api/reservations/999/cancel").header("Authorization","Bearer "+token)).andExpect(status().isForbidden());

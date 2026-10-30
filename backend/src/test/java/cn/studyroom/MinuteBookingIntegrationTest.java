@@ -111,10 +111,13 @@ class MinuteBookingIntegrationTest {
         var row=db.one("SELECT status,checkout_at,end_time FROM reservations WHERE id=?",id);
         assertEquals("completed",row.get("status"));assertEquals(base.plusDays(1).atStartOfDay(),LocalDateTime.parse(db.one("SELECT ended_at FROM usage_records WHERE reservation_id=?",id).get("ended_at").toString()));assertEquals("24:00:00",row.get("end_time"));
         assertEquals(0,db.count("SELECT count(*) FROM credit_logs WHERE reservation_id=?",id));
-        assertEquals(0.5,((Number)stats.top(14,10).get(0).get("hours")).doubleValue(),0.00001);
-        assertNotNull(stats.heatmap(room,d(0)));
-        var peak=stats.peak(14);assertEquals(24,peak.size());assertTrue(peak.stream().anyMatch(bucket->"00:00".equals(bucket.get("hour"))));
-        assertEquals(1L,((Number)peak.stream().filter(bucket->"23:00".equals(bucket.get("hour"))).findFirst().orElseThrow().get("count")).longValue());
+        var overview=stats.overview(admin,Map.of());
+        @SuppressWarnings("unchecked") var top=(List<Map<String,Object>>)overview.get("top_seats");
+        assertEquals(1800.0,((Number)top.get(0).get("usage_seconds")).doubleValue(),0.00001);
+        assertNotNull(stats.heatmap(admin,Map.of("room_id",Long.toString(room),"date",d(0))));
+        @SuppressWarnings("unchecked") var peak=(List<Map<String,Object>>)overview.get("peak");
+        assertEquals(24,peak.size());assertTrue(peak.stream().anyMatch(bucket->"00:00".equals(bucket.get("hour"))));
+        assertEquals(1L,((Number)peak.stream().filter(bucket->"23:00".equals(bucket.get("hour"))).findFirst().orElseThrow().get("checkin_count")).longValue());
         assertNotNull(bookings.create(student,req(seat1,1,"00:00","00:30")));
     }
     @Test void genuineHistoricalSecondsRemainReadableProtectableAndFinishable() {

@@ -134,7 +134,7 @@ class OpeningIntegrationTest {
         assertEquals(0,db.count("SELECT count(*) FROM reservations WHERE source='waitlist'"));
         bookings.cancelWait(student,waiting);assertEquals("cancelled",db.one("SELECT status FROM waitlist WHERE id=?",waiting).get("status"));
         var heat=http.perform(get("/api/stats/heatmap").param("room_id",""+room).param("date",d(1)).header("Authorization","Bearer "+token("s06_admin"))).andExpect(status().isOk()).andReturn();
-        var hours=json.readTree(heat.getResponse().getContentAsString()).path("data").path("hours");assertFalse(hours.toString().contains("12:00"));assertTrue(hours.toString().contains("14:00"));
+        var hours=json.readTree(heat.getResponse().getContentAsString()).path("data").path("hours");assertEquals(24,hours.size());assertEquals("00:00",hours.get(0).asText());assertEquals("23:00",hours.get(23).asText()); // Historical Usage grid does not discard closed hours.
     }
     @Test void blockHttpEditCancelAndForeignSeatValidationPreserveIndependentHistory() throws Exception {
         String token=token("s06_admin");

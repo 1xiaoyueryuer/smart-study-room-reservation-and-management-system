@@ -1,10 +1,3 @@
 import request from './request'
-
-// 统计分析
-export function getHeatmap(roomId, date) {
-  return request.get('/stats/heatmap', { params: { room_id: roomId, date } })
-}
-
-export function getOverview() {
-  return request.get('/stats/overview')
-}
+export const getOverview=(params={})=>request.get('/stats/overview',{params,silent:true})
+export const getHeatmap=(roomId,date)=>request.get('/stats/heatmap',{params:{room_id:roomId,date},silent:true})
