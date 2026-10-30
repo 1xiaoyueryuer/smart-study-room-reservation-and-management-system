@@ -5,6 +5,8 @@ import { readFile } from 'node:fs/promises'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAuthStore } from '../src/stores/auth.js'
 import * as statsForm from '../src/composables/statsForm.js'
+import {createStatsRefresh} from '../src/composables/statsRefresh.js'
+import {statsClock} from './helpers/statsClock.js'
 
 async function auth(role) {
   const values = new Map()
@@ -74,32 +76,40 @@ for (const role of ['student', 'staff', 'admin']) {
   test(`${role} homepage only requests management statistics for administrator`, async () => {
     const store = await auth(role)
     let mounted, statsCalls = 0
+    const clock=statsClock(),cleanup=[]
     const source = (await readFile(new URL('../src/views/HomeView.vue', import.meta.url), 'utf8')).split('<script setup>')[1].split('</script>')[0]
     const mocks = {
-      vue: { ref: value => ({ value }), computed: getter => ({ get value() { return getter() } }), onMounted: callback => { mounted = callback }, onUnmounted: () => {} },
+      vue: { ref: value => ({ value }), computed: getter => ({ get value() { return getter() } }), onMounted: callback => { mounted = callback }, onUnmounted: fn => cleanup.push(fn) },
       'vue-router': { useRouter: () => ({ push() {} }) },
       '../stores/auth': { useAuthStore: () => store },
       '../stores/notification': { useNotificationStore: () => ({ unread: 0, refresh() {} }) },
       '../api/room': { getRooms: async () => ({ data: [] }), getOpeningWindows: async () => ({ data: { windows: [], closed_reasons: [] } }) },
       '../api/stats': { getOverview: async () => { statsCalls++; return { data: {} } } },
       '../composables/statsForm.js': statsForm,
+      '../composables/statsRefresh.js': {createStatsRefresh:options=>createStatsRefresh({...options,...clock.options})},
       '../api/credit': { getCreditOverview: async () => ({ data: { score: 100 } }) }
     }
     for (const component of ['StudyTips', 'ui/SAnimatedNumber', 'AppIcon', 'ui/SBanner', 'ui/SButton']) mocks[`../components/${component}.vue`] = { default: {} }
     const homepage = await sourceModule(source + '\nexport { shortcuts }', mocks, { setInterval: () => 1, clearInterval() {} })
     await mounted()
+    await clock.flush()
     assert.equal(statsCalls, role === 'admin' ? 1 : 0)
+    assert.equal(clock.timers.size,role==='admin'?1:0)
+    await clock.advance(30000)
+    assert.equal(statsCalls,role==='admin'?4:0)
     const navigation = await router(store)
     for (const shortcut of homepage.shortcuts.value) {
       const route = navigation.routeForPath(shortcut.to)
       assert.ok(route, `Shortcut ${shortcut.title} must resolve to an existing route`)
       assert.equal(navigation.guard(route), undefined, `${role} must be able to access ${shortcut.to}`)
     }
+    cleanup.forEach(fn=>fn());assert.equal(clock.timers.size,0);assert.equal(clock.listeners.size,0)
   })
 }
 test('homepage reads each room opening for campus date and shows a real open room rather than old daily fields', async () => {
   const store = await auth('staff')
   const calls = []
+  const clock=statsClock()
   const source = (await readFile(new URL('../src/views/HomeView.vue', import.meta.url), 'utf8')).split('<script setup>')[1].split('</script>')[0]
   const mocks = {
     vue: { ref: value => ({ value }), computed: getter => ({get value(){return getter()}}), onMounted(){}, onUnmounted(){} },
@@ -112,6 +122,7 @@ test('homepage reads each room opening for campus date and shows a real open roo
     },
     '../api/stats': { getOverview: async () => ({data:{}}) },
     '../composables/statsForm.js': statsForm,
+    '../composables/statsRefresh.js': {createStatsRefresh:options=>createStatsRefresh({...options,...clock.options})},
     '../api/credit': { getCreditOverview: async () => ({data:{score:100}}) }
   }
   for (const component of ['StudyTips','ui/SAnimatedNumber','AppIcon','ui/SBanner','ui/SButton']) mocks[`../components/${component}.vue`]={default:{}}

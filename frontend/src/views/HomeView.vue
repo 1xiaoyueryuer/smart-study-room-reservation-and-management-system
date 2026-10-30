@@ -8,6 +8,7 @@ import { useNotificationStore } from '../stores/notification'
 import { getRooms, getOpeningWindows } from '../api/room'
 import { getOverview } from '../api/stats'
 import { validOverview, ratioText } from '../composables/statsForm.js'
+import { createStatsRefresh } from '../composables/statsRefresh.js'
 import AppIcon from '../components/AppIcon.vue'
 import SBanner from '../components/ui/SBanner.vue'
 import SButton from '../components/ui/SButton.vue'
@@ -43,12 +44,12 @@ function roomOpeningText(room) {
 const statsOverview = ref(null)
 const statsError = ref('')
 const statsLoading = ref(false)
+const statsVisible = ref(true)
 const roomsError = ref('')
 const roomsLoading = ref(false)
 const unread = computed(() => notifStore.unread)
 let unreadTimer = null
 let disposed = false
-let statsRequest = 0
 
 const openAvailableSeats = computed(() => statsOverview.value?.current.open_available_seats ?? null)
 const inUseNow = computed(() => statsOverview.value?.current.in_use_now ?? null)
@@ -82,27 +83,26 @@ async function loadRooms() {
   }
 }
 
-async function loadStats() {
-  if (!auth.isAdmin || statsLoading.value) return
-  const sequence = ++statsRequest
-  const actor = auth.user?.id
-  statsLoading.value = true
-  statsError.value = ''
-  try {
-    const statsResp = await getOverview()
-    if (disposed || sequence !== statsRequest || !auth.isAdmin || auth.user?.id !== actor) return
-    if (!validOverview(statsResp.data)) throw new Error('统计回执不完整，请重新读取')
-    statsOverview.value = statsResp.data
-  } catch (error) {
-    if (disposed || sequence !== statsRequest || !auth.isAdmin || auth.user?.id !== actor) return
-    statsError.value = error.message
-  } finally {
-    if (!disposed && sequence === statsRequest) statsLoading.value = false
-  }
-}
+const statsRefresh = createStatsRefresh({onVisibility:visible=>{statsVisible.value=visible},resources:{overview:{
+  read:async()=>{
+    if (!auth.isAdmin) return null
+    const actor=auth.user?.id
+    try { const response=await getOverview();return {actor,data:response.data} }
+    catch(error) { if(!auth.isAdmin||auth.user?.id!==actor)return null;throw error }
+  },
+  success:result=>{
+    if(!result||!auth.isAdmin||auth.user?.id!==result.actor)return null
+    if(!validOverview(result.data))throw new Error('统计回执不完整，请重新读取')
+    statsOverview.value=result.data;return result.data
+  },
+  failure:error=>{statsError.value=error.message||'统计读取失败'},
+  loading:value=>{statsLoading.value=value;if(value)statsError.value=''}
+}}})
+function loadStats(){if(auth.isAdmin)return statsRefresh.refresh('overview')}
 
 onMounted(async () => {
-  await Promise.all([loadRooms(), loadStats()])
+  if(auth.isAdmin){statsRefresh.select('overview',{});statsRefresh.start()}
+  await loadRooms()
   if (disposed) return
   refreshUnread()
   unreadTimer = setInterval(refreshUnread, 30000)
@@ -110,7 +110,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   disposed = true
-  ++statsRequest
+  statsRefresh.stop()
   if (unreadTimer) {
     clearInterval(unreadTimer)
     unreadTimer = null
@@ -187,6 +187,7 @@ const cardToneClass = {
           <span class="role-pill role-pill--admin">管理员</span>
         </div>
         <p v-if="statsLoading" class="muted">正在加载统计…</p>
+        <p class="muted" role="status">{{ statsVisible?'页面可见时每10秒刷新管理统计。':'页面已隐藏，统计刷新暂停。' }}</p>
         <SBanner v-if="statsError" type="error" :title="statsError"><p>保留上次成功快照。</p><SButton size="sm" @click="loadStats">重试统计</SButton></SBanner>
         <p v-if="statsOverview" class="muted">全校快照：{{ statsSnapshotText }}（校园时区）；所选日 {{ statsOverview.scope.selected_date }}</p>
         <div class="kpi-grid">

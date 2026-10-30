@@ -7,6 +7,7 @@ import {getRooms} from '../api/room'
 import {getHeatmap,getOverview} from '../api/stats'
 import {statsQuery,validOverview,validHeatmap,usageHours,ratioText} from '../composables/statsForm.js'
 import {overviewChartOptions,heatChartOption} from '../composables/statsCharts.js'
+import {createStatsRefresh} from '../composables/statsRefresh.js'
 import {useThemeStore} from '../stores/theme'
 import SSelect from '../components/ui/SSelect.vue'
 import SDatePicker from '../components/ui/SDatePicker.vue'
@@ -19,16 +20,17 @@ const chartTabs=[{key:'heat',label:'座位热力图'},{key:'trend',label:'运营
 const rooms=ref([]),roomsError=ref(''),roomId=ref(null),date=ref(''),formError=ref('')
 const roomOptions=computed(()=>[{id:null,name:'全校'},...rooms.value])
 const overview=ref(null),heatmap=ref(null),overviewError=ref(''),heatError=ref('')
-const overviewLoading=ref(false),heatLoading=ref(false),attemptedQuery=ref(null)
+const overviewLoading=ref(false),heatLoading=ref(false),attemptedQuery=ref(null),heatQuery=ref(null),statsVisible=ref(true)
 const heatApplicable=computed(()=>Boolean(attemptedQuery.value?.room_id))
 const heatEl=ref(null),trendEl=ref(null),peakEl=ref(null),topEl=ref(null)
 let heatChart,trendChart,peakChart,topChart,resizeObserver
-let disposed=false,selectionSequence=0,overviewRequest=0,heatRequest=0,roomsRequest=0
+let disposed=false,selectionSequence=0,roomsRequest=0,heatCompletion=Promise.resolve(null),autoDate=null
 const motionMedia=window.matchMedia('(prefers-reduced-motion: reduce)')
 const animateCharts=()=>!motionMedia.matches
 const CHART=computed(()=>{const dark=themeStore.isDark;return{axisLine:dark?'#283547':'#d4dbe6',splitLine:dark?'#1c2635':'#eef1f6',label:dark?'#8393a7':'#75819a',title:dark?'#f1f5fa':'#46536a',tooltipBg:dark?'#151b24':'#1c2534',heatRange:dark?['#1b232f','#4f7cf6']:['#f4f6f9','#3b66da'],heatBorder:dark?'#151b24':'#ffffff'}})
 const scopeText=computed(()=>overview.value ? `${overview.value.scope.room_id===null?'全校':`空间 #${overview.value.scope.room_id}`} · 所选日 ${overview.value.scope.selected_date}` : '尚未读取统计快照')
 const attemptedText=computed(()=>attemptedQuery.value ? `${attemptedQuery.value.room_id?`空间 #${attemptedQuery.value.room_id}`:'全校'} · ${attemptedQuery.value.date||'服务端校园今天'}` : '')
+const heatAttemptedText=computed(()=>heatQuery.value?`空间 #${heatQuery.value.room_id} · ${heatQuery.value.date}`:attemptedText.value)
 const dayMetrics=computed(()=>overview.value ? [
  {label:'当日成功创建',value:overview.value.day.created_count},
  {label:'当日真实取消',value:overview.value.day.cancelled_count},
@@ -64,51 +66,47 @@ async function loadRooms(){
  try{const response=await getRooms();if(disposed||sequence!==roomsRequest)return;rooms.value=response.data||[]}
  catch(error){if(!disposed&&sequence===roomsRequest)roomsError.value=error.message||'空间读取失败'}
 }
-async function loadOverview(query,selection){
- const sequence=++overviewRequest;overviewLoading.value=true;overviewError.value=''
- try{
-  const response=await getOverview(query)
-  if(disposed||selection!==selectionSequence||sequence!==overviewRequest)return null
-  if(!validOverview(response.data,query))throw new Error('统计回执不完整或与查询不符，请重新读取')
-  overview.value=response.data
-  await renderOverview()
-  return response.data
- }catch(error){if(!disposed&&selection===selectionSequence&&sequence===overviewRequest)overviewError.value=error.message||'统计读取失败';return null}
- finally{if(!disposed&&sequence===overviewRequest)overviewLoading.value=false}
-}
-async function loadHeatmap(query,selection){
- const sequence=++heatRequest;heatLoading.value=true;heatError.value=''
- try{
-  const response=await getHeatmap(query.room_id,query.date)
-  if(disposed||selection!==selectionSequence||sequence!==heatRequest)return
-  if(!validHeatmap(response.data,query))throw new Error('热力图回执不完整或与查询不符，请重新读取')
-  heatmap.value=response.data;await renderHeatmap()
- }catch(error){if(!disposed&&selection===selectionSequence&&sequence===heatRequest)heatError.value=error.message||'热力图读取失败'}
- finally{if(!disposed&&sequence===heatRequest)heatLoading.value=false}
-}
+function selectHeat(query){heatQuery.value=query?{...query}:null;heatCompletion=statsRefresh.select('heat',query,{refresh:false});return heatCompletion}
+const statsRefresh=createStatsRefresh({onVisibility:visible=>{statsVisible.value=visible},resources:{
+ overview:{
+  read:query=>getOverview(query),
+  success:async(response,query)=>{
+   if(!validOverview(response.data,query))throw new Error('统计回执不完整或与查询不符，请重新读取')
+   overview.value=response.data
+   // An omitted date remains server-campus-today on later refreshes and midnight rollover.
+   if(!query.date){const selected=response.data.scope.selected_date;if(!date.value||date.value===autoDate)date.value=selected;autoDate=selected;if(query.room_id)selectHeat({...query,date:selected})}
+   await renderOverview();return response.data
+  },
+  failure:error=>{overviewError.value=error.message||'统计读取失败'},
+  loading:value=>{overviewLoading.value=value;if(value)overviewError.value=''}
+ },
+ heat:{
+  read:query=>getHeatmap(query.room_id,query.date),
+  success:async(response,query)=>{if(!validHeatmap(response.data,query))throw new Error('热力图回执不完整或与查询不符，请重新读取');heatmap.value=response.data;await renderHeatmap();return response.data},
+  failure:error=>{heatError.value=error.message||'热力图读取失败'},
+  loading:value=>{heatLoading.value=value;if(value)heatError.value=''}
+ }
+}})
 async function applyQuery(query){
  const selection=++selectionSequence
- ++heatRequest;heatLoading.value=false;heatError.value=''
- attemptedQuery.value={...query}
- // The first default date comes from the server campus date, never a UTC browser date.
- const overviewPromise=loadOverview(query,selection)
- if(query.room_id&&query.date)await Promise.all([overviewPromise,loadHeatmap(query,selection)])
- else{
-  const result=await overviewPromise
-  if(disposed||selection!==selectionSequence)return
-  if(!query.date&&result){if(!date.value)date.value=result.scope.selected_date;attemptedQuery.value={...query,date:result.scope.selected_date}}
-  if(query.room_id&&result)await loadHeatmap({...query,date:result.scope.selected_date},selection)
- }
+ attemptedQuery.value={...query};overviewError.value='';heatError.value=''
+ const completion=statsRefresh.select('overview',query)
+ const initialHeat=selectHeat(query.room_id&&query.date?query:null)
+ if(query.room_id&&query.date)await statsRefresh.refresh('heat')
+ const result=await completion
+ if(disposed||selection!==selectionSequence)return
+ if(query.room_id&&!query.date&&result)await heatCompletion
+ else await initialHeat
 }
 function applyFilters(){formError.value='';try{return applyQuery(statsQuery({room_id:roomId.value,date:date.value}))}catch(error){formError.value=error.message}}
-function retryOverview(){if(attemptedQuery.value)return applyQuery({...attemptedQuery.value})}
-function retryHeat(){if(attemptedQuery.value?.room_id&&attemptedQuery.value?.date)return loadHeatmap({...attemptedQuery.value},selectionSequence)}
+function retryOverview(){return statsRefresh.refresh('overview')}
+function retryHeat(){return statsRefresh.refresh('heat')}
 function resizeAll(){for(const chart of [heatChart,trendChart,peakChart,topChart]){const element=chart?.getDom();if(element?.clientWidth&&element.clientHeight)chart.resize({width:element.clientWidth,height:element.clientHeight})}}
 function redraw(){renderOverview();renderHeatmap()}
 watch(()=>themeStore.resolvedTheme,redraw)
 watch(chartTab,async()=>{await nextTick();if(disposed)return;await Promise.all([renderOverview(),renderHeatmap()]);if(!disposed)resizeAll()})
-onMounted(()=>{resizeObserver=new ResizeObserver(resizeAll);resizeObserver.observe(chartRoot.value);motionMedia.addEventListener('change',redraw);window.addEventListener('resize',resizeAll);loadRooms();applyQuery({})})
-onUnmounted(()=>{disposed=true;++selectionSequence;++overviewRequest;++heatRequest;++roomsRequest;resizeObserver?.disconnect();motionMedia.removeEventListener('change',redraw);window.removeEventListener('resize',resizeAll);for(const chart of [heatChart,trendChart,peakChart,topChart])chart?.dispose()})
+onMounted(()=>{resizeObserver=new ResizeObserver(resizeAll);resizeObserver.observe(chartRoot.value);motionMedia.addEventListener('change',redraw);window.addEventListener('resize',resizeAll);loadRooms();applyQuery({});statsRefresh.start()})
+onUnmounted(()=>{disposed=true;++selectionSequence;++roomsRequest;statsRefresh.stop();resizeObserver?.disconnect();motionMedia.removeEventListener('change',redraw);window.removeEventListener('resize',resizeAll);for(const chart of [heatChart,trendChart,peakChart,topChart])chart?.dispose()})
 </script>
 
 <template>
@@ -130,7 +128,7 @@ onUnmounted(()=>{disposed=true;++selectionSequence;++overviewRequest;++heatReque
     </div>
     <SBanner v-if="formError" type="error" :title="formError" />
     <SBanner v-if="roomsError" type="error" :title="roomsError"><SButton size="sm" @click="loadRooms">重读空间</SButton></SBanner>
-    <p class="muted">日期留空时由服务端选择校园今天；热力图需要具体空间。</p>
+    <p class="muted">日期留空时由服务端选择校园今天；热力图需要具体空间。</p><p class="muted" role="status">{{ statsVisible?'页面可见时每10秒刷新，读取中不重复发起同一资源请求。':'页面已隐藏，统计刷新暂停；恢复可见后重新读取。' }}</p>
    </section>
    <section class="card responsive-compact"><div class="card-title-row"><h3>运营快照</h3></div>
     <p class="muted" role="status">{{ overviewLoading?'正在读取；已有数据保留为上次成功快照。':scopeText }}</p>
@@ -146,7 +144,7 @@ onUnmounted(()=>{disposed=true;++selectionSequence;++overviewRequest;++heatReque
    <section v-show="chartTab==='heat'" class="card chart-panel"><div class="card-title-row"><h3>座位 × 小时 使用记录</h3></div>
     <p v-if="!heatApplicable" class="muted">请选择具体空间并应用筛选以查看热力图。</p>
     <p v-if="heatLoading" role="status" class="muted">正在读取热力图；已有数据保留为上次成功快照。</p>
-    <SBanner v-if="heatError" type="error" :title="heatError"><p>本次查询：{{ attemptedText }}。</p><SButton size="sm" @click="retryHeat">重试热力原查询</SButton></SBanner>
+    <SBanner v-if="heatError" type="error" :title="heatError"><p>本次查询：{{ heatAttemptedText }}。</p><SButton size="sm" @click="retryHeat">重试热力原查询</SButton></SBanner>
     <div v-show="heatApplicable&&heatmap"><p v-if="heatmap" class="snapshot-scope">最近成功快照：{{ heatmap.room.name }} · {{ heatmap.date }} · {{ snapshotText(heatmap.snapshot_at) }}</p><p class="muted">包括历史停用座位；单元格仅表示真实使用记录与该小时是否相交。</p><p v-if="heatmap&&!heatmap.seats.length" class="muted">该空间没有座位记录。</p><div class="responsive-scroll" tabindex="0" aria-label="座位时段使用记录，可左右滑动"><div ref="heatEl" class="chart chart-heat chart-wide"></div></div></div>
     <p v-if="heatApplicable&&!heatmap&&!heatLoading&&!heatError" class="muted">尚无成功热力图快照。</p>
    </section>

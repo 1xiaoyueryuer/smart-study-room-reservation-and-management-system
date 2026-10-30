@@ -1,4 +1,4 @@
-import test from 'node:test'
+import test,{afterEach} from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import {readFile} from 'node:fs/promises'
@@ -8,6 +8,10 @@ import * as ssr from 'vue/server-renderer'
 import {parse,compileTemplate} from '@vue/compiler-sfc'
 import * as statsForm from '../src/composables/statsForm.js'
 import * as statsCharts from '../src/composables/statsCharts.js'
+import {createStatsRefresh} from '../src/composables/statsRefresh.js'
+import {statsClock} from './helpers/statsClock.js'
+const livePages=[]
+afterEach(()=>{for(const page of livePages.splice(0)){page.cleanup.forEach(fn=>fn());assert.equal(page.clock.timers.size,0);assert.equal(page.clock.listeners.size,0)}})
 
 const metric=()=>({created_count:0,cancelled_count:0,checkin_count:0,usage_seconds:0,active_violation_count:0})
 const overviewData=(query={},extra={})=>({snapshot_at:'2026-10-30T23:45:00.123456+08:00',campus_zone:'Asia/Shanghai',scope:{room_id:query.room_id??null,selected_date:query.date||'2026-10-30',trend_from:'2026-10-24',trend_to:'2026-10-30'},day:metric(),current:{open_available_seats:0,in_use_now:0,usage_ratio:null,complaint_todo_count:0,complaint_awaiting_count:0},trend:Array.from({length:7},(_,index)=>({date:`2026-10-${24+index}`,...metric()})),peak:Array.from({length:24},(_,hour)=>({hour:String(hour).padStart(2,'0')+':00',usage_seconds:0,checkin_count:0})),top_seats:[],...extra})
@@ -15,20 +19,22 @@ const heatData=(room=1,date='2026-10-30',extra={})=>({snapshot_at:'2026-10-30T23
 const deferred=()=>{let resolve,reject;const promise=new Promise((yes,no)=>{resolve=yes;reject=no});return{promise,resolve,reject}}
 
 async function component(kind='analytics',overrides={}){
- const calls=[],cleanup=[],mounted=[],charts=[],listeners=new Map(),theme=vue.reactive({isDark:false,resolvedTheme:'light'}),auth=vue.reactive({isAdmin:true,isOrdinary:false,user:{id:7,username:'admin'},roleLabel:'管理员'})
+ const calls=[],cleanup=[],mounted=[],charts=[],listeners=new Map(),clock=statsClock(),theme=vue.reactive({isDark:false,resolvedTheme:'light'}),auth=vue.reactive({isAdmin:true,isOrdinary:false,user:{id:7,username:'admin'},roleLabel:'管理员'})
  const api={getOverview:async(query={})=>{calls.push(['overview',structuredClone(query)]);return{data:overviewData(query)}},getHeatmap:async(room,date)=>{calls.push(['heat',room,date]);return{data:heatData(room,date)}},...overrides}
  const motion={matches:false,addEventListener:(key,fn)=>listeners.set('motion:'+key,fn),removeEventListener:key=>listeners.delete('motion:'+key)}
  const context=vm.createContext({console,window:{matchMedia:()=>motion,addEventListener:(key,fn)=>listeners.set(key,fn),removeEventListener:key=>listeners.delete(key)},ResizeObserver:class{observe(){}disconnect(){}},setInterval:()=>{calls.push(['unread timer']);return 1},clearInterval(){}})
  const filename=kind==='analytics'?'AnalyticsView':'HomeView',source=(await readFile(new URL(`../src/views/${filename}.vue`,import.meta.url),'utf8')).split('<script setup>')[1].split('</script>')[0]
- const exports=kind==='analytics'?'rooms,roomsError,roomOptions,roomId,date,overview,heatmap,overviewError,heatError,overviewLoading,heatLoading,attemptedQuery,attemptedText,formError,applyFilters,applyQuery,retryOverview,retryHeat,loadRooms,chartTab,chartTabs,chartRoot,heatEl,trendEl,peakEl,topEl,dayMetrics,scopeText,redraw,heatApplicable,snapshotText,ratioText,resizeAll':'statsOverview,statsError,statsLoading,loadStats,openAvailableSeats,inUseNow,currentUsageText,statsSnapshotText'
+ const exports=kind==='analytics'?'rooms,roomsError,roomOptions,roomId,date,overview,heatmap,overviewError,heatError,overviewLoading,heatLoading,attemptedQuery,attemptedText,formError,applyFilters,applyQuery,retryOverview,retryHeat,loadRooms,chartTab,chartTabs,chartRoot,heatEl,trendEl,peakEl,topEl,dayMetrics,scopeText,redraw,heatApplicable,snapshotText,ratioText,resizeAll,statsRefresh,heatQuery,statsVisible,heatAttemptedText':'statsOverview,statsError,statsLoading,loadStats,openAvailableSeats,inUseNow,currentUsageText,statsSnapshotText,statsRefresh,statsVisible'
  const module=new vm.SourceTextModule(source+'\nexport {'+exports+'}',{context})
  await module.link(specifier=>{
   const values=specifier==='vue'?{...vue,onMounted:fn=>mounted.push(fn),onUnmounted:fn=>cleanup.push(fn),watch:(...args)=>{const stop=vue.watch(...args);cleanup.push(stop);return stop}}:specifier==='echarts'?{init:(element,_theme,dimensions)=>{const chart={element,dimensions,resizes:[],options:[],disposed:false,setOption(option){this.options.push(option)},getDom:()=>element,resize(dimensions){this.resizes.push(dimensions)},dispose(){this.disposed=true}};charts.push(chart);return chart}}:specifier==='../api/stats'?api:specifier==='../api/room'?{getRooms:async()=>({data:[{id:1,name:'历史空间1',enabled:false}]}),getOpeningWindows:async()=>({data:{windows:[],closed_reasons:[]}})}:specifier.endsWith('/statsForm.js')?statsForm:specifier.endsWith('/statsCharts.js')?statsCharts:specifier==='../stores/theme'?{useThemeStore:()=>theme}:specifier==='../stores/auth'?{useAuthStore:()=>auth}:specifier==='../stores/notification'?{useNotificationStore:()=>({unread:0,refresh(){}})}:specifier==='vue-router'?{useRouter:()=>({push(){}})}:{default:{}}
-  return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})
+  const linked=specifier.endsWith('/statsRefresh.js')?{createStatsRefresh:options=>createStatsRefresh({...options,...clock.options})}:values
+  return new vm.SyntheticModule(Object.keys(linked),function(){for(const[key,value]of Object.entries(linked))this.setExport(key,value)},{context})
  });await module.evaluate()
- const result={...module.namespace,calls,charts,mounted,cleanup,listeners,context,theme,auth,filename}
+ const result={...module.namespace,calls,charts,mounted,cleanup,listeners,clock,context,theme,auth,filename}
  if(kind==='analytics')for(const key of ['heatEl','trendEl','peakEl','topEl','chartRoot'])result[key].value={clientWidth:800,clientHeight:360}
- return result
+ if(kind==='home')result.statsRefresh.select('overview',{})
+ result.statsRefresh.start();livePages.push(result);return result
 }
 async function render(p){const source=await readFile(new URL(`../src/views/${p.filename}.vue`,import.meta.url),'utf8'),{descriptor}=parse(source),compiled=compileTemplate({source:descriptor.template.content,filename:p.filename+'.vue',id:'stats',ssr:true,ssrCssVars:[]});assert.equal(compiled.errors.length,0);const module=new vm.SourceTextModule(compiled.code,{context:p.context});await module.link(specifier=>{const values=specifier==='vue'?vue:ssr;return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context:p.context})});await module.evaluate();const app=vue.createSSRApp({setup:()=>p,ssrRender:module.namespace.ssrRender});for(const name of ['PageHelp','SAnimatedNumber','SSelect','SDatePicker','SBanner','SButton','StudyTips','AppIcon'])app.component(name,{render:()=>null});app.directive('reveal',{});return ssr.renderToString(app)}
 
@@ -58,12 +64,12 @@ test('default statistics load waits for server campus date before exactly one he
  const pending=deferred(),calls=[],p=await component('analytics',{getOverview:query=>{calls.push(['overview',{...query}]);return pending.promise},getHeatmap:async(room,date)=>{calls.push(['heat',room,date]);return{data:heatData(room,date)}}});const load=p.applyQuery({room_id:1});assert.equal(calls.length,1);pending.resolve({data:overviewData({room_id:1})});await load;assert.equal(calls.length,2);assert.equal(calls[1][2],'2026-10-30');assert.equal(p.date.value,'2026-10-30');assert.equal(p.heatmap.value.room.id,1);assert.equal(p.overview.value.scope.room_id,1)
 })
 
-test('out-of-order overview and heat responses cannot overwrite the latest applied room/date',async()=>{
- const pending=[],p=await component('analytics',{getOverview:query=>{const task=deferred();pending.push({kind:'overview',query,...task});return task.promise},getHeatmap:(room,date)=>{const task=deferred();pending.push({kind:'heat',query:{room_id:room,date},...task});return task.promise}});const first=p.applyQuery({room_id:1,date:'2026-10-29'}),second=p.applyQuery({room_id:2,date:'2026-10-30'});for(const item of pending.slice(2))item.resolve({data:item.kind==='overview'?overviewData(item.query):heatData(item.query.room_id,item.query.date)});await second;for(const item of pending.slice(0,2))item.resolve({data:item.kind==='overview'?overviewData(item.query):heatData(item.query.room_id,item.query.date)});await first;assert.equal(p.overview.value.scope.room_id,2);assert.equal(p.heatmap.value.room.id,2);assert.equal(p.attemptedQuery.value.date,'2026-10-30');assert.equal(p.overviewError.value,'')
+test('latest applied room/date queues behind each real request and stale responses cannot overwrite it',async()=>{
+ const pending=[],p=await component('analytics',{getOverview:query=>{const task=deferred();pending.push({kind:'overview',query,...task});return task.promise},getHeatmap:(room,date)=>{const task=deferred();pending.push({kind:'heat',query:{room_id:room,date},...task});return task.promise}});const first=p.applyQuery({room_id:1,date:'2026-10-29'}),second=p.applyQuery({room_id:2,date:'2026-10-30'});assert.equal(pending.length,2);for(const item of pending.slice(0,2))item.resolve({data:item.kind==='overview'?overviewData(item.query):heatData(item.query.room_id,item.query.date)});await p.clock.flush();assert.equal(pending.length,4);assert.equal(p.overview.value,null);assert.equal(p.heatmap.value,null);for(const item of pending.slice(2))item.resolve({data:item.kind==='overview'?overviewData(item.query):heatData(item.query.room_id,item.query.date)});await Promise.all([first,second]);assert.equal(p.overview.value.scope.room_id,2);assert.equal(p.heatmap.value.room.id,2);assert.equal(p.attemptedQuery.value.date,'2026-10-30');assert.equal(p.overviewError.value,'')
 })
 
 test('read errors preserve each original successful snapshot and retry the applied query rather than edited drafts',async()=>{
- let broken=false;const calls=[],p=await component('analytics',{getOverview:async query=>{calls.push(['overview',{...query}]);if(broken)throw new Error('503 unavailable');return{data:overviewData(query)}},getHeatmap:async(room,date)=>{calls.push(['heat',room,date]);if(broken)throw new Error('503 heat');return{data:heatData(room,date)}}});await p.applyQuery({room_id:1,date:'2026-10-29'});const previous=p.overview.value,heat=p.heatmap.value;broken=true;await p.applyQuery({room_id:2,date:'2026-10-30'});assert.equal(p.overview.value,previous);assert.equal(p.heatmap.value,heat);assert.match(p.overviewError.value,/503/);assert.match(p.heatError.value,/503/);p.roomId.value=3;p.date.value='2026-10-28';broken=false;await p.retryOverview();assert.equal(calls.at(-2)[1].room_id,2);assert.equal(calls.at(-2)[1].date,'2026-10-30');assert.equal(p.overview.value.scope.room_id,2)
+ let broken=false;const calls=[],p=await component('analytics',{getOverview:async query=>{calls.push(['overview',{...query}]);if(broken)throw new Error('503 unavailable');return{data:overviewData(query)}},getHeatmap:async(room,date)=>{calls.push(['heat',room,date]);if(broken)throw new Error('503 heat');return{data:heatData(room,date)}}});await p.applyQuery({room_id:1,date:'2026-10-29'});const previous=p.overview.value,heat=p.heatmap.value;broken=true;await p.applyQuery({room_id:2,date:'2026-10-30'});assert.equal(p.overview.value,previous);assert.equal(p.heatmap.value,heat);assert.match(p.overviewError.value,/503/);assert.match(p.heatError.value,/503/);p.roomId.value=3;p.date.value='2026-10-28';broken=false;await p.retryOverview();assert.equal(calls.at(-1)[1].room_id,2);assert.equal(calls.at(-1)[1].date,'2026-10-30');assert.equal(p.overview.value.scope.room_id,2);assert.equal(p.heatmap.value,heat);await p.retryHeat();assert.equal(p.heatmap.value.room.id,2)
 })
 
 test('all-school selection needs no heat GET; theme redraw reuses successful snapshots and unload rejects later results',async()=>{
@@ -85,6 +91,25 @@ test('hidden trend charts wait for real layout, then initialize and resize to ea
  p.resizeAll();for(const chart of p.charts){assert.equal(chart.resizes.at(-1).width,380);assert.equal(chart.resizes.at(-1).height,340)}
  p.heatEl.value.clientWidth=720;await p.applyQuery({room_id:1,date:'2026-10-30'});assert.equal(p.charts.find(chart=>chart.element===p.heatEl.value).dimensions.width,720);assert.equal(p.calls.length,reads+2)
  p.cleanup.forEach(fn=>fn())
+})
+
+test('first controlled 503 has no fabricated zero snapshot and visible timer recovery uses real server snapshots independently',async()=>{
+ let broken=true,round=0
+ const p=await component('analytics',{getOverview:async query=>{if(broken)throw new Error('503 controlled');return{data:overviewData(query,{snapshot_at:`2026-10-30T23:4${round}:00+08:00`})}},getHeatmap:async(room,date)=>{if(broken)throw new Error('503 heat');return{data:heatData(room,date,{snapshot_at:`2026-10-30T23:4${round}:01+08:00`})}}})
+ await p.applyQuery({room_id:1,date:'2026-10-30'});assert.equal(p.overview.value,null);assert.equal(p.heatmap.value,null);assert.match(p.overviewError.value,/503/);assert.match(p.heatError.value,/503/)
+ broken=false;round=1;await p.clock.advance();assert.equal(p.overview.value.snapshot_at,'2026-10-30T23:41:00+08:00');assert.equal(p.heatmap.value.snapshot_at,'2026-10-30T23:41:01+08:00');const old=p.overview.value,heat=p.heatmap.value;broken=true;await p.clock.advance();assert.equal(p.overview.value,old);assert.equal(p.heatmap.value,heat);assert.equal(p.overview.value.scope.room_id,1);broken=false;round=3;await p.clock.advance();assert.equal(p.overview.value.snapshot_at,'2026-10-30T23:43:00+08:00');assert.equal(p.overviewError.value,'');assert.equal(p.heatError.value,'')
+})
+
+test('campus midnight updates default overview and heat dates plus untouched form, but preserves a user date draft',async()=>{
+ let day=30
+ const calls=[],p=await component('analytics',{getOverview:async query=>{calls.push(['overview',{...query}]);const selected=`2026-${day===32?'11':'10'}-${String(day===32?1:day).padStart(2,'0')}`,end=new Date(selected+'T00:00:00Z'),trend=Array.from({length:7},(_,index)=>{const date=new Date(end);date.setUTCDate(date.getUTCDate()-6+index);return{date:date.toISOString().slice(0,10),...metric()}});return{data:overviewData(query,{snapshot_at:selected+'T00:01:00+08:00',scope:{room_id:1,selected_date:selected,trend_from:trend[0].date,trend_to:selected},trend})}},getHeatmap:async(room,date)=>{calls.push(['heat',room,date]);return{data:heatData(room,date)}}})
+ await p.applyQuery({room_id:1});assert.equal(p.date.value,'2026-10-30');assert.equal(p.heatmap.value.date,'2026-10-30')
+ day=31;await p.clock.advance();assert.equal(p.overview.value.scope.selected_date,'2026-10-31');assert.equal(p.heatmap.value.date,'2026-10-31');assert.equal(p.date.value,'2026-10-31');assert.equal(calls.filter(([kind])=>kind==='overview').at(-1)[1].date,undefined)
+ p.date.value='2026-09-15';day=32;await p.clock.advance();assert.equal(p.overview.value.scope.selected_date,'2026-11-01');assert.equal(p.heatmap.value.date,'2026-11-01');assert.equal(p.date.value,'2026-09-15')
+})
+
+test('visibility pause/resume and unmount stop component reads while retaining success data and current ratio semantics',async()=>{
+ const p=await component();await p.applyQuery({});const snapshot=p.overview.value,reads=p.calls.length;await p.clock.visibility('hidden');assert.equal(p.statsVisible.value,false);await p.clock.advance(30000);assert.equal(p.calls.length,reads);assert.equal(p.overview.value,snapshot);await p.clock.visibility('visible');assert.equal(p.statsVisible.value,true);assert.equal(p.calls.length,reads+1);assert.equal(p.overview.value.current.usage_ratio,null);p.cleanup.forEach(fn=>fn());await p.clock.advance(30000);assert.equal(p.calls.length,reads+1)
 })
 
 test('management homepage consumes current fields, preserves snapshot on error and refuses stale identity/unmount reads',async()=>{
