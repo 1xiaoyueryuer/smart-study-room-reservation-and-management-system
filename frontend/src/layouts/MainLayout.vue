@@ -41,7 +41,8 @@ function refreshUnread() {
 // 菜单：首页 / 预约 / 我的预约 / 候补 / 统计 / 消息 / 个人中心 / 管理端
 const menus = computed(() => {
   const common = [
-    { index: '/', title: '首页', icon: 'home' }
+    { index: '/', title: '首页', icon: 'home' },
+    {index:'/room-reviews',title:'空间评价',icon:'ticket'}
   ]
   const roleMenus = auth.isAdmin
     ? [

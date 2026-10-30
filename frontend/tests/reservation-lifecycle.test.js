@@ -1,3 +1,4 @@
+import * as reviewManagement from '../src/composables/reviewManagement.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
@@ -8,7 +9,7 @@ async function script(file, mocks, exports, extra={}) {
   const context=vm.createContext({defineExpose(){},defineProps:()=>({autoLoad:false}),...extra})
   const module=new vm.SourceTextModule(source+`\nexport {${exports}}`,{context})
   await module.link(specifier=>{
-    const values=mocks[specifier]||(specifier.endsWith('.vue')?{default:{}}:null)
+    const values=mocks[specifier]||(specifier.endsWith('/reviewManagement.js')?reviewManagement:null)||(specifier.endsWith('.vue')?{default:{}}:null)
     assert.ok(values,specifier)
     return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})
   })
@@ -21,7 +22,7 @@ async function mine(overrides={}) {
   const api={listMyReservations:async()=>{calls.push('mine');return{data:[waiting([])]}},...Object.fromEntries(['cancel','abandon','checkin','leave','return','checkout'].map(key=>[`${key}Reservation`,async id=>{calls.push(key);return{data:{id}}}])),...overrides}
   const page=await script('../src/views/MyReservationsView.vue',{
     vue:{ref,computed,onMounted(){}},
-    'vue-router':{useRouter:()=>({push:async location=>{calls.push(location)}})},
+    'vue-router':{useRoute:()=>({query:{}}),useRouter:()=>({push:async location=>{calls.push(location)}})},
     '../composables/usePagination':{usePagination:items=>({page:ref(1),pages:computed(()=>1),pageItems:items})},
     '../components/ui/feedback':{message:{success(){}},confirmDialog:overrides.confirmDialog|| (async text=>{confirmations.push(text)})},
     '../api/reservation':api

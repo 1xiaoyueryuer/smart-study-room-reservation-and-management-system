@@ -4,7 +4,8 @@ import SAnimatedNumber from '../components/ui/SAnimatedNumber.vue'
 import { usePagination } from '../composables/usePagination'
 import SPagination from '../components/ui/SPagination.vue'
 import { ref, computed, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
+import {reviewReservationParam} from '../composables/reviewManagement.js'
 import { message, confirmDialog } from '../components/ui/feedback'
 import {
   listMyReservations, cancelReservation, abandonReservation,
@@ -20,6 +21,7 @@ import UsageRecordSummary from '../components/UsageRecordSummary.vue'
 import ReviewEditor from '../components/ReviewEditor.vue'
 
 const router = useRouter()
+const route=useRoute()
 const reviewEditor=ref(null)
 const list = ref([])
 const loading = ref(false)
@@ -122,7 +124,7 @@ const statusNav = [
   { key:'violation',label:'旧违约状态',icon:'warning' }
 ]
 
-onMounted(refreshAll)
+onMounted(async()=>{await refreshAll();const target=reviewReservationParam(route.query.review_reservation_id);if(target!==null)await reviewEditor.value?.open(target)})
 const { page, pages, pageItems } = usePagination(filtered, filterStatus)
 </script>
 

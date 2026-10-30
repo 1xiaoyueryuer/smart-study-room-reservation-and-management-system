@@ -1,3 +1,4 @@
+import * as reviewManagement from '../src/composables/reviewManagement.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
@@ -10,7 +11,7 @@ const tick=()=>new Promise(resolve=>setImmediate(resolve))
 async function component(file,mocks,exports,extra={}) {
   const source=(await readFile(new URL(file,import.meta.url),'utf8')).split('<script setup>')[1].split('</script>')[0]
   const context=vm.createContext({defineExpose(){},...extra}),module=new vm.SourceTextModule(source+`\nexport {${exports}}`,{context})
-  await module.link(specifier=>{const values=mocks[specifier]||(specifier.endsWith('.vue')?{default:{}}:null);assert.ok(values,specifier);return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})})
+  await module.link(specifier=>{const values=mocks[specifier]||(specifier.endsWith('/reviewManagement.js')?reviewManagement:null)||(specifier.endsWith('.vue')?{default:{}}:null);assert.ok(values,specifier);return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})})
   await module.evaluate();return module.namespace
 }
 const proposal=()=>({change_type:'room.update',target_id:1,payload:{version:2,reason:'工程模拟：检修停用',enabled:false}})

@@ -1,3 +1,4 @@
+import * as reviewManagement from '../src/composables/reviewManagement.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
@@ -6,7 +7,7 @@ import * as vue from 'vue'
 import * as ssr from 'vue/server-renderer'
 import {compileTemplate,parse} from '@vue/compiler-sfc'
 const manual=()=>({id:70,reservation_id:null,type:'occupation_refusal',source:'manual',status:'active',reason:'工程模拟独立公开依据',occurred_at:'2026-10-29T08:30:00+08:00',registered_at:'2026-10-30T10:00:00+08:00',registrant_display_name:'模拟登记管理员',notification_id:700,notified_at:'2026-10-30T10:00:00+08:00'})
-async function script(file,mocks,exports,extra={}){const source=(await readFile(new URL(file,import.meta.url),'utf8')).split('<script setup>')[1].split('</script>')[0],context=vm.createContext({defineExpose(){},...extra}),module=new vm.SourceTextModule(source+`\nexport {${exports}}`,{context});await module.link(specifier=>{const values=mocks[specifier]||(specifier.endsWith('.vue')?{default:{}}:null);assert.ok(values,specifier);return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})});await module.evaluate();return{page:module.namespace,context}}
+async function script(file,mocks,exports,extra={}){const source=(await readFile(new URL(file,import.meta.url),'utf8')).split('<script setup>')[1].split('</script>')[0],context=vm.createContext({defineExpose(){},...extra}),module=new vm.SourceTextModule(source+`\nexport {${exports}}`,{context});await module.link(specifier=>{const values=mocks[specifier]||(specifier.endsWith('/reviewManagement.js')?reviewManagement:null)||(specifier.endsWith('.vue')?{default:{}}:null);assert.ok(values,specifier);return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})});await module.evaluate();return{page:module.namespace,context}}
 async function panel(loader,{query={violation_id:'70'},document}={}){const cleanup=[];const result=await script('../src/components/ViolationsPanel.vue',{vue:{...vue,onMounted(){},onBeforeUnmount:fn=>cleanup.push(fn),watch(){}},'vue-router':{useRoute:()=>({query})},'../api/violation':{listMyViolations:loader}},'items,loading,error,loaded,activeCount,typeLabels,refresh,linkedId,linkedRecord,focusLinked',{defineProps:()=>({autoLoad:false}),document});return{...result,cleanup}}
 test('only an actually loaded own violation is targeted; failed or missing records do not fabricate a visible notification detail',async()=>{
   const visited=[];let resolve

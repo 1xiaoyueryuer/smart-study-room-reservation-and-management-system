@@ -1,3 +1,4 @@
+import * as reviewManagement from '../src/composables/reviewManagement.js'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
@@ -9,7 +10,7 @@ import { compileTemplate,parse } from '@vue/compiler-sfc'
 import { ownerComplaintActions,complaintTypes,complaintStatuses,verificationOutcomes,reservationStatuses } from '../src/composables/complaintForm.js'
 const tick=()=>new Promise(resolve=>setImmediate(resolve))
 const awaiting=()=>({id:88,version:3,type:'service',status:'awaiting_confirmation',allowed_actions:['confirm','object'],server_now:'2026-10-30T10:00:00.000001+08:00',campus_zone:'Asia/Shanghai',description:'工程模拟情况',context_snapshot:null,submitted_at:'2026-10-29T08:00+08:00',attachment_count:0,attachments:[],events:[],current_feedback:{id:5,result:'工程模拟公开结果',basis:'工程模拟公开依据',feedback_at:'2026-10-30T09:00+08:00',deadline:'2026-11-06T09:00+08:00',response_type:null,responded_at:null,actor_display_name:'模拟管理员'}})
-async function script(file,mocks,exports,extra={}){const source=(await readFile(new URL(file,import.meta.url),'utf8')).split('<script setup>')[1].split('</script>')[0],context=vm.createContext(extra),module=new vm.SourceTextModule(source+`\nexport {${exports}}`,{context});await module.link(specifier=>{const values=mocks[specifier]||(specifier.endsWith('useServiceTargetClock.js')?{useServiceTargetClock:()=>({progress:()=>null})}:specifier.endsWith('.vue')?{default:{}}:null);assert.ok(values,specifier);return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})});await module.evaluate();return module.namespace}
+async function script(file,mocks,exports,extra={}){const source=(await readFile(new URL(file,import.meta.url),'utf8')).split('<script setup>')[1].split('</script>')[0],context=vm.createContext(extra),module=new vm.SourceTextModule(source+`\nexport {${exports}}`,{context});await module.link(specifier=>{const values=mocks[specifier]||(specifier.endsWith('/reviewManagement.js')?reviewManagement:null)||(specifier.endsWith('useServiceTargetClock.js')?{useServiceTargetClock:()=>({progress:()=>null})}:specifier.endsWith('.vue')?{default:{}}:null);assert.ok(values,specifier);return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})});await module.evaluate();return module.namespace}
 async function owner(overrides={}){
   const calls=[],cleanup=[];let state=awaiting(),uuid=0,routeChanged
   const props={id:'88'}

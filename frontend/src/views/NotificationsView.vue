@@ -1,5 +1,6 @@
 <script setup>
 import PageHelp from '../components/PageHelp.vue'
+import {reviewNotificationTarget} from '../composables/reviewManagement.js'
 import SAnimatedNumber from '../components/ui/SAnimatedNumber.vue'
 import { usePagination } from '../composables/usePagination'
 import SPagination from '../components/ui/SPagination.vue'
@@ -17,6 +18,8 @@ const loading = ref(false)
 const filterType = ref('all')
 
 const typeMeta = {
+  review_replied:{text:'评价管理回复',color:'var(--primary-active)',bg:'var(--primary-weak)'},
+  review_hidden:{text:'评价隐藏通知',color:'var(--text-2)',bg:'var(--surface-3)'},
   reservation_corrected_checkin:{text:'管理员核实补签',color:'var(--primary-active)',bg:'var(--primary-weak)'},
   reservation_success: { text: '预约成功', color: 'var(--green-strong)', bg: 'var(--green-weak)' },
   reservation_cancelled:{ text:'预约取消', color:'var(--text-3)', bg:'var(--surface-3)' },
@@ -186,6 +189,7 @@ const { page, pages, pageItems } = usePagination(filtered, filterType)
             </div>
             <span class="msg-time">{{ fmtTime(n.created_at) }}</span>
           </button>
+          <RouterLink v-if="reviewNotificationTarget(n)" class="complaint-link" :to="reviewNotificationTarget(n)">查看本人评价及管理结果</RouterLink>
           <RouterLink v-if="appealTarget(n)" class="complaint-link" :to="appealTarget(n)">查看本人申诉审核结果</RouterLink>
           <RouterLink v-if="restrictionTarget(n)" class="complaint-link" :to="restrictionTarget(n)">查看本人关联限制记录与资格</RouterLink>
           <RouterLink v-if="violationTarget(n)" class="complaint-link" :to="violationTarget(n)">查看本人关联违规记录</RouterLink>

@@ -14,6 +14,7 @@ const routes = [
     path: '/',
     component: () => import('../layouts/MainLayout.vue'),
     children: [
+      {path:'/room-reviews',name:'room-reviews',component:()=>import('../views/RoomReviewsView.vue'),meta:{title:'空间评价',requiresAuth:true,allowedRoles:['student','staff','admin']}},
       {
         path: '',
         name: 'home',
