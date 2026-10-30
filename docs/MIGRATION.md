@@ -226,3 +226,18 @@ work/s23-final-check.log/.json的21项聚焦HTTP/SQL全部通过：读取前后�
 V91逻辑过期冲突静态发现后以ReservationDeadline纯过滤修复，专项GET零写/有效冲突反例通过；V92首12专项10过2error仅fixture、修后143及500通过；V93前端草稿/回执/迟响应静态发现后25相关及build通过；V94工具沙箱JAR访问/JVM参数拆分，分别显式提权编译及正确引号启动修复，未主张产品失败或绕过审批。原失败日志保留。
 
 原PV05/校方现场/教师与成员人工确认、独立审核、硬件或真实断网未验证，B5未另布置。核实仍是管理员自报，工程Clock构造与工程账号不证明物理到场。S24管理提前终止后的评价资格选择已向用户询问，尚待回复，不代填决定。
+
+
+## S24 本人已完成使用评价（2026-10-30）
+
+2026-10-30 S24工程及本轮真实页面验收完成。用户授权自主选择后，本轮采用已签到且唯一Usage已结算的管理资源取消也可评价；评价针对真实使用体验，不抹除已发生使用，不增加最低分钟数。规格8.25/FR06.2/BR22/AC20及质量、AI报告、E014/DM映射已同步，原规则来源/确认性质不倒写为校方或教师认可。
+
+V21首次正常应用测试public及隔离迁移schema，唯一reviews/持久review_operations沿预约归属FK；ReviewService复用Booking/Usage，POST创建、PUT版本更新，严格JSON整数和字段，成功UUID先纯读首快照，HTTP不合格409在代理提交后保原应有期限收敛。界面真实入口/键盘评分/目标草稿/未知同请求/成功GET-only及中文原因已接入，无独立使用或评价v2核心。
+
+后端最终513项0失败/0错误/0跳过与package18:08:11通过(work/s24-backend-full.log)，含13评价专项；V96最新前端49相关和生产build过(work/s24-frontend-v96-tests.log、s24-frontend-v96-build.log)，不是前端全量，独立重叠批次不相加。JAR中78份dist逐文件字节等同(work/s24-jar-dist-check.json)。V95保首10中9过1failure、第二13中11过2failure两份JSON键序测试比较失败，改完整JSON语义后13专项18:00:23及513过，不删字段；V96静态中文契约/资格及时间guard修后49/build过。未发生本轮真实GUI误提交或产品参数放宽。
+
+真实工程GUI：普通用户26714对完成预约24717键盘3星ArrowRight选4，18:13:16.042958创建4星v1，18:13:44.733576改5星v2，原创建时间保持。原已结束540秒Usage不改。未使用取消24719及未来待签到24720从真实入口均中文no_usage、禁提交。staff26715的管理资源取消24718保600秒已结算Usage，18:16:39.258596真实创建4星v1；原仍cancelled，无复活。390 inner/document390及初桌面流程实际核查，3张S24截图在本次ji-x/outputs已实际查看，viewport已reset。
+
+work/s24-final-check.log/.json25项聚焦HTTP/SQL全部通过：4原预约/2Usage与before完全相同，2reviews/3不可变操作/3评价审计；首create4星v1与update5星v2快照各保原事实，原创建时间不改，owner安全字段白名单、other/admin403，after-gui/after-read保护快照一致。此非整套HTTP smoke。S23原样例经串行测试清理而证据保留，不冒称仍在库。数据库测试及GUI仅studyroom_java_test，开发库/8080未动。
+
+原PV07/真人现场/教师或校方确认、独立人工复核、真实断网仍未验证，B5未另布置。工程Clock/角色及材料明确非真人校园活动。资料/模型按实际范围回写；末次工程、脚本、引用及diff/暂存自查后本地中文commit，不push。S25管理回复隐藏和公开匿名尚未实施，本步不提前声称完成。

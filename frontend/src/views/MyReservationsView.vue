@@ -17,8 +17,10 @@ import SEmpty from '../components/ui/SEmpty.vue'
 import SBanner from '../components/ui/SBanner.vue'
 import ViolationsPanel from '../components/ViolationsPanel.vue'
 import UsageRecordSummary from '../components/UsageRecordSummary.vue'
+import ReviewEditor from '../components/ReviewEditor.vue'
 
 const router = useRouter()
+const reviewEditor=ref(null)
 const list = ref([])
 const loading = ref(false)
 const error = ref(''), actionError = ref(''), busyId = ref(null), violations = ref(null)
@@ -229,6 +231,7 @@ const { page, pages, pageItems } = usePagination(filtered, filterStatus)
                         {{ a.label }}
                       </SButton>
                       <SButton size="sm" variant="soft" :disabled="loading || !!error || busyId !== null" @click="requestOccupationHelp(row)">座位被占求助</SButton>
+                      <SButton size="sm" variant="soft" :disabled="loading || !!error || busyId !== null" @click="reviewEditor?.open(row.id)">评价/查看本人评价</SButton>
                     </span>
                   </td>
                 </tr>
@@ -240,6 +243,7 @@ const { page, pages, pageItems } = usePagination(filtered, filterStatus)
         <SPagination v-model="page" :pages="pages" :total="filtered.length" />
       </section>
       <ViolationsPanel ref="violations" :auto-load="false" />
+      <ReviewEditor ref="reviewEditor"/>
     </div>
     </div>
   </div>

@@ -1,0 +1,48 @@
+package cn.studyroom;
+
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.sql.Timestamp;
+import java.time.*;
+import java.time.temporal.ChronoUnit;
+import java.util.*;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/** Owner review facts reuse the authoritative booking lifecycle and Usage projection. */
+@Service
+@Transactional
+public class ReviewService {
+    private final Store db;private final BookingService bookings;private final AuditService audit;private final Clock clock;private final ObjectMapper json;
+    public ReviewService(Store db,BookingService bookings,AuditService audit,Clock clock,ObjectMapper json){this.db=db;this.bookings=bookings;this.audit=audit;this.clock=clock;this.json=json;}
+    public Map<String,Object> detail(long actor,long reservation){
+        db.lockBookings();owner(actor,reservation);var booking=bookings.detail(actor,reservation);var result=new LinkedHashMap<String,Object>();String blocked=blocked(booking);result.put("reservation_id",reservation);var eligibility=new LinkedHashMap<String,Object>();eligibility.put("can_review",blocked==null);eligibility.put("blocked_by",blocked);result.put("eligibility",eligibility);var current=find(reservation);result.put("review",current==null?null:publicReview(current));result.put("server_now",AttachmentService.offset(now()));return result;
+    }
+    public Map<String,Object> save(long actor,long reservation,String action,String rawOperation,int rating,String rawContent,Long version){
+        var result=saveForClient(actor,reservation,action,rawOperation,rating,rawContent,version);if(result.status()!=200)throw Api.fail(result.status(),result.message(),result.details());return result.data();
+    }
+    /** HTTP maps ordinary lifecycle rejection only after this transaction has committed. */
+    public BookingService.ActionResult saveForClient(long actor,long reservation,String action,String rawOperation,int rating,String rawContent,Long version){
+        db.lockBookings();activeOrdinary(actor);String operation=AttachmentService.uuid(rawOperation,"operation_id");Api.require(Set.of("create","update").contains(action),400,"评价操作无效");Api.require(rating>=1&&rating<=5,400,"评分须为1至5整数");String content=rawContent==null?"":rawContent.trim();Api.require(!content.isEmpty()&&content.length()<=2000,400,"评价文字须为1至2000字");Api.require(action.equals("create")?version==null:version!=null&&version>0,400,"修改须提供当前正整数版本");
+        var intent=new LinkedHashMap<String,Object>();intent.put("rating",rating);intent.put("content",content);if(version!=null)intent.put("version",version);String canonical=write(intent);var previous=db.list("SELECT actor_id,reservation_id,action,request=CAST(? AS JSONB) AS same,receipt FROM review_operations WHERE operation_id=CAST(? AS UUID)",canonical,operation);
+        if(!previous.isEmpty()){var prior=previous.get(0);Api.require(Store.id(prior,"actor_id")==actor&&Store.id(prior,"reservation_id")==reservation&&action.equals(prior.get("action"))&&Boolean.TRUE.equals(prior.get("same")),409,"操作标识已用于其他评价内容，请保留原请求核对");return new BookingService.ActionResult(200,"ok",receipt(operation,true,read(prior.get("receipt").toString())),null);}
+        owner(actor,reservation);var booking=bookings.detail(actor,reservation);String blocked=blocked(booking);if(blocked!=null)return new BookingService.ActionResult(409,"当前预约尚不符合评价条件",Map.of(),Map.of("reservation_id",reservation,"blocked_by",blocked));var current=find(reservation);LocalDateTime snapshot=now();
+        if(action.equals("create")){Api.require(current==null,409,"该预约已有评价，请读取后修改");db.update("INSERT INTO reviews(reservation_id,user_id,rating,content,created_at,updated_at) VALUES(?,?,?,?,?,?)",reservation,actor,rating,content,Timestamp.valueOf(snapshot),Timestamp.valueOf(snapshot));}
+        else{Api.require(current!=null,404,"该预约尚无评价");Api.require(Store.id(current,"version")==version,409,"评价版本已更新，请读取当前评价");db.update("UPDATE reviews SET rating=?,content=?,version=version+1,updated_at=? WHERE id=? AND version=?",rating,content,Timestamp.valueOf(snapshot),current.get("id"),version);}
+        var updated=find(reservation);var review=publicReview(updated);db.update("INSERT INTO review_operations(operation_id,review_id,actor_id,reservation_id,action,request,receipt,occurred_at) VALUES(CAST(? AS UUID),?,?,?,?,CAST(? AS JSONB),CAST(? AS JSONB),?)",operation,updated.get("id"),actor,reservation,action,canonical,write(review),Timestamp.valueOf(snapshot));audit.record(actor,"review."+action,"review",updated.get("id").toString(),"本人使用评价",current==null?Map.of():publicReview(current),review);return new BookingService.ActionResult(200,"ok",receipt(operation,false,review),null);
+    }
+    private void activeOrdinary(long actor){var user=db.one("SELECT role,status FROM users WHERE id=?",actor);Api.require(AuthService.isOrdinary(user.get("role"))&&"active".equals(user.get("status")),403,"仅启用的学生与教职工可维护本人评价");}
+    private void owner(long actor,long reservation){activeOrdinary(actor);Api.require(Store.id(db.one("SELECT user_id FROM reservations WHERE id=?",reservation),"user_id")==actor,403,"无权评价或读取他人的预约");}
+    private String blocked(Map<String,Object> booking){
+        Object raw=booking.get("usage_record");if(!(raw instanceof Map<?,?> usage)||usage.get("checkin_at")==null)return "no_usage";if(usage.get("ended_at")==null||usage.get("settled_at")==null)return "usage_not_finished";
+        if(!Objects.equals(booking.get("ended_at"),usage.get("ended_at"))||!Objects.equals(booking.get("termination_reason"),usage.get("end_reason")))return "usage_inconsistent";
+        var start=LocalDateTime.parse(usage.get("checkin_at").toString());var end=LocalDateTime.parse(usage.get("ended_at").toString());if(end.isBefore(start)||end.isAfter(now()))return "usage_inconsistent";
+        return "completed".equals(booking.get("status"))||"cancelled".equals(booking.get("status"))&&"admin_resource_change".equals(booking.get("termination_reason"))?null:"reservation_not_completed";
+    }
+    private Map<String,Object> find(long reservation){var rows=db.list("SELECT * FROM reviews WHERE reservation_id=?",reservation);return rows.isEmpty()?null:rows.get(0);}
+    private Map<String,Object> publicReview(Map<String,Object> row){var result=new LinkedHashMap<String,Object>();for(String key:List.of("id","reservation_id","rating","content","version"))result.put(key,row.get(key));for(String key:List.of("created_at","updated_at"))result.put(key,AttachmentService.offset(row.get(key)));return result;}
+    private Map<String,Object> receipt(String operation,boolean replayed,Map<String,Object> review){return Map.of("operation_id",operation,"replayed",replayed,"review",review);}
+    private String write(Object value){try{return json.writeValueAsString(value);}catch(Exception e){throw new IllegalStateException("评价快照无法保存",e);}}
+    private Map<String,Object> read(String value){try{return json.readValue(value,new TypeReference<LinkedHashMap<String,Object>>(){});}catch(Exception e){throw new IllegalStateException("评价历史回执无法读取",e);}}
+    private LocalDateTime now(){return LocalDateTime.ofInstant(clock.instant(),BookingPolicy.CAMPUS_ZONE).truncatedTo(ChronoUnit.MICROS);}
+}
