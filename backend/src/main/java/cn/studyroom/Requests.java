@@ -6,7 +6,15 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 public final class Requests {
     private Requests() {}
     public record Complaint(@NotBlank @Pattern(regexp="occupation|service") String type,@JsonProperty("reservation_id") @Positive Long reservationId,@JsonProperty("room_id") @Positive Long roomId,
-                            @NotBlank @Size(max=2000) String description,@JsonProperty("attachment_ids") java.util.List<String> attachmentIds,@JsonProperty("operation_id") @NotBlank String operationId) {}
+                            @NotBlank @Size(max=2000) String description,@JsonProperty("attachment_ids") java.util.List<String> attachmentIds,@JsonProperty("operation_id") @NotBlank String operationId,
+                            @JsonProperty("service_kind") String serviceKind,@JsonProperty("service_topic") String serviceTopic,
+                            @JsonProperty("fault_type") String faultType,@JsonProperty("impact_scope") String impactScope,
+                            @JsonProperty("safety_risk") Boolean safetyRisk,@JsonProperty("unsafe_area") Boolean unsafeArea) {
+        /** Source compatibility for internal callers; HTTP submissions still provide the explicit V1.1 branch. */
+        public Complaint(String type,Long reservationId,Long roomId,String description,java.util.List<String> attachmentIds,String operationId) {
+            this(type,reservationId,roomId,description,attachmentIds,operationId,null,null,null,null,null,null);
+        }
+    }
     public record ResourceChangeProposal(@JsonProperty("change_type") @NotBlank String changeType,@JsonProperty("target_id") @NotNull @Positive Long targetId,@NotNull java.util.Map<String,Object> payload) {}
     public record Coordination(Boolean confirmed,String note) {}
     public record ResourceChangeConfirm(@javax.validation.Valid @NotNull ResourceChangeProposal proposal,@JsonProperty("impact_hash") @NotBlank String impactHash,@JsonProperty("operation_id") @NotBlank String operationId,Coordination coordination) {}
@@ -50,7 +58,23 @@ public final class Requests {
                              @JsonProperty("top_n") @Min(0) @Max(10) int topN,@JsonProperty("auto_book") boolean autoBook) {}
     public record Wait(@JsonProperty("room_id") @Positive long roomId,@NotBlank String date,@JsonProperty("start_time") @NotBlank String startTime,@JsonProperty("end_time") @NotBlank String endTime,
                        @Pattern(regexp="|quiet|regular|discussion|computer") String zone,@JsonProperty("has_power") Boolean hasPower,@JsonProperty("near_window") Boolean nearWindow) {}
-    public record ComplaintAccept(Long version,@JsonProperty("operation_id") String operationId) {}
+    public record ComplaintAccept(Long version,@JsonProperty("operation_id") String operationId,
+                                  @JsonProperty("initial_arrangement") String initialArrangement,
+                                  @JsonProperty("triage_priority") Integer triagePriority,
+                                  @JsonProperty("triage_safety_risk") Boolean triageSafetyRisk,
+                                  @JsonProperty("triage_unsafe_area") Boolean triageUnsafeArea,
+                                  @JsonProperty("triage_reason") String triageReason) {
+        public ComplaintAccept(Long version,String operationId,Integer triagePriority,Boolean triageSafetyRisk,Boolean triageUnsafeArea,String triageReason) {this(version,operationId,null,triagePriority,triageSafetyRisk,triageUnsafeArea,triageReason);}
+        public ComplaintAccept(Long version,String operationId) {this(version,operationId,null,null,null,null,null);}
+    }
+    public record ComplaintServiceProgress(Long version,@JsonProperty("operation_id") String operationId,String stage,
+                                           @JsonProperty("maintenance_channel") String maintenanceChannel,
+                                           @JsonProperty("handed_off_at") String handedOffAt,
+                                           @JsonProperty("public_note") String publicNote) {}
+    public record ComplaintPriorityRule(@JsonProperty("fault_type") String faultType,@JsonProperty("impact_scope") String impactScope,
+                                        Integer priority,Boolean enabled) {}
+    public record ComplaintPriorityMappings(Long version,@JsonProperty("operation_id") String operationId,String reason,
+                                            java.util.List<ComplaintPriorityRule> rules) {}
     public record ComplaintVerification(Long version,@JsonProperty("operation_id") String operationId,String outcome,
             @JsonProperty("occurred_at") String occurredAt,@JsonProperty("public_note") String publicNote,@JsonProperty("private_note") String privateNote,
             @JsonProperty("subject_user_id") Long subjectUserId,@JsonProperty("identity_confirmed") Boolean identityConfirmed,

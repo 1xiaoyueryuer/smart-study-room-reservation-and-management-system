@@ -43,6 +43,9 @@ const typeMeta = {
   credit_change:      { text: '历史信用变动', color: 'var(--amber-strong)', bg: 'var(--amber-weak)' },
   waitlist_promoted:  { text: '历史候补递补', color: 'var(--violet-strong)', bg: 'var(--violet-weak)' },
   complaint_feedback:{ text:'投诉反馈',color:'var(--primary-active)',bg:'var(--primary-weak)' },
+  complaint_initial_arrangement:{ text:'服务受理初步安排',color:'var(--primary-active)',bg:'var(--primary-weak)' },
+  complaint_priority_assessed:{ text:'报修优先级核定',color:'var(--primary-active)',bg:'var(--primary-weak)' },
+  complaint_service_progress:{ text:'报修维修进度',color:'var(--primary-active)',bg:'var(--primary-weak)' },
   complaint_auto_closed:{ text:'投诉自动结案',color:'var(--text-2)',bg:'var(--surface-3)' },
   system:             { text: '系统',     color: 'var(--text-2)', bg: 'var(--surface-3)' }
 }

@@ -1,4 +1,7 @@
-export const complaintTypes = { occupation: '座位被占求助', service: '一般服务投诉' }
+export const complaintTypes = { occupation: '座位被占求助', service: '空间服务问题', facility_repair:'设施报修', other_service:'其他服务问题' }
+export const serviceKinds = { facility_repair:'设施报修', other_service:'其他服务问题' }
+export const serviceTopics = { '环境卫生':'环境卫生', '噪音秩序':'噪音秩序' }
+export function complaintDisplayType(record){return record?.type==='service'?(serviceKinds[record.service_kind]||'历史服务问题（类别未留存）'):(complaintTypes[record?.type]||record?.type||'投诉')}
 export const complaintStatuses = { submitted:'待受理', processing:'处理中',awaiting_confirmation:'待确认反馈',closed:'已结案',withdrawn:'已撤回' }
 export const verificationOutcomes = { cooperated:'已配合纠正并提醒（不计违规）',identity_pending:'身份待核',unsubstantiated:'未查实',verified_refusal:'核实拒不配合（核实动作不自动登记）',service_verified:'服务事实已核实' }
 export const reservationStatuses = { pending:'待签到',checked_in:'使用中',completed:'已结束',cancelled:'已取消',unused_ended:'未使用结束',violation:'旧违约状态（历史）',temp_leave:'旧暂离状态（历史）' }
@@ -7,17 +10,22 @@ export function positiveId(value) {
   if (!/^[0-9]+$/.test(String(value)) || !Number.isSafeInteger(Number(value)) || Number(value) <= 0) throw new Error('关联编号无效，请重新选择')
   return Number(value)
 }
-export function complaintPayload({ type, description, reservationId, roomId, items, context }) {
-  if (!Object.hasOwn(complaintTypes, type)) throw new Error('请选择求助或投诉类型')
+export function complaintPayload({ branch, serviceTopic, description, reservationId, roomId, items, context, faultType, impactScope, safetyRisk, unsafeArea }) {
+  const type=branch==='occupation'?'occupation':'service'
+  if (!['occupation','facility_repair','other_service'].includes(branch)) throw new Error('请选择座位求助、设施报修或其他服务问题')
   const text = description.trim()
   if (!text || text.length > 2000) throw new Error('请填写1至2000字的情况说明')
   const reservation_id = positiveId(reservationId), room_id = positiveId(roomId)
   if (type === 'occupation' && !reservation_id) throw new Error('座位被占求助必须关联本人预约，历史预约也可选择')
+  if (type === 'service' && !room_id) throw new Error('设施报修与其他服务问题必须选择所属空间')
   if (reservation_id && context?.id !== reservation_id) throw new Error('关联预约尚未核对成功，请重试读取')
   if (items.length > 3 || items.some(item => item.phase !== 'uploaded' || !item.metadata?.id)) throw new Error('请先成功上传全部已选照片，或明确移除失败照片后再提交')
+  if(branch==='other_service'&&items.length)throw new Error('其他服务问题不接收设施报修现场照片，请移除所选材料后提交')
   const attachment_ids = items.map(item => item.metadata.id)
   if (new Set(attachment_ids).size !== attachment_ids.length) throw new Error('不能重复关联同一份材料')
-  return { type, description:text, attachment_ids, ...(reservation_id ? {reservation_id} : room_id ? {room_id} : {}) }
+  if(branch==='facility_repair'&&(!faultType?.trim()||faultType.trim().length>100||!impactScope?.trim()||impactScope.trim().length>100||typeof safetyRisk!=='boolean'||typeof unsafeArea!=='boolean'))throw new Error('报修须填写故障类型、影响范围及安全风险/区域可用情况')
+  if(branch==='other_service'&&(!serviceTopic?.trim()||serviceTopic.trim().length>100))throw new Error('请填写其他服务问题类别')
+  return { type, description:text, attachment_ids, ...(reservation_id ? {reservation_id} : room_id ? {room_id} : {}), ...(branch!=='occupation'?{service_kind:branch,...(branch==='facility_repair'?{fault_type:faultType.trim(),impact_scope:impactScope.trim(),safety_risk:safetyRisk,unsafe_area:unsafeArea}:{service_topic:serviceTopic})}:{}) }
 }
 export { validateEvidenceFile } from './evidenceFile.js'
 
@@ -44,6 +52,15 @@ export function feedbackPayload(form) {
   const result = form.result.trim(), basis = form.basis.trim()
   if (!result || result.length > 2000 || !basis || basis.length > 2000) throw new Error('正式反馈结果和公开依据均须1至2000字，请勿复制管理私有核实记录')
   return {result,basis}
+}
+
+export function serviceProgressPayload(form) {
+  const stage=form.stage,maintenance_channel=String(form.maintenance_channel||'').trim(),public_note=String(form.public_note||'').trim(),local=String(form.handed_off_at||'')
+  if(!['handoff','progress'].includes(stage))throw new Error('维修进度类型无效')
+  if(!maintenance_channel||maintenance_channel.length>150)throw new Error('请填写1至150字的现有维修渠道名称')
+  if(!public_note||public_note.length>1000)throw new Error('请填写1至1000字的公开维修进度')
+  if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,6})?)?$/.test(local))throw new Error('请填写交接时刻（校园时间，精度不超过微秒）')
+  return {stage,maintenance_channel,handed_off_at:local+(local.length===16?':00':'')+'+08:00',public_note}
 }
 export function ownerComplaintActions(record) {
   if (!record || ['closed','withdrawn'].includes(record.status) || !Array.isArray(record.allowed_actions)) return []

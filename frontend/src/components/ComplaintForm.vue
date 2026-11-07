@@ -1,9 +1,9 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { createComplaint, getComplaint, uploadComplaintAttachment } from '../api/complaint'
+import { createComplaint, getComplaint, getComplaintPriorityOptions, uploadComplaintAttachment } from '../api/complaint'
 import { getRooms } from '../api/room'
 import { getReservation, listMyReservations } from '../api/reservation'
-import { complaintTypes, complaintStatuses, reservationStatuses, positiveId, complaintPayload, validateEvidenceFile } from '../composables/complaintForm.js'
+import { complaintTypes, serviceKinds, serviceTopics, complaintStatuses, reservationStatuses, positiveId, complaintPayload, validateEvidenceFile } from '../composables/complaintForm.js'
 import EvidenceUploadQueue from './EvidenceUploadQueue.vue'
 import {useEvidenceUploadQueue} from '../composables/useEvidenceUploadQueue.js'
 import ComplaintRecord from './ComplaintRecord.vue'
@@ -17,13 +17,16 @@ import RecordPageControls from './RecordPageControls.vue'
 const choicesPager=createRecordPager(listMyReservations,{blocked:()=>locked.value}),choicesFields=recordFields('reservation')
 const props = defineProps({ initialType:{type:String,default:'service'}, initialReservationId:{type:[String,Number],default:null} })
 const emit = defineEmits(['created'])
-const type=ref('service'), description=ref(''), useReservation=ref(false), reservationId=ref(null), roomId=ref(null), context=ref(null)
-const rooms=ref([]), choices=choicesPager.items, roomsError=ref(''), choicesError=choicesPager.error, contextError=ref(''), contextLoading=ref(false), roomsLoading=ref(false), choicesLoading=choicesPager.loading
+const branch=ref(''), description=ref(''), serviceTopic=ref(''), reservationId=ref(null), roomId=ref(null), context=ref(null),faultType=ref(''),impactScope=ref(''),safetyRisk=ref(false),unsafeArea=ref(false)
+const rooms=ref([]),priorityRules=ref([]), priorityOptionsError=ref(''), choices=choicesPager.items, roomsError=ref(''), choicesError=choicesPager.error, contextError=ref(''), contextLoading=ref(false), roomsLoading=ref(false), choicesLoading=choicesPager.loading
 const submitting=ref(false), uncertain=ref(false), error=ref(''), receipt=ref(null), record=ref(null), reading=ref(false), readError=ref('')
 const locked=computed(()=>submitting.value || uncertain.value || !!receipt.value)
 defineExpose({targetReadBlocked:computed(()=>submitting.value||uncertain.value||reading.value||uploading.value)})
-const typeOptions=Object.entries(complaintTypes).map(([value,label])=>({value,label}))
-const roomOptions=computed(()=>[{value:null,label:'不关联空间'},...rooms.value.map(room=>({value:room.id,label:`${room.name} · ${room.building || '楼栋未登记'} · ${room.floor || '楼层未登记'}`}))])
+const branchOptions=[{value:'occupation',label:complaintTypes.occupation},{value:'facility_repair',label:serviceKinds.facility_repair},{value:'other_service',label:serviceKinds.other_service}]
+const topicOptions=Object.entries(serviceTopics).map(([value,label])=>({value,label}))
+const roomOptions=computed(()=>[{value:null,label:'选择所属空间'},...rooms.value.map(room=>({value:room.id,label:`${room.name} · ${room.building || '楼栋未登记'} · ${room.floor || '楼层未登记'}`}))])
+const faultSuggestions=computed(()=>[...new Set(priorityRules.value.filter(rule=>rule.enabled).map(rule=>rule.fault_type))])
+const scopeSuggestions=computed(()=>[...new Set(priorityRules.value.filter(rule=>rule.enabled).map(rule=>rule.impact_scope))])
 const reservationOptions=computed(()=>{
   const values=choices.value.map(row=>row.id===context.value?.id?context.value:row)
   if(context.value && !values.some(row=>row.id===context.value.id)) values.unshift(context.value)
@@ -47,8 +50,8 @@ async function selectReservation(value) {
   catch(failure){if(alive&&ticket===contextSequence)contextError.value=failure.message}
   finally{if(alive&&ticket===contextSequence)contextLoading.value=false}
 }
-function changeType(value) {if(locked.value)return;type.value=value;if(value==='occupation'){useReservation.value=true;void loadChoices()}}
-function toggleReservation() {if(locked.value)return;if(useReservation.value)void loadChoices();else{contextSequence++;reservationId.value=null;context.value=null;contextError.value='';contextLoading.value=false}}
+function changeBranch(value) {if(locked.value)return;branch.value=value;serviceTopic.value='';faultType.value='';impactScope.value='';safetyRisk.value=false;unsafeArea.value=false;roomId.value=null;contextSequence++;context.value=null;contextError.value='';contextLoading.value=false;if(value==='occupation')void loadChoices()}
+async function loadPriorityOptions(){try{const response=await getComplaintPriorityOptions();if(alive&&Array.isArray(response.data?.rules)){priorityRules.value=response.data.rules;priorityOptionsError.value=''}}catch(failure){if(alive)priorityOptionsError.value=failure.message}}
 async function refreshCreated() {
   if(!receipt.value)return
   const ticket=++readSequence,id=receipt.value.id
@@ -63,7 +66,7 @@ async function submit() {
   if(!uncertain.value){
     try{
       if(contextLoading.value||contextError.value)throw new Error('关联预约尚未核对成功，请先重试读取或清除关联')
-      const body=complaintPayload({type:type.value,description:description.value,reservationId:useReservation.value?reservationId.value:null,roomId:roomId.value,items:items.value,context:context.value})
+      const body=complaintPayload({branch:branch.value,serviceTopic:serviceTopic.value,description:description.value,reservationId:branch.value==='occupation'?reservationId.value:null,roomId:roomId.value,items:items.value,context:context.value,faultType:faultType.value,impactScope:impactScope.value,safetyRisk:safetyRisk.value,unsafeArea:unsafeArea.value})
       const signature=JSON.stringify(body)
       if(!frozenBody||signature!==fingerprint){frozenBody={...body,operation_id:crypto.randomUUID()};fingerprint=signature}
     }catch(failure){error.value=failure.message;return}
@@ -83,12 +86,12 @@ async function submit() {
 function reset() {if(submitting.value||uncertain.value)return;scope++;readSequence++;receipt.value=null;record.value=null;readError.value='';description.value='';items.value=[];frozenBody=null;fingerprint='';error.value='';applyInitial()}
 function applyInitial() {
   if(locked.value)return
-  scope++;type.value=props.initialType||'service';useReservation.value=type.value==='occupation'||!!props.initialReservationId
-  if(useReservation.value){void loadChoices();void selectReservation(props.initialReservationId)}
+  scope++;branch.value=props.initialType==='occupation'?'occupation':props.initialType==='facility_repair'?'facility_repair':props.initialType==='other_service'?'other_service':'';serviceTopic.value='';faultType.value='';impactScope.value='';safetyRisk.value=false;unsafeArea.value=false;roomId.value=null
+  if(branch.value==='occupation'){void loadChoices();if(props.initialReservationId)void selectReservation(props.initialReservationId)}
   else {contextSequence++;reservationId.value=null;context.value=null;contextError.value='';contextLoading.value=false}
 }
 watch(()=>[props.initialType,props.initialReservationId],applyInitial,{immediate:true})
-onMounted(loadRooms)
+onMounted(()=>{void loadRooms();void loadPriorityOptions()})
 onBeforeUnmount(()=>{queue.dispose();alive=false;choicesPager.dispose();scope++;contextSequence++;readSequence++})
 </script>
 <template>
@@ -96,12 +99,11 @@ onBeforeUnmount(()=>{queue.dispose();alive=false;choicesPager.dispose();scope++;
     <template v-if="!receipt"><h3>提交求助或投诉</h3><p class="muted">提交后为待受理，不代表已核实、已解决或现场恢复。座位被占无需猜测对方身份；历史预约可作关联，但提交不延长签到期限、不恢复预约。</p>
       <SBanner v-if="error" type="error" :title="error" /><p v-if="uncertain" class="operation-key">原操作ID：{{ frozenBody?.operation_id }}</p>
       <form class="fields" @submit.prevent="submit">
-        <label>类型<SSelect :model-value="type" :options="typeOptions" :disabled="locked" @update:model-value="changeType" /></label>
-        <label v-if="type==='service'"><span><input v-model="useReservation" type="checkbox" :disabled="locked" @change="toggleReservation" /> 关联本人预约（可选）</span></label>
-        <div v-if="useReservation" class="fields"><label>关联本人预约（含历史）<SSelect :model-value="reservationId" :options="reservationOptions" :disabled="locked" placeholder="从本人预约选择" @update:model-value="selectReservation" /></label><RouterLink to="/mine">前往我的预约选择求助记录</RouterLink><RecordFilters v-model="choicesPager.filters.value" :fields="choicesFields" :disabled="locked||choicesLoading" @apply="choicesPager.apply"/><RecordPageControls :snapshot="choicesPager.snapshot.value" :query="choicesPager.snapshotQuery.value" :fields="choicesFields" :disabled="locked||choicesLoading" @page="choicesPager.turn"/><p v-if="choicesLoading" role="status">正在读取本人预约选项…</p><p v-if="choicesError" role="alert">预约选项读取失败：{{ choicesError }} <SButton size="sm" :disabled="locked" @click="loadChoices">重试选项</SButton></p><p v-if="contextLoading" role="status">正在核对本人预约…</p><p v-if="contextError" role="alert">{{ contextError }} <SButton size="sm" :disabled="locked" @click="selectReservation(reservationId)">重试预约</SButton></p><div v-if="context" class="context">{{ context.room_name }} · 座位{{ context.seat_no }} · {{ context.res_date }} {{ context.start_time }}—{{ context.end_time }}<br />当前状态：{{ reservationStatuses[context.status] || context.status }}；{{ context.building || '楼栋未登记' }} · {{ context.floor || '楼层未登记' }} · {{ context.location || '位置未登记' }}</div></div>
-        <label v-else>关联空间（可选）<SSelect v-model="roomId" :options="roomOptions" :disabled="locked" /></label><p v-if="roomsLoading" role="status">正在读取空间选项…</p><p v-if="roomsError" role="alert">空间选项读取失败：{{ roomsError }} <SButton size="sm" :disabled="locked" @click="loadRooms">重试空间</SButton></p>
+        <label>问题分支<SSelect :model-value="branch" :options="branchOptions" :disabled="locked" placeholder="请选择问题分支" @update:model-value="changeBranch" /></label>
+        <div v-if="branch==='occupation'" class="fields"><label>关联本人预约（含历史）<SSelect :model-value="reservationId" :options="reservationOptions" :disabled="locked" placeholder="从本人预约选择" @update:model-value="selectReservation" /></label><RouterLink to="/mine">前往我的预约选择求助记录</RouterLink><RecordFilters v-model="choicesPager.filters.value" :fields="choicesFields" :disabled="locked||choicesLoading" @apply="choicesPager.apply"/><RecordPageControls :snapshot="choicesPager.snapshot.value" :query="choicesPager.snapshotQuery.value" :fields="choicesFields" :disabled="locked||choicesLoading" @page="choicesPager.turn"/><p v-if="choicesLoading" role="status">正在读取本人预约选项…</p><p v-if="choicesError" role="alert">预约选项读取失败：{{ choicesError }} <SButton size="sm" :disabled="locked" @click="loadChoices">重试选项</SButton></p><p v-if="contextLoading" role="status">正在核对本人预约…</p><p v-if="contextError" role="alert">{{ contextError }} <SButton size="sm" :disabled="locked" @click="selectReservation(reservationId)">重试预约</SButton></p><div v-if="context" class="context">{{ context.room_name }} · 座位{{ context.seat_no }} · {{ context.res_date }} {{ context.start_time }}—{{ context.end_time }}<br />当前状态：{{ reservationStatuses[context.status] || context.status }}；{{ context.building || '楼栋未登记' }} · {{ context.floor || '楼层未登记' }} · {{ context.location || '位置未登记' }}</div></div>
+        <template v-else><label>所属空间<SSelect v-model="roomId" :options="roomOptions" :disabled="locked" /></label><p v-if="roomsLoading" role="status">正在读取空间选项…</p><p v-if="roomsError" role="alert">空间选项读取失败：{{ roomsError }} <SButton size="sm" :disabled="locked" @click="loadRooms">重试空间</SButton></p><label v-if="branch==='other_service'">诉求类别<SInput v-model="serviceTopic" list="service-topics" maxlength="100" :disabled="locked" placeholder="例如环境卫生或噪音秩序；也可据实填写其他类别" /><datalist id="service-topics"><option v-for="item in Object.values(serviceTopics)" :key="item" :value="item" /></datalist></label><template v-if="branch==='facility_repair'"><label>故障类型<SInput v-model="faultType" list="fault-types" maxlength="100" :disabled="locked" placeholder="按现场事实填写；当前已配置选项可参考下拉提示" /><datalist id="fault-types"><option v-for="item in faultSuggestions" :key="item" :value="item" /></datalist></label><label>影响范围<SInput v-model="impactScope" list="impact-scopes" maxlength="100" :disabled="locked" placeholder="按实际影响填写；未配置组合不会猜测等级" /><datalist id="impact-scopes"><option v-for="item in scopeSuggestions" :key="item" :value="item" /></datalist></label><label><span><input v-model="safetyRisk" type="checkbox" :disabled="locked" />存在安全风险（直接按5级处理）</span></label><label><span><input v-model="unsafeArea" type="checkbox" :disabled="locked" />区域无法安全使用（直接按5级处理）</span></label><p v-if="priorityOptionsError" class="muted">分级映射读取失败，仍可提交事实；无精确映射时服务端标记“未配置”，不会猜级别。</p><p v-else class="muted">当前映射规则由管理员维护；未命中规则时保存为“未配置”，不代表系统已自动判定等级。</p></template></template>
         <label>情况说明<SInput v-model="description" type="textarea" :rows="5" required maxlength="2000" :disabled="locked" placeholder="描述发生的情况；不必知道或猜测占用者的身份" /></label><p class="muted">{{ description.trim().length }}/2000字。仅文字也可提交，请勿填写不必要的个人信息。</p>
-        <EvidenceUploadQueue :items="items" :disabled="locked" :uploading="uploading" @select="selectFiles" @retry="uploadItem" @remove="removeItem" />
+        <p v-if="branch==='other_service'" class="muted">其他服务问题不需要上传报修现场照片，可仅文字提交。</p><EvidenceUploadQueue v-else-if="branch==='facility_repair'||branch==='occupation'" :items="items" :disabled="locked" :uploading="uploading" @select="selectFiles" @retry="uploadItem" @remove="removeItem" />
         <SButton type="submit" variant="primary" :loading="submitting" :disabled="uploading || (!uncertain && items.some(item=>item.phase!=='uploaded'))">{{ uncertain ? '以原操作ID重试提交核对' : '提交，等待受理' }}</SButton>
       </form>
     </template>

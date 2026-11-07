@@ -44,9 +44,16 @@ test('server overdue estimates use explicit offset snapshots, unknown terminal r
   assert.equal(targetProjection(row({status:'pending',remaining_seconds:null,due_at:null})).remaining_seconds,null)
   assert.equal(formatTargetDuration(86461.01),'1天1分2秒');assert.equal(targetFingerprint(row()),targetFingerprint({...row(),server_now:'2030-01-01T00:00+08:00'}))
 })
+test('open-hour target projection consumes snapshotted open intervals only and freezes while the room is closed',()=>{
+  const target={basis:'service_open_hours_24',status:'running',remaining_seconds:86400,due_at:'2026-11-02T17:00:00+08:00',open_intervals:[{start_at:'2026-11-01T08:00:00+08:00',end_at:'2026-11-01T12:00:00+08:00'},{start_at:'2026-11-01T13:00:00+08:00',end_at:'2026-11-01T17:00:00+08:00'}]}
+  const duringOpen=targetProjection({server_now:'2026-11-01T08:00:00+08:00',service_target:target},7200);assert.equal(duringOpen.remaining_seconds,79200);assert.equal(duringOpen.awaiting_check,false)
+  const afterFourOpenHours=targetProjection({server_now:'2026-11-01T08:00:00+08:00',service_target:target},5*3600);assert.equal(afterFourOpenHours.remaining_seconds,72000)
+  const closedHours=targetProjection({server_now:'2026-11-01T12:00:00+08:00',service_target:{...target,remaining_seconds:72000}},3600);assert.equal(closedHours.remaining_seconds,72000)
+  const overdue=targetProjection({server_now:'2026-11-02T18:00:00+08:00',service_target:{...target,status:'overdue',remaining_seconds:0}},3600);assert.equal(overdue.overdue_seconds,null)
+})
 async function targetHtml(record,progress=null){
   const source=await readFile(new URL('../src/components/ServiceTargetSummary.vue',import.meta.url),'utf8'),{descriptor}=parse(source),context=vm.createContext({defineProps:()=>({record,progress,compact:false})})
-  const script=new vm.SourceTextModule(descriptor.scriptSetup.content+'\nexport {target,view,statuses,bases,formatTargetDuration}',{context});await script.link(specifier=>{const values=specifier==='vue'?vue:{targetProjection,formatTargetDuration};return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})});await script.evaluate()
+  const script=new vm.SourceTextModule(descriptor.scriptSetup.content+'\nexport {target,view,statuses,bases,isOpenHours,formatTargetDuration}',{context});await script.link(specifier=>{const values=specifier==='vue'?vue:{targetProjection,formatTargetDuration};return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})});await script.evaluate()
   const compiled=compileTemplate({source:descriptor.template.content,filename:'ServiceTargetSummary.vue',id:'s17target',ssr:true,ssrCssVars:[]}),module=new vm.SourceTextModule(compiled.code,{context});await module.link(specifier=>{const values=specifier==='vue'?vue:ssr;return new vm.SyntheticModule(Object.keys(values),function(){for(const[key,value]of Object.entries(values))this.setExport(key,value)},{context})});await module.evaluate()
   return ssr.renderToString(vue.createSSRApp({props:['record','progress','compact'],setup:()=>script.namespace,ssrRender:module.namespace.ssrRender},{record,progress,compact:false}))
 }

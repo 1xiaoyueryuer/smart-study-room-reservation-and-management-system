@@ -7,5 +7,5 @@ export function reservationTarget(item){return ['reservation_success','reservati
 export function appealTarget(item){return item?.type==='appeal_reviewed'&&positive(item.appeal_id)?`/appeals/${item.appeal_id}`:null}
 export function restrictionTarget(item){return ['restriction_started','restriction_released','restriction_cancelled'].includes(item?.type)&&positive(item.restriction_id)?{path:'/profile',query:{restriction_id:item.restriction_id},hash:'#restrictions'}:null}
 export function violationTarget(item){return item?.type==='violation'&&positive(item.violation_id)?{path:'/profile',query:{violation_id:item.violation_id},hash:'#violations'}:null}
-export function complaintTarget(item){return ['complaint_feedback','complaint_auto_closed'].includes(item?.type)&&positive(item.complaint_id)?`/complaints/${item.complaint_id}`:null}
+export function complaintTarget(item){return ['complaint_feedback','complaint_auto_closed','complaint_initial_arrangement','complaint_priority_assessed','complaint_service_progress'].includes(item?.type)&&positive(item.complaint_id)?`/complaints/${item.complaint_id}`:null}
 export function hasNotificationTarget(item,reviewTarget){return !!(reservationTarget(item)||appealTarget(item)||restrictionTarget(item)||violationTarget(item)||complaintTarget(item)||reviewTarget(item))}
