@@ -62,7 +62,7 @@ function onInput(e) {
         v-if="type === 'password' && showPassword"
         type="button"
         class="s-input__eye"
-        :aria-label="passwordVisible ? '隐藏口令' : '显示口令'"
+        :aria-label="passwordVisible ? '隐藏密码' : '显示密码'"
         tabindex="-1"
         @click="passwordVisible = !passwordVisible"
       >

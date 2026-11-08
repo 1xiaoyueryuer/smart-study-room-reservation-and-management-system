@@ -1,12 +1,13 @@
 <script setup>
 import { usePagination } from '../composables/usePagination'
 import SPagination from '../components/ui/SPagination.vue'
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { fetchProfile, updateProfile } from '../api/auth'
 import { contactPayload } from '../components/admin/userForm.js'
 import SInput from '../components/ui/SInput.vue'
 import SButton from '../components/ui/SButton.vue'
 import { useAuthStore } from '../stores/auth'
+import { useAvatarStore } from '../stores/avatar'
 import { getCreditOverview } from '../api/credit'
 import SEmpty from '../components/ui/SEmpty.vue'
 import RemindersPanel from '../components/RemindersPanel.vue'
@@ -16,6 +17,29 @@ import ViolationsPanel from '../components/ViolationsPanel.vue'
 import SBanner from '../components/ui/SBanner.vue'
 
 const auth = useAuthStore()
+const avatarStore = useAvatarStore()
+const avatarInput = ref(null)
+const avatarError = ref('')
+const avatarInitial = computed(() => (auth.user?.real_name || auth.user?.username || '?').slice(0, 1))
+watch(() => auth.user?.id, () => avatarStore.load(), { immediate: true })
+function chooseAvatar() { avatarError.value = ''; avatarInput.value?.click() }
+function onAvatarFile(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  if (!/^image\/(png|jpeg|webp)$/.test(file.type)) { avatarError.value = '请选择 PNG、JPEG 或 WebP 图片'; return }
+  if (file.size > 2 * 1024 * 1024) { avatarError.value = '头像不能超过 2MB'; return }
+  const reader = new FileReader()
+  reader.onload = () => {
+    const value = String(reader.result || '')
+    if (!value.startsWith('data:image/')) { avatarError.value = '图片读取失败'; return }
+    avatarStore.setAvatar(value)
+    avatarError.value = ''
+  }
+  reader.onerror = () => { avatarError.value = '图片读取失败' }
+  reader.readAsDataURL(file)
+}
+function resetAvatar() { avatarStore.reset(); avatarError.value = '' }
 const overview = ref(null)
 const creditLoading = ref(false), creditError = ref('')
 async function loadCredit() {
@@ -85,7 +109,8 @@ const { page, pages, pageItems } = usePagination(creditLogs, null)
       <!-- 用户卡片 -->
       <section class="card profile-card responsive-compact">
         <div class="avatar-lg">
-          {{ (auth.user?.real_name || auth.user?.username || '?').slice(0, 1) }}
+          <img v-if="avatarStore.data" :src="avatarStore.data" alt="本人头像" />
+          <span v-else>{{ avatarInitial }}</span>
         </div>
         <div class="profile-name">{{ auth.user?.real_name || auth.user?.username }}</div>
         <div class="profile-sub">@{{ auth.user?.username }}</div>
@@ -94,6 +119,12 @@ const { page, pages, pageItems } = usePagination(creditLogs, null)
             {{ auth.roleLabel }}
           </span>
         </div>
+        <div class="avatar-actions">
+          <SButton size="sm" variant="ghost" @click="chooseAvatar">更换头像</SButton>
+          <SButton v-if="avatarStore.data" size="sm" variant="ghost" @click="resetAvatar">恢复默认</SButton>
+          <input ref="avatarInput" class="sr-only" type="file" accept="image/png,image/jpeg,image/webp" @change="onAvatarFile" />
+        </div>
+        <p v-if="avatarError" class="avatar-error">{{ avatarError }}</p>
       </section>
 
       <!-- 基本信息 -->
@@ -199,6 +230,9 @@ const { page, pages, pageItems } = usePagination(creditLogs, null)
   font-weight: 700;
   margin: 6px auto 14px;
 }
+.avatar-lg img { width: 100%; height: 100%; object-fit: cover; display: block; border-radius: inherit; }
+.avatar-actions { display: flex; justify-content: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.avatar-error { color: var(--red-strong); font-size: var(--fs-caption); margin-top: 8px; }
 .profile-name {
   font-size: 18px;
   font-weight: 650;

@@ -8,11 +8,10 @@ import { message } from '../components/ui/feedback'
 import { useAuthStore } from '../stores/auth'
 import { useNotificationStore } from '../stores/notification'
 import { useThemeStore } from '../stores/theme'
+import { useAvatarStore } from '../stores/avatar'
 import { logout as logoutApi } from '../api/auth'
 import AppIcon from '../components/AppIcon.vue'
 import MobileTopbar from '../components/MobileTopbar.vue'
-import { SYSTEM_NAME, SYSTEM_NAME_ZH } from '../config/branding'
-
 import SBadge from '../components/ui/SBadge.vue'
 import SButton from '../components/ui/SButton.vue'
 
@@ -21,6 +20,7 @@ const route = useRoute()
 const auth = useAuthStore()
 const notifStore = useNotificationStore()
 const themeStore = useThemeStore()
+const avatarStore = useAvatarStore()
 const narrowMediaQuery = window.matchMedia('(max-width: 1024px)')
 const isNarrowScreen = ref(narrowMediaQuery.matches)
 const isSidebarCollapsed = ref(narrowMediaQuery.matches)
@@ -28,44 +28,54 @@ const isAtTop = ref(true)
 const mobileTitleProgress = ref(0)
 const mobilePageTitle = ref('')
 const contentRef = ref(null)
-const isDesktopCollapsed = computed(() => !isNarrowScreen.value && isSidebarCollapsed.value)
+const userMenuRef = ref(null)
+const userMenuOpen = ref(false)
 let titleMedia = null
-
-// 未读消息角标(通过 Pinia Store 集中管理与 60s 轮询)
-const unread = computed(() => notifStore.unread)
 let timer = null
+
+const unread = computed(() => notifStore.unread)
+const displayName = computed(() => auth.user?.real_name || auth.user?.username || '我的')
+const avatarText = computed(() => (displayName.value || '?').slice(0, 1))
+watch(() => auth.user?.id, () => avatarStore.load(), { immediate: true })
+
+const menus = computed(() => auth.isAdmin
+  ? [
+      { index: '/', title: '首页', icon: 'home' },
+      { index: '/analytics', title: '热力图统计', icon: 'analytics' },
+      { index: '/admin', title: '管理端', icon: 'admin' }
+    ]
+  : [
+      { index: '/', title: '首页', icon: 'home' },
+      { index: '/booking', title: '座位预约', icon: 'booking' },
+      { index: '/complaints', title: '求助与投诉', icon: 'ticket' },
+      { index: '/notifications', title: '消息', icon: 'notification-empty' }
+    ])
+
+const userLinks = computed(() => auth.isAdmin
+  ? [{ index: '/profile', title: '个人中心', icon: 'profile' }]
+  : [
+      { index: '/mine', title: '我的预约', icon: 'reservations' },
+      { index: '/room-reviews', title: '空间评价', icon: 'ticket' },
+      { index: '/profile', title: '个人中心', icon: 'profile' }
+    ])
 
 function refreshUnread() {
   notifStore.refresh()
 }
 
-// 菜单：首页 / 预约 / 我的预约 / 候补 / 统计 / 消息 / 个人中心 / 管理端
-const menus = computed(() => {
-  const common = [
-    { index: '/', title: '首页', icon: 'home' },
-    {index:'/room-reviews',title:'空间评价',icon:'ticket'}
-  ]
-  const roleMenus = auth.isAdmin
-    ? [
-        { index: '/analytics', title: '热力图统计', icon: 'analytics' },
-        { index: '/admin', title: '管理端', icon: 'admin' }
-      ]
-    : [
-        { index: '/booking', title: '座位预约', icon: 'booking' },
-        { index: '/mine', title: '我的预约', icon: 'reservations' },
-        { index: '/complaints', title: '求助与投诉', icon: 'ticket' },
-        { index: '/waitlist', title: '历史候补', icon: 'waitlist' },
-        { index: '/notifications', title: '消息中心', icon: unread.value > 0 ? 'notification' : 'notification-empty' }
-      ]
-  return [...common, ...roleMenus, { index: '/profile', title: '个人中心', icon: 'profile' }]
-})
+function isActive(index) {
+  if (index === '/') return route.path === '/'
+  return route.path === index || route.path.startsWith(index + '/')
+}
 
-async function handleSelect(index) {
+async function go(index) {
+  userMenuOpen.value = false
   if (route.path !== index) await router.push(index)
   if (isNarrowScreen.value) closeSidebar()
 }
 
 function onLogout() {
+  userMenuOpen.value = false
   const token = auth.token
   if (token) void logoutApi(token).catch(() => {})
   auth.logout()
@@ -73,17 +83,12 @@ function onLogout() {
   router.push('/login')
 }
 
-function openSidebar() {
-  isSidebarCollapsed.value = false
+function setTheme(mode) {
+  themeStore.setMode(mode)
 }
 
-function closeSidebar() {
-  isSidebarCollapsed.value = true
-}
-
-function toggleSidebar() {
-  isSidebarCollapsed.value = !isSidebarCollapsed.value
-}
+function openSidebar() { isSidebarCollapsed.value = false }
+function closeSidebar() { isSidebarCollapsed.value = true }
 
 function onNarrowChange(event) {
   isNarrowScreen.value = event.matches
@@ -97,9 +102,14 @@ function onContentScroll(event) {
   isAtTop.value = event.currentTarget.scrollTop <= 1
 }
 
+function onDocumentClick(event) {
+  if (userMenuOpen.value && userMenuRef.value && !userMenuRef.value.contains(event.target)) userMenuOpen.value = false
+}
+
 function onKeydown(event) {
-  if (event.key === 'Escape' && isNarrowScreen.value && !isSidebarCollapsed.value) {
-    closeSidebar()
+  if (event.key === 'Escape') {
+    if (userMenuOpen.value) userMenuOpen.value = false
+    if (isNarrowScreen.value && !isSidebarCollapsed.value) closeSidebar()
   }
 }
 
@@ -130,7 +140,7 @@ function setupMobileTitleAnimation() {
         const trigger = ScrollTrigger.create({
           trigger: heading,
           scroller,
-          start: 'top 52px',
+          start: 'top 66px',
           onEnter: () => {
             gsap.set(heading, { autoAlpha: 0, y: 0 })
             mobileTitleProgress.value = 1
@@ -153,13 +163,11 @@ function setupMobileTitleAnimation() {
           scrollTrigger: {
             trigger: heading,
             scroller,
-            start: 'top 72px',
-            end: 'top 32px',
+            start: 'top 86px',
+            end: 'top 46px',
             scrub: 0.18,
             invalidateOnRefresh: true,
-            onUpdate: (self) => {
-              mobileTitleProgress.value = self.progress
-            }
+            onUpdate: (self) => { mobileTitleProgress.value = self.progress }
           }
         }
       )
@@ -171,6 +179,7 @@ function setupMobileTitleAnimation() {
 }
 
 watch(() => route.fullPath, async () => {
+  userMenuOpen.value = false
   cleanupMobileTitleAnimation()
   mobilePageTitle.value = ''
   if (contentRef.value) contentRef.value.scrollTop = 0
@@ -181,6 +190,7 @@ watch(() => route.fullPath, async () => {
 onMounted(() => {
   narrowMediaQuery.addEventListener('change', onNarrowChange)
   window.addEventListener('keydown', onKeydown)
+  document.addEventListener('click', onDocumentClick)
   if (auth.isOrdinary) {
     refreshUnread()
     timer = setInterval(refreshUnread, 60000)
@@ -191,20 +201,13 @@ onUnmounted(() => {
   cleanupMobileTitleAnimation()
   narrowMediaQuery.removeEventListener('change', onNarrowChange)
   window.removeEventListener('keydown', onKeydown)
+  document.removeEventListener('click', onDocumentClick)
   if (timer) clearInterval(timer)
 })
 </script>
 
 <template>
-  <!-- 第一层双栏：外壳 = 左 Sidebar | 右 Content Column -->
-  <div
-    class="shell"
-    :class="{
-      'sidebar-collapsed': isSidebarCollapsed,
-      'narrow-screen': isNarrowScreen,
-      'mobile-sidebar-open': isNarrowScreen && !isSidebarCollapsed
-    }"
-  >
+  <div class="shell">
     <MobileTopbar
       v-if="isNarrowScreen"
       :sidebar-collapsed="isSidebarCollapsed"
@@ -214,139 +217,111 @@ onUnmounted(() => {
       :page-title="mobilePageTitle"
       :title-progress="mobileTitleProgress"
       @open-sidebar="openSidebar"
-      @navigate="handleSelect"
+      @navigate="go"
     />
 
-    <div
-      v-if="isNarrowScreen && !isSidebarCollapsed"
-      class="sidebar-backdrop"
-      aria-hidden="true"
-      @click="closeSidebar"
-      @wheel.prevent
-      @touchmove.prevent
-    />
+    <div v-if="isNarrowScreen && !isSidebarCollapsed" class="drawer-backdrop" aria-hidden="true" @click="closeSidebar" @wheel.prevent @touchmove.prevent />
 
-    <!-- ============== 左栏（导航 / 品牌 / 用户） ============== -->
-    <aside class="sidebar" :class="{ collapsed: isSidebarCollapsed }">
-      <!-- 系统名称集中定义，侧栏展示中英文名称。 -->
-      <div class="brand" :class="{ collapsed: isDesktopCollapsed }">
+    <!-- 移动端抽屉 -->
+    <aside v-if="isNarrowScreen" class="drawer" :class="{ collapsed: isSidebarCollapsed }" aria-label="主导航">
+      <div class="drawer-brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 6.4c-1.8-1.4-4.2-2-7.2-2v13.2c3 0 5.4.6 7.2 2 1.8-1.4 4.2-2 7.2-2V4.4c-3 0-5.4.6-7.2 2Z" />
+            <path d="M12 6.4v13.2" />
+          </svg>
+        </span>
         <div class="brand-copy">
-          <div class="brand-name">{{ SYSTEM_NAME_ZH }}</div>
-          <div class="brand-sub">{{ SYSTEM_NAME }}</div>
+          <div class="brand-name">静阅自习室</div>
+          <div class="brand-sub">SMART STUDY ROOM</div>
         </div>
-        <button
-          class="sidebar-toggle"
-          type="button"
-          :title="isDesktopCollapsed ? '展开侧栏' : '折叠侧栏'"
-          :aria-label="isDesktopCollapsed ? '展开侧栏' : '折叠侧栏'"
-          :aria-expanded="!isSidebarCollapsed"
-          @click="toggleSidebar"
-        >
-          <AppIcon :name="isDesktopCollapsed ? 'sidebar-expand' : 'sidebar-collapse'" :size="24" />
-        </button>
       </div>
-
-      <!-- 菜单（加大尺寸） -->
-      <nav v-active-track class="menu" aria-label="主导航">
-        <button
-          v-for="m in menus"
-          :key="m.index"
-          class="menu-item"
-          :class="{ active: route.path === m.index }"
-          :title="isDesktopCollapsed ? m.title : undefined"
-          :aria-label="m.title"
-          @click="handleSelect(m.index)"
-        >
-          <span class="menu-icon"><AppIcon :name="m.icon" :size="21" /></span>
-          <span class="menu-text">{{ m.title }}</span>
-          <SBadge
-            v-if="m.index === '/notifications' && unread > 0"
-            :value="unread"
-            :max="99"
-            class="menu-badge"
-          />
+      <nav class="drawer-menu">
+        <button v-for="m in menus" :key="m.index" class="drawer-item" :class="{ active: isActive(m.index) }" @click="go(m.index)">
+          <AppIcon :name="m.icon" :size="20" />
+          <span>{{ m.title }}</span>
+          <SBadge v-if="m.index === '/notifications' && unread > 0" :value="unread" :max="99" />
+        </button>
+        <button v-for="m in userLinks" :key="m.index" class="drawer-item" :class="{ active: isActive(m.index) }" @click="go(m.index)">
+          <AppIcon :name="m.icon" :size="20" />
+          <span>{{ m.title }}</span>
         </button>
       </nav>
-
-      <section v-if="auth.isOrdinary&&notifStore.error" class="notification-retry" role="status"><p>{{notifStore.hasValue?'未读数保留上次成功值':'未读数尚未成功读取'}}：{{notifStore.error}}</p><SButton size="sm" :disabled="notifStore.loading" @click="refreshUnread">重试未读数量</SButton></section>
-      <div class="sidebar-spacer" />
-
-      <!-- 主题模式切换（折叠后整体隐藏） -->
-      <div class="sidebar-theme" :class="{ collapsed: isDesktopCollapsed }">
-        <div class="theme-switch-group" role="radiogroup" aria-label="主题模式选择">
-          <button
-            type="button"
-            class="theme-btn"
-            :class="{ active: themeStore.mode === 'system' }"
-            :aria-checked="themeStore.mode === 'system'"
-            role="radio"
-            title="跟随系统"
-            @click="themeStore.setMode('system')"
-          >
-            <AppIcon name="system" :size="15" />
-            <span>系统</span>
-          </button>
-          <button
-            type="button"
-            class="theme-btn"
-            :class="{ active: themeStore.mode === 'light' }"
-            :aria-checked="themeStore.mode === 'light'"
-            role="radio"
-            title="浅色模式"
-            @click="themeStore.setMode('light')"
-          >
-            <AppIcon name="sun" :size="15" />
-            <span>浅色</span>
-          </button>
-          <button
-            type="button"
-            class="theme-btn"
-            :class="{ active: themeStore.mode === 'dark' }"
-            :aria-checked="themeStore.mode === 'dark'"
-            role="radio"
-            title="深色模式"
-            @click="themeStore.setMode('dark')"
-          >
-            <AppIcon name="moon" :size="15" />
-            <span>深色</span>
-          </button>
+      <div class="drawer-spacer" />
+      <div class="drawer-user">
+        <span class="avatar"><img v-if="avatarStore.data" :src="avatarStore.data" alt="本人头像" /><template v-else>{{ avatarText }}</template></span>
+        <div class="drawer-user-meta">
+          <b>{{ displayName }}</b>
+          <small>{{ auth.roleLabel }}</small>
         </div>
-      </div>
-
-      <!-- 底部：个人区域（折叠后仅显示头像，展开显示头像+信息+退出登录） -->
-      <div v-if="auth.isLoggedIn" class="sidebar-footer">
-        <div class="user-row">
-          <div class="avatar-slot" :title="auth.user?.real_name || auth.user?.username">
-            <div class="avatar">
-              {{ (auth.user?.real_name || auth.user?.username || '?').slice(0, 1) }}
-            </div>
-          </div>
-          <div v-show="!isDesktopCollapsed" class="user-meta">
-            <div class="user-name" :title="auth.user?.real_name || auth.user?.username">
-              {{ auth.user?.real_name || auth.user?.username }}
-            </div>
-            <span class="role-pill" :class="auth.isAdmin ? 'role-pill--admin' : 'role-pill--student'">
-              {{ auth.roleLabel }}
-            </span>
-          </div>
-          <button
-            v-show="!isDesktopCollapsed"
-            type="button"
-            class="sidebar-logout-btn"
-            title="退出登录"
-            aria-label="退出登录"
-            @click="onLogout"
-          >
-            <AppIcon name="logout" :size="16" />
-          </button>
-        </div>
+        <button type="button" class="icon-btn" title="退出登录" aria-label="退出登录" @click="onLogout">
+          <AppIcon name="logout" :size="18" />
+        </button>
       </div>
     </aside>
 
-    <!-- ============== 右栏（页面正文；标题由各页面自己维护） ============== -->
+    <!-- 桌面顶部导航 -->
+    <header v-if="!isNarrowScreen" class="topnav">
+      <div class="topnav-inner">
+        <button type="button" class="brand" aria-label="返回首页" @click="go('/')">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 6.4c-1.8-1.4-4.2-2-7.2-2v13.2c3 0 5.4.6 7.2 2 1.8-1.4 4.2-2 7.2-2V4.4c-3 0-5.4.6-7.2 2Z" />
+              <path d="M12 6.4v13.2" />
+            </svg>
+          </span>
+          <span class="brand-name">静阅自习室</span>
+        </button>
+
+        <nav class="topnav-links" aria-label="主导航">
+          <button v-for="m in menus" :key="m.index" type="button" class="nav-link" :class="{ active: isActive(m.index) }" @click="go(m.index)">
+            {{ m.title }}
+            <span v-if="m.index === '/notifications' && unread > 0" class="nav-unread">{{ unread > 99 ? '99+' : unread }}</span>
+          </button>
+        </nav>
+
+        <div class="topnav-actions">
+          <button v-if="!auth.isAdmin" type="button" class="icon-btn bell-btn" title="消息中心" aria-label="消息中心" @click="go('/notifications')">
+            <AppIcon name="notification-empty" :size="21" />
+            <span v-if="unread > 0" class="bell-dot" aria-hidden="true" />
+          </button>
+
+          <div ref="userMenuRef" class="user-menu">
+            <button type="button" class="user-chip" :aria-expanded="userMenuOpen" @click.stop="userMenuOpen = !userMenuOpen">
+              <span class="avatar"><img v-if="avatarStore.data" :src="avatarStore.data" alt="本人头像" /><template v-else>{{ avatarText }}</template></span>
+              <span class="user-chip-name">{{ displayName }}</span>
+              <span class="caret" aria-hidden="true">▾</span>
+            </button>
+            <div v-if="userMenuOpen" class="user-pop">
+              <div class="user-pop-head">
+                <span class="avatar"><img v-if="avatarStore.data" :src="avatarStore.data" alt="本人头像" /><template v-else>{{ avatarText }}</template></span>
+                <div><b>{{ displayName }}</b><small>{{ auth.roleLabel }}</small></div>
+              </div>
+              <button v-for="m in userLinks" :key="m.index" type="button" class="pop-item" @click="go(m.index)">
+                <AppIcon :name="m.icon" :size="17" /> {{ m.title }}
+              </button>
+              <div class="pop-theme">
+                <span>主题</span>
+                <div class="theme-switch" role="radiogroup" aria-label="主题模式选择">
+                  <button type="button" :class="{ active: themeStore.mode === 'light' }" @click="setTheme('light')">浅色</button>
+                  <button type="button" :class="{ active: themeStore.mode === 'dark' }" @click="setTheme('dark')">深色</button>
+                </div>
+              </div>
+              <button type="button" class="pop-item pop-danger" @click="onLogout">
+                <AppIcon name="logout" :size="17" /> 退出登录
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
     <section ref="contentRef" class="content" @scroll="onContentScroll">
-      <!-- 每个页面自行使用 .split 实现"页面级双栏" -->
       <main class="page-body">
+        <section v-if="auth.isOrdinary && notifStore.error" class="notification-retry" role="status">
+          <p>{{ notifStore.hasValue ? '未读数保留上次成功值' : '未读数尚未成功读取' }}：{{ notifStore.error }}</p>
+          <SButton size="sm" :disabled="notifStore.loading" @click="refreshUnread">重试未读数量</SButton>
+        </section>
         <router-view v-slot="{ Component }">
           <Transition :css="false" mode="out-in" @enter="pageMotion.enter" @leave="pageMotion.leave" @enter-cancelled="pageMotion.cancel" @leave-cancelled="pageMotion.cancel" @after-enter="setupMobileTitleAnimation">
             <div :key="route.path" class="route-surface"><component :is="Component" /></div>
@@ -354,460 +329,283 @@ onUnmounted(() => {
         </router-view>
       </main>
     </section>
-
   </div>
 </template>
 
 <style scoped>
-.notification-retry{padding:8px 12px;font-size:var(--fs-caption);overflow-wrap:anywhere;min-width:0}.notification-retry p{margin-bottom:6px}
-
-/* ---- 外壳级双栏（全局） ---- */
 .shell {
   height: 100%;
-  display: grid;
-  grid-template-columns: 216px minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   background: var(--canvas);
-  transition: grid-template-columns var(--dur-3) var(--ease);
 }
-.shell:not(.narrow-screen).sidebar-collapsed {
-  grid-template-columns: 72px 1fr;
+.notification-retry { max-width: 1560px; width: 100%; margin: 12px auto 0; padding: 8px 40px; font-size: var(--fs-caption); overflow-wrap: anywhere; }
+.notification-retry p { margin-bottom: 6px; }
+
+/* ============ 桌面顶部导航 ============ */
+.topnav {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-nav);
+  flex: 0 0 auto;
+  background: color-mix(in srgb, var(--canvas) 92%, transparent);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--border);
 }
-.sidebar-backdrop {
+.topnav-inner {
+  width: 100%;
+  max-width: 1560px;
+  height: 82px;
+  margin: 0 auto;
+  padding: 0 40px;
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+.brand {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  color: var(--text-1);
+  flex: 0 0 auto;
+}
+.brand-mark { color: var(--primary); display: grid; place-items: center; }
+.brand-name {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  white-space: nowrap;
+}
+.topnav-links {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+.nav-link {
+  all: unset;
+  position: relative;
+  padding: 10px 18px;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font-size: 15px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
+}
+.nav-link:hover { color: var(--text-1); background: var(--surface-2); }
+.nav-link.active { color: var(--primary); font-weight: 600; }
+.nav-link.active::after {
+  content: '';
+  position: absolute;
+  left: 22%;
+  right: 22%;
+  bottom: 2px;
+  height: 2px;
+  border-radius: var(--r-full);
+  background: var(--primary);
+}
+.nav-unread {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: var(--r-full);
+  background: var(--primary);
+  color: var(--text-inverse);
+  font-size: 11px;
+  line-height: 1;
+  vertical-align: 2px;
+}
+.topnav-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.icon-btn {
+  all: unset;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r-full);
+  display: grid;
+  place-items: center;
+  color: var(--text-2);
+  cursor: pointer;
+  position: relative;
+  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
+}
+.icon-btn:hover { background: var(--surface-2); color: var(--text-1); }
+.bell-dot {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+  border: 2px solid var(--canvas);
+}
+.user-menu { position: relative; }
+.user-chip {
+  all: unset;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 4px 10px 4px 4px;
+  border-radius: var(--r-full);
+  cursor: pointer;
+  color: var(--text-1);
+  transition: background var(--dur-1) var(--ease);
+}
+.user-chip:hover { background: var(--surface-2); }
+.avatar {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--primary-weak);
+  color: var(--primary-active);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 15px;
+  overflow: hidden;
+}
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.user-chip-name { font-size: 14px; max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.caret { color: var(--text-3); font-size: 11px; }
+.user-pop {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 10px);
+  width: 232px;
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-3);
+  z-index: var(--z-popover);
+}
+.user-pop-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px 12px;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 6px;
+}
+.user-pop-head b { display: block; font-size: 14px; color: var(--text-1); }
+.user-pop-head small { color: var(--text-3); font-size: var(--fs-caption); }
+.pop-item {
+  all: unset;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px;
+  border-radius: var(--r-sm);
+  color: var(--text-2);
+  font-size: 14px;
+  cursor: pointer;
+}
+.pop-item:hover { background: var(--surface-2); color: var(--text-1); }
+.pop-danger { color: var(--red-strong); }
+.pop-danger:hover { background: var(--red-weak); color: var(--red-strong); }
+.pop-theme {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px;
+  margin-top: 4px;
+  border-top: 1px solid var(--hairline);
+  color: var(--text-3);
+  font-size: var(--fs-caption);
+}
+.theme-switch { display: inline-flex; gap: 2px; padding: 2px; background: var(--surface-3); border-radius: var(--r-sm); }
+.theme-switch button {
+  all: unset;
+  padding: 4px 7px;
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.theme-switch button.active { background: var(--surface); color: var(--text-1); box-shadow: var(--shadow-1); }
+
+/* ============ 内容区 ============ */
+.content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+.page-body { min-height: 100%; }
+
+/* ============ 移动端抽屉 ============ */
+.drawer-backdrop {
   position: fixed;
   z-index: 40;
   inset: 0;
-  background: rgba(23, 32, 54, .38);
+  background: var(--backdrop);
   backdrop-filter: blur(1px);
 }
-
-/* ============== 左栏 Sidebar ============== */
-.sidebar {
+.drawer {
+  position: fixed;
+  z-index: 50;
+  inset: 0 auto 0 0;
+  width: 280px;
+  min-height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--canvas);
-  border-right: 1px solid var(--border);
-  padding: 16px 12px 12px;
-  min-height: 0;
-  overflow: hidden;
-  box-sizing: border-box;
-}
-
-.brand {
-  position: relative;
-  display: flex;
-  align-items: center;
-  height: 96px;
-  min-height: 96px;
-  padding: 0;
-  white-space: nowrap;
-  box-sizing: border-box;
-  overflow: hidden;
-}
-.brand-copy {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  padding-left: 4px;
-  padding-right: 52px;
-  transition: opacity var(--dur-2) var(--ease);
-}
-.brand.collapsed .brand-copy {
-  opacity: 0;
-  pointer-events: none;
-}
-.brand-name {
-  font-size: 14px;
-  font-weight: 700;
-  color: var(--text-1);
-  letter-spacing: -.01em;
-  white-space: normal;
-  line-height: 1.4;
-}
-.brand-sub {
-  font-size: 9px;
-  color: var(--text-4);
-  margin-top: 2px;
-  letter-spacing: 0;
-  white-space: normal;
-  line-height: 1.3;
-}
-.sidebar-toggle {
-  appearance: none;
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-3);
-  position: absolute;
-  right: 0;
-  top: 10px;
-  width: 48px;
-  height: 36px;
-  padding: 0;
-  border-radius: var(--r-md);
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  box-sizing: border-box;
-  transition: color var(--dur-1) var(--ease), background var(--dur-1) var(--ease);
-}
-.brand.collapsed .sidebar-toggle {
-  right: auto;
-  left: 0;
-}
-.sidebar-toggle:hover {
-  color: var(--text-1);
-  background: var(--surface-3);
-}
-.sidebar-toggle:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: 1px;
-}
-
-/* 菜单（加大尺寸） */
-.menu {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  overflow-x: hidden;
-  overflow-y: auto;
-  padding: 6px 0;
-  scrollbar-width: none;
-}
-.menu::-webkit-scrollbar {
-  display: none;
-}
-.menu-item {
-  all: unset;
-  display: flex;
-  align-items: center;
-  gap: 0;
-  padding: 0;
-  border-radius: var(--r-lg);
-  cursor: pointer;
-  color: var(--text-2);
-  font-size: 14.5px;
-  font-weight: 500;
-  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease);
-  position: relative;
-  width: 100%;
-  min-height: 44px;
-  height: 44px;
-  box-sizing: border-box;
-  overflow: hidden;
-}
-.menu-item:hover {
-  background: var(--surface-hover);
-  color: var(--text-1);
-}
-.menu-item.active {
-  background: var(--primary-weak);
-  color: var(--primary-active);
-  font-weight: 600;
-}
-.menu-item.active::before {
-  content: '';
-  position: absolute;
-  left: -12px;
-  top: 9px;
-  bottom: 9px;
-  width: 3.5px;
-  border-radius: 0 3px 3px 0;
-  background: var(--primary);
-}
-.menu-icon {
-  width: 48px;
-  min-width: 48px;
-  max-width: 48px;
-  height: 44px;
-  display: grid;
-  place-items: center;
-  flex: 0 0 48px;
-  color: var(--text-4);
-  transition: color var(--dur-1) var(--ease);
-}
-.menu-item:hover .menu-icon {
-  color: var(--text-2);
-}
-.menu-item.active .menu-icon {
-  color: var(--primary);
-}
-.menu-text {
-  flex: 1;
-  min-width: 0;
-  height: 24px;
-  display: flex;
-  align-items: center;
-  line-height: 24px;
-  white-space: nowrap;
-  overflow: hidden;
-  padding-left: 2px;
-  transition: opacity var(--dur-2) var(--ease);
-}
-.menu-badge {
-  margin-left: auto;
-  margin-right: 10px;
-  flex: 0 0 auto;
-}
-/* 折叠态文字渐隐，图标保持原地不动 */
-.shell:not(.narrow-screen) .sidebar.collapsed .menu-text {
-  opacity: 0;
-  pointer-events: none;
-}
-/* 折叠态徽标锚定在图标右上角，绝对定位，不影响图标流 */
-.shell:not(.narrow-screen) .sidebar.collapsed .menu-badge {
-  position: absolute;
-  top: 4px;
-  left: 30px;
-  right: auto;
-  margin: 0;
-  transform: scale(.82);
-  transform-origin: top left;
-}
-
-.sidebar-spacer {
-  flex: 1;
-  min-height: 8px;
-}
-
-/* 主题模式切换（折叠后整体隐藏，高度平滑收缩避免弹跳） */
-.sidebar-theme {
-  display: flex;
-  height: 40px;
-  width: 100%;
-  overflow: hidden;
-  box-sizing: border-box;
-  transition: height var(--dur-3) var(--ease), opacity var(--dur-2) var(--ease);
-}
-
-.sidebar-theme.collapsed {
-  height: 0;
-  opacity: 0;
-}
-
-.theme-switch-group {
-  display: flex;
-  align-items: stretch;
-  gap: 2px;
-  padding: 3px;
-  background: var(--surface-3);
-  border-radius: var(--r-md);
-  border: 1px solid var(--hairline);
-  box-sizing: border-box;
-  width: 100%;
-}
-
-.theme-btn {
-  all: unset;
-  flex: 1;
-  height: 100%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 0;
-  border-radius: var(--r-sm);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-3);
-  cursor: pointer;
-  box-sizing: border-box;
-  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease), box-shadow var(--dur-1) var(--ease);
-}
-
-.theme-btn:hover:not(.active) {
-  color: var(--text-1);
-}
-
-.theme-btn.active {
+  padding: 20px 14px 16px;
   background: var(--surface);
-  color: var(--text-1);
-  font-weight: 600;
-  box-shadow: var(--shadow-1);
+  border-right: 1px solid var(--border);
+  box-shadow: 12px 0 32px rgba(35, 55, 45, .18);
+  transition: transform var(--dur-3) var(--ease), visibility 0s linear 0s;
 }
-
-.theme-btn:focus-visible {
-  outline: 2px solid var(--primary);
-  outline-offset: -1px;
+.drawer.collapsed {
+  transform: translateX(-100%);
+  visibility: hidden;
+  transition: transform var(--dur-3) var(--ease), visibility 0s linear .24s;
 }
-
-/* 底部用户卡 */
-.sidebar-footer {
-  padding-top: 6px;
-  margin-top: 4px;
-  overflow: hidden;
-  width: 100%;
-}
-
-.user-row {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  padding: 4px 0;
-  min-height: 48px;
-  width: 100%;
-  box-sizing: border-box;
-  overflow: hidden;
-}
-
-.avatar-slot {
-  width: 48px;
-  min-width: 48px;
-  max-width: 48px;
-  height: 44px;
-  flex: 0 0 48px;
-  display: grid;
-  place-items: center;
-  box-sizing: border-box;
-}
-
-.avatar {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--r-md);
-  background: var(--primary-weak);
-  color: var(--primary-active);
-  display: grid;
-  place-items: center;
-  font-weight: 700;
-  font-size: 14px;
-  user-select: none;
-}
-
-.user-meta {
-  flex: 1;
-  min-width: 0;
-  height: 36px;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 0;
-  padding-left: 6px;
-  overflow: hidden;
-  transition: opacity var(--dur-2) var(--ease);
-}
-
-.user-name {
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 16px;
-  color: var(--text-1);
-  max-width: 100%;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.role-pill {
-  display: inline-flex;
-  align-items: center;
-  height: 17px;
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 1;
-  padding: 0 8px;
-  border-radius: var(--r-full);
-}
-
-.role-pill--student {
-  background: var(--primary-weak);
-  color: var(--primary-active);
-}
-
-.role-pill--admin {
-  background: var(--red-weak);
-  color: var(--red-strong);
-}
-
-.sidebar-logout-btn {
+.drawer-brand { display: flex; align-items: center; gap: 10px; padding: 6px 8px 20px; }
+.drawer-brand .brand-name { font-size: 20px; }
+.brand-sub { font-size: 9px; letter-spacing: .14em; color: var(--text-4); margin-top: 2px; }
+.drawer-menu { display: flex; flex-direction: column; gap: 4px; }
+.drawer-item {
   all: unset;
-  width: 32px;
-  height: 32px;
-  border-radius: var(--r-md);
-  display: grid;
-  place-items: center;
-  color: var(--text-3);
-  cursor: pointer;
-  flex: 0 0 32px;
-  margin-left: auto;
-  margin-right: 4px;
-  box-sizing: border-box;
-  transition: background var(--dur-1) var(--ease), color var(--dur-1) var(--ease), transform var(--dur-1) var(--ease);
-}
-
-.sidebar-logout-btn:hover {
-  background: var(--red-weak);
-  color: var(--red-strong);
-  transform: translateX(1px);
-}
-
-.sidebar-logout-btn:focus-visible {
-  outline: 2px solid var(--red);
-  outline-offset: 1px;
-}
-
-/* ============== 右栏 Content ============== */
-.content {
-  min-width: 0;
-  min-height: 0;
   display: flex;
-  flex-direction: column;
-  padding: 0;
-  overflow: hidden;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  color: var(--text-2);
+  font-size: 15px;
+  cursor: pointer;
 }
-.page-body {
-  flex: 1;
-  min-height: 0;
-  overflow: auto;
+.drawer-item:hover { background: var(--surface-2); color: var(--text-1); }
+.drawer-item.active { background: var(--primary-weak); color: var(--primary-active); font-weight: 600; }
+.drawer-spacer { flex: 1; }
+.drawer-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 10px;
+  border-top: 1px solid var(--hairline);
 }
+.drawer-user-meta { flex: 1; min-width: 0; }
+.drawer-user-meta b { display: block; font-size: 14px; color: var(--text-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drawer-user-meta small { color: var(--text-3); font-size: var(--fs-caption); }
 
-/* ============== 窄屏：透明 Topbar + 覆盖式侧栏 ============== */
-@media (max-width: 1024px) {
-  .shell,
-  .shell.sidebar-collapsed {
-    display: block;
-    position: relative;
-    height: 100%;
-  }
-
-  .sidebar {
-    position: fixed;
-    z-index: 50;
-    inset: 0 auto 0 0;
-    width: 272px;
-    min-height: 100%;
-    transform: translateX(0);
-    visibility: visible;
-    pointer-events: auto;
-    box-shadow: 12px 0 32px rgba(23, 32, 54, .18);
-    transition: transform var(--dur-3) var(--ease), visibility 0s linear 0s;
-  }
-  .sidebar.collapsed {
-    transform: translateX(-100%);
-    visibility: hidden;
-    pointer-events: none;
-    box-shadow: none;
-    transition: transform var(--dur-3) var(--ease), visibility 0s linear .24s;
-  }
-
-  .content {
-    display: block;
-    width: 100%;
-    height: 100%;
-    padding: 0;
-    overflow-x: hidden;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-  .mobile-sidebar-open .content {
-    overflow: hidden;
-  }
-  .page-body {
-    min-height: 0;
-    overflow: visible;
-  }
-  /* 触控目标：移动端菜单项加高 */
-  .menu-item {
-    min-height: 46px;
-  }
+@media (max-width: 1100px) {
+  .topnav-inner { padding: 0 22px; gap: 14px; }
+  .nav-link { padding: 10px 12px; }
+  .user-chip-name { display: none; }
 }
 </style>
