@@ -36,6 +36,28 @@ const selectedWindow = ref(null), results = ref([]), availability = ref(null), p
 let alive = true, policyRequest = 0, roomsRequest = 0
 const policy = ref(null), policyLoading = ref(false), policyError = ref(''), inputError = ref(''), bookingError = ref(''), restrictionFailure = ref(null)
 const dateOptions = computed(() => (policy.value?.dates || []).map(value => ({ value, label:value })))
+function pickRoom(id) {
+  if (submitting.value || roomId.value === id) return
+  roomId.value = id
+  return loadAvailability()
+}
+function pickDate(value) {
+  if (submitting.value || date.value === value) return
+  date.value = value
+  return loadAvailability()
+}
+function dateLabel(value) {
+  const today = policy.value?.campus_today
+  const index = (policy.value?.dates || []).indexOf(value)
+  const weekday = new Date(value + 'T00:00:00Z').getUTCDay()
+  const week = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][weekday] || ''
+  const sub = value ? value.slice(5).replace('-', '/') + ' ' + week : ''
+  if (!today) return { top: sub, sub: '' }
+  if (value === today) return { top: '今天', sub }
+  if (index === 1) return { top: '明天', sub }
+  if (index === 2) return { top: '后天', sub }
+  return { top: week, sub }
+}
 const duration = computed(() => { try { return minuteValue(end.value,true) - minuteValue(start.value) } catch { return null } })
 async function loadPolicy(initialize = false) {
   const ticket = ++policyRequest
@@ -299,6 +321,22 @@ onMounted(async () => { if (await loadPolicy(true)) await loadRooms() })
       <h1>座位预约</h1>
       <p class="heading-sub">比较最早、最长或满足学习时长的连续空档，用图或列表选择后确认本次预约</p>
     </header>
+
+    <section v-if="policy" class="booking-top">
+      <div class="room-tabs" role="tablist" aria-label="选择自习室">
+        <button v-for="item in filteredRooms" :key="item.id" type="button" role="tab" :aria-selected="item.id===roomId" :class="{active: item.id===roomId}" :disabled="submitting" @click="pickRoom(item.id)">
+          <b>{{ item.name }}</b>
+          <small>{{ item.location || item.floor || '查看连续空档' }}</small>
+        </button>
+      </div>
+      <div class="date-strip" role="tablist" aria-label="选择预约日期">
+        <button v-for="option in dateOptions" :key="option.value" type="button" role="tab" :aria-selected="option.value===date" :class="{active: option.value===date}" :disabled="submitting" @click="pickDate(option.value)">
+          <b>{{ dateLabel(option.value).top }}</b>
+          <small>{{ dateLabel(option.value).sub }}</small>
+        </button>
+      </div>
+    </section>
+
     <!-- 预约条件、紧凑信息条、座位图 -->
     <div class="split booking-split">
     <!-- 筛选与统计操作区 -->
@@ -307,77 +345,33 @@ onMounted(async () => { if (await loadPolicy(true)) await loadRooms() })
         <div class="card-title-row">
           <h3>预约条件</h3>
         </div>
-        <p v-if="policyLoading" role="status">正在读取服务端预约政策…</p>
-        <SBanner v-if="policyError" type="error" :title="policyError"><SButton size="sm" :disabled="submitting" @click="refreshPolicy">重试预约政策</SButton></SBanner>
-        <p v-if="policy" class="muted">服务端时刻：{{ policy.server_now }}；校园日期：{{ policy.campus_today }}。</p>
-        <SButton size="sm" :loading="policyLoading" :disabled="submitting" @click="refreshPolicy">刷新预约政策</SButton>
+        <p v-if="policyLoading" role="status">正在读取预约政策…</p>
+        <SBanner v-if="policyError" type="error" :title="policyError"><SButton size="sm" :disabled="submitting" @click="refreshPolicy">重试</SButton></SBanner>
         <SBanner v-if="inputError" type="error" :title="inputError" />
         <p v-if="roomsLoading" role="status">正在加载空间…</p>
-        <SBanner v-if="roomsError" type="error" :title="roomsError"><SButton size="sm" :disabled="submitting" @click="loadRooms">重试空间列表</SButton></SBanner>
+        <SBanner v-if="roomsError" type="error" :title="roomsError"><SButton size="sm" :disabled="submitting" @click="loadRooms">重试</SButton></SBanner>
         <div class="filter-group">
           <div class="filter-row"><label>找座方案</label><SSelect :model-value="strategy" :options="strategyOptions" :disabled="submitting" @update:model-value="changeStrategy" /></div>
-          <p class="filter-hint">{{ sortExplanation }}</p>
-          <label v-if="strategy === 'duration'" class="filter-row">所需学习时长（分钟）<SInput :model-value="requiredDraft" inputmode="numeric" :disabled="submitting" placeholder="至少30的整数，如120或241" @update:model-value="changeRequired" /></label>
+          <label v-if="strategy === 'duration'" class="filter-row">所需学习时长（分钟）<SInput :model-value="requiredDraft" inputmode="numeric" :disabled="submitting" placeholder="至少30的整数" @update:model-value="changeRequired" /></label>
           <SButton v-if="strategy === 'duration'" :disabled="submitting || loading" @click="loadAvailability()">应用时长并查询</SButton>
-          <p v-if="strategy === 'duration' && queryDirty && !loading && !mapError" role="status">时长输入尚未应用，请点击“应用时长并查询”；旧空档已撤下。</p>
-          <label class="filter-row">楼栋筛选<SInput v-model="locationFilter.building" :disabled="submitting" placeholder="按楼栋名称筛选" /></label>
-          <label class="filter-row">楼层筛选<SInput v-model="locationFilter.floor" :disabled="submitting" placeholder="如B1" /></label>
-          <label class="filter-row">位置筛选<SInput v-model="locationFilter.location" :disabled="submitting" placeholder="按详细位置筛选" /></label>
-          <p v-if="!roomsLoading && !roomsError && !filteredRooms.length" class="muted">没有符合位置条件的空间，请调整筛选。</p>
-          <div class="filter-row">
-            <label>自习室</label>
-            <SSelect v-model="roomId" :options="filteredRooms" label-key="name" value-key="id" :disabled="submitting" @change="loadAvailability" />
+          <div class="time-range">
+            <label>开始时间<SInput v-model="start" type="time" step="60" :disabled="submitting || !policy" /></label>
+            <span class="time-sep">至</span>
+            <label>结束时间<SInput v-model="end" type="time" step="60" :disabled="submitting || !policy" /></label>
           </div>
-          <div class="filter-row"><label>预约日期（校园时间）</label><SSelect v-model="date" :options="dateOptions" :disabled="submitting || policyLoading || !policy" @change="loadAvailability" /></div>
-          <label v-if="selectedWindow" class="filter-row">本次开始时间<SInput v-model="start" type="time" step="60" required :disabled="submitting || !policy" /></label>
-          <label v-if="selectedWindow" class="filter-row">本次结束时间<SInput v-model="end" required maxlength="5" pattern="([01][0-9]|2[0-3]):[0-5][0-9]|24:00" placeholder="HH:mm，支持24:00" :disabled="submitting || !policy" /></label>
-          <p class="filter-hint">先选择一个连续空档，再填写本次起止。最早和最长方案默认30分钟，满足时长方案采用所需分钟；可在完整空档内主动调整至至少30分钟，无额外时长上限；24:00仅表示所选日结束。</p>
-          <SBanner v-if="shortfall" type="warning" :title="shortfall + '；这是主动缩短后的预约，不代表本次满足原所需时长。'" />
-          <p v-if="duration !== null" class="muted">当前选择{{ duration }}分钟；服务端提交时再次核对日期、开放、资格和冲突。</p>
+          <p v-if="duration !== null" class="time-duration">共 {{ duration }} 分钟</p>
+          <p v-if="strategy === 'duration' && queryDirty && !loading && !mapError" role="status">修改时长后请点击“应用时长并查询”。</p>
+          <details class="more-filters">
+            <summary>更多筛选</summary>
+            <label class="filter-row">楼栋<SInput v-model="locationFilter.building" :disabled="submitting" placeholder="按楼栋名称筛选" /></label>
+            <label class="filter-row">楼层<SInput v-model="locationFilter.floor" :disabled="submitting" placeholder="如B1" /></label>
+            <label class="filter-row">位置<SInput v-model="locationFilter.location" :disabled="submitting" placeholder="按详细位置筛选" /></label>
+            <p v-if="!roomsLoading && !roomsError && !filteredRooms.length" class="muted">没有符合条件的空间。</p>
+          </details>
+          <SBanner v-if="shortfall" type="warning" :title="shortfall" />
         </div>
       </section>
 
-      <section class="card booking-summary" aria-label="座位统计、图例与快捷操作">
-        <div class="booking-counts" aria-label="座位数量统计">
-        <div class="kpi-grid">
-          <div class="kpi">
-            <div class="kpi-num"><SAnimatedNumber v-if="room && !loading && !mapError" :value="seatStats.total" /><span v-else>—</span></div>
-            <div class="kpi-label">座位总数</div>
-          </div>
-          <div class="kpi kpi-ok">
-            <div class="kpi-num"><SAnimatedNumber v-if="room && !loading && !mapError" :value="seatStats.free" /><span v-else>—</span></div>
-            <div class="kpi-label">有连续可约空档</div>
-          </div>
-          <div class="kpi kpi-bad">
-            <div class="kpi-num"><SAnimatedNumber v-if="room && !loading && !mapError" :value="seatStats.occ" /><span v-else>—</span></div>
-            <div class="kpi-label">无满足条件空档</div>
-          </div>
-          <div class="kpi">
-            <div class="kpi-num"><SAnimatedNumber v-if="room && !loading && !mapError" :value="seatStats.down" /><span v-else>—</span></div>
-            <div class="kpi-label">维护/停用</div>
-          </div>
-        </div>
-        </div>
-        <div class="booking-legends" aria-label="座位类型与状态图例">
-<div class="legend">
-          <div class="legend-item"><span class="type-ico"><AppIcon name="desk-book" :size="16" /></span><span>普通桌</span></div>
-          <div class="legend-item"><span class="type-ico"><AppIcon name="desk-power" :size="16" /></span><span>插座桌</span></div>
-          <div class="legend-item"><span class="type-ico"><AppIcon name="desk-pc" :size="16" /></span><span>电脑桌</span></div>
-          <div class="legend-item"><span class="type-ico type-ico--window" /><span>窗户</span></div>
-        </div>
-        <div class="legend legend--status">
-          <div class="legend-item"><span class="dot dot-free" /><span>有连续可约空档</span></div>
-          <div class="legend-item"><span class="dot dot-selected" /><span>已选中</span></div>
-          <div class="legend-item"><span class="dot dot-occupied" /><span>无满足条件空档</span></div>
-          <div class="legend-item"><span class="dot dot-disabled" /><span>维护/停用</span></div>
-        </div>
-        </div>
-<div class="booking-actions">
-          <SButton variant="secondary" block :disabled="submitting" @click="loadAvailability(true)">
-            <AppIcon name="refresh" :size="16" />刷新连续空档
-          </SButton>
-        </div>
-      </section>
     </div>
 
     <!-- 右栏：座位平面图 + 已选条 -->
@@ -385,27 +379,22 @@ onMounted(async () => { if (await loadPolicy(true)) await loadRooms() })
       <section ref="seatCard" class="card seat-card">
         <div class="card-title-row">
           <div class="seat-heading">
-            <h3 style="margin:0">{{ strategyLabel }}空档</h3><div class="row-actions"><SButton size="sm" :variant="presentation === 'map' ? 'primary' : 'secondary'" @click="presentation='map'">平面图</SButton><SButton size="sm" :variant="presentation === 'list' ? 'primary' : 'secondary'" @click="presentation='list'">空档列表</SButton></div>
-            <div class="seat-head-tools">
-              <SSelect v-if="room" v-model="roomId" class="room-select" :options="filteredRooms" label-key="name" value-key="id" aria-label="选择自习室" :disabled="submitting" @change="loadAvailability" />
-              <div v-if="room" class="room-chip">
-                <span class="room-chip__meta">{{ room.building || '楼栋未登记' }} · {{ room.floor || '楼层未登记' }} · {{ room.location || '位置未登记' }} · 当日开放 {{ showWindows(room.opening_windows) }} · 布局{{ room.seat_rows }}×{{ room.seat_cols }} · 实际座位{{ room.seat_count }} · 有效容量{{ room.capacity }} · 空间可约容量{{ room.bookable_capacity }}</span>
-              </div>
+            <h3>选择座位</h3>
+            <div class="row-actions">
+              <SButton size="sm" :variant="presentation === 'map' ? 'primary' : 'secondary'" @click="presentation='map'">平面图</SButton>
+              <SButton size="sm" :variant="presentation === 'list' ? 'primary' : 'secondary'" @click="presentation='list'">空档列表</SButton>
+              <SButton size="sm" :disabled="submitting || !room || loading" @click="loadAvailability(true)">刷新</SButton>
             </div>
+            <span v-if="room" class="room-brief">{{ room.name }} · 开放 {{ showWindows(room.opening_windows) }}</span>
             <SButton :disabled="submitting || !room || loading || mapError || !seats.length" aria-label="打开 3D 选座" @click="open3D">3D</SButton>
           </div>
         </div>
 
-        <p v-if="room" class="resource-summary">位置：{{ room.building || '楼栋未登记' }} · {{ room.floor || '楼层未登记' }} · {{ room.location || '详细位置未登记' }}。实际座位{{ room.seat_count }}；有效容量{{ room.capacity }}（可用状态座位，不扣预约）；启用空间可约容量{{ room.bookable_capacity }}。</p>
-        <p v-if="room" class="resource-summary">{{ date }} 开放时段（Asia/Shanghai）：{{ showWindows(room.opening_windows) }}。下方连续空档已由服务端扣除已有预约、本人其他空间安排和停用限制；有空档不代表全天空闲。</p>
         <SBanner v-if="room?.closed_reasons?.length" type="warning" :title="room.closed_reasons.join('；')" />
         <SBanner v-if="room && !room.enabled" type="warning" :title="`空间已停用：${room.resource_reason || '未提供原因'}`" />
-        <p v-else-if="room?.resource_reason" class="muted">资源原因：{{ room.resource_reason }}</p>
-        <SBanner v-if="mapError && !inputError" type="error" :title="mapErrorText || '座位查询失败，请核对条件并重试'"><SButton size="sm" :disabled="submitting" @click="loadAvailability(true)">重试座位查询</SButton></SBanner>
-        <p v-if="availability" class="resource-summary">计算时刻：{{ availability.computed_at }}（{{ availability.campus_zone }}）。{{ sortExplanation }}仅为查询快照，提交时重新核对。</p>
-        <SBanner v-if="!loading && !mapError && results.length" type="info" :title="`首选结果（${strategyLabel}）：${results[0].seat_no} · 完整空档${results[0].available_start}–${results[0].available_end} · ${results[0].duration_minutes}分钟 · 等待${results[0].wait_minutes}分钟`"><SButton size="sm" :disabled="submitting" @click="chooseWindow(results[0])">选择首个片段</SButton></SBanner>
-        <p v-if="!loading && !mapError && availability && !results.length" role="status">{{ availability.strategy === 'duration' ? '此日期和空间没有满足' + availability.required_minutes + '分钟的连续空档' : '此日期和空间没有连续至少30分钟的可约空档' }}，可调整条件后重新查询，不会自动更换日期或空间。</p>
-        <p v-if="loading" role="status">正在查询真实连续空档…</p>
+        <SBanner v-if="mapError && !inputError" type="error" :title="mapErrorText || '座位查询失败，请核对条件并重试'"><SButton size="sm" :disabled="submitting" @click="loadAvailability(true)">重试</SButton></SBanner>
+        <p v-if="!loading && !mapError && availability && !results.length" role="status">当前条件下没有可约空档，请调整时间或空间。</p>
+        <p v-if="loading" role="status">正在查询可约空档…</p>
         <div v-if="!loading && !mapError && results.length && presentation === 'list'" class="table-wrap"><div class="table-scroll" tabindex="0" aria-label="连续空档列表，可左右滑动"><table class="table availability-table"><thead><tr><th>顺序 / 座位</th><th>位置</th><th>完整空档</th><th>完整连续时长 / 建议</th><th>等待</th><th>选择</th></tr></thead><tbody><tr v-for="(window,index) in results" :key="windowKey(window)" :class="{ 'earliest-row': index === 0, 'chosen-row': windowKey(window) === windowKey(selectedWindow) }"><td>{{ index + 1 }} · {{ window.seat_no }}<STag v-if="index===0">{{ strategyLabel }}首选</STag></td><td>{{ window.row_no }}行{{ window.col_no }}列</td><td>{{ window.available_start }}–{{ window.available_end }}</td><td>{{ window.duration_minutes }}分钟<div>建议{{ window.suggested_start }}–{{ window.suggested_end }}</div></td><td>{{ window.wait_minutes }}分钟</td><td><SButton size="sm" :disabled="submitting" @click="chooseWindow(window)">选择该片段</SButton></td></tr></tbody></table></div></div>
         <div v-show="presentation === 'map'" class="responsive-scroll" tabindex="0" aria-label="座位平面图，可左右滑动">
         <div v-loading="loading" class="seat-grid-wrap" @mouseover="onGridOver" @mouseleave="onGridLeave">
@@ -495,6 +484,33 @@ onMounted(async () => { if (await loadPolicy(true)) await loadRooms() })
 </template>
 
 <style scoped>
+.booking-split{grid-template-columns:340px minmax(0,1fr)}
+.booking-split .filter-group{display:grid;grid-template-columns:1fr;gap:14px}
+.time-range{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:10px;align-items:end}
+.time-range label{display:grid;gap:6px;font-size:var(--fs-caption)}
+.time-sep{padding-bottom:10px;color:var(--text-3);font-size:var(--fs-body-sm)}
+.time-duration{margin:0;color:var(--text-2);font-size:var(--fs-body-sm)}
+.more-filters{border-top:1px solid var(--hairline);padding-top:10px;display:grid;gap:10px}
+.more-filters summary{cursor:pointer;color:var(--text-3);font-size:var(--fs-caption);list-style:none}
+.more-filters summary::-webkit-details-marker{display:none}
+.more-filters summary::before{content:'＋ ';color:var(--primary)}
+.more-filters[open] summary::before{content:'－ '}
+.room-brief{color:var(--text-3);font-size:var(--fs-caption);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+@media(max-width:1100px){.booking-split{grid-template-columns:minmax(0,1fr)}}
+.booking-top{display:flex;flex-direction:column;gap:14px;margin-bottom:20px}
+.room-tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}
+.room-tabs button{all:unset;display:flex;flex-direction:column;gap:4px;padding:15px 18px;border:1px solid var(--border);border-radius:var(--r-lg);background:var(--surface);cursor:pointer;transition:border-color var(--dur-1) var(--ease),background var(--dur-1) var(--ease)}
+.room-tabs button:hover{border-color:var(--border-strong)}
+.room-tabs button.active{border-color:var(--primary);background:var(--primary-faint);box-shadow:inset 0 0 0 1px var(--primary)}
+.room-tabs b{font-family:var(--font-display);font-size:18px;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.room-tabs small{color:var(--text-3);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.date-strip{display:flex;gap:6px;flex-wrap:wrap;padding:6px;background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg)}
+.date-strip button{all:unset;display:flex;flex-direction:column;align-items:center;gap:2px;min-width:92px;padding:9px 14px;border-radius:var(--r-md);cursor:pointer;color:var(--text-2);transition:background var(--dur-1) var(--ease),color var(--dur-1) var(--ease)}
+.date-strip button:hover{background:var(--surface-2)}
+.date-strip button.active{background:var(--primary);color:#fff}
+.date-strip b{font-size:14px;font-weight:600}
+.date-strip small{font-size:11px;opacity:.8}
+@media(max-width:720px){.room-tabs{grid-template-columns:1fr 1fr}.date-strip button{min-width:76px;padding:8px 10px}}
 .shortfall-warning{color:var(--amber-strong)}.window-choices{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.availability-table{min-width:680px}.earliest-row{background:var(--primary-weak)}.chosen-row{outline:1px solid var(--primary)}.window-count{font-size:11px;color:var(--text-2)}
 .resource-summary { font-size:var(--fs-caption); color:var(--text-3); line-height:1.7; overflow-wrap:anywhere; margin-bottom:12px; }
 .seat-card .seat-heading { width: 100%; display: flex; align-items: center; gap: 10px 16px; flex-wrap: wrap; }

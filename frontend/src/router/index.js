@@ -110,6 +110,10 @@ router.beforeEach((to) => {
     auth.logout()
     return { name: 'login' }
   }
+  if (auth.isLoggedIn && auth.user?.must_change_password) {
+    if (to.name !== 'login') return { name: 'login', query: { first: '1' } }
+    return true
+  }
   if (to.meta.guest && auth.isLoggedIn) {
     return auth.roleHomePath
   }

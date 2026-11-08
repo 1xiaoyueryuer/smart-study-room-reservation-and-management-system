@@ -2,10 +2,11 @@
 import { computed,nextTick,onBeforeUnmount,onMounted,ref,watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { listMyRestrictions,getBookingEligibility,getMyRestriction } from '../api/restriction'
-import { validEligibility,eligibilityText } from '../composables/restrictionForm.js'
+import { validEligibility } from '../composables/restrictionForm.js'
 import RestrictionRecord from './RestrictionRecord.vue'
 import SButton from './ui/SButton.vue'
 import SBanner from './ui/SBanner.vue'
+import SEmpty from './ui/SEmpty.vue'
 import {createRecordPager,recordFields} from '../composables/recordPage.js'
 import RecordFilters from '../components/RecordFilters.vue'
 import RecordPageControls from '../components/RecordPageControls.vue'
@@ -21,5 +22,37 @@ async function refresh(){await Promise.all([pager.refresh(),readLinked(),(async(
 watch(linkedId,async()=>{await readLinked();await focusLinked()});onMounted(refresh);onBeforeUnmount(()=>{alive=false;sequence++;pager.dispose()})
 defineExpose({refresh})
 </script>
-<template><section id="restrictions" class="card restrictions-panel"><div class="card-title-row"><h3>本人预约限制与当前资格</h3><SButton size="sm" :loading="loading" @click="refresh">刷新资格和记录</SButton></div><RecordFilters v-model="filters" :fields="fields" :disabled="loading" @apply="pager.apply"/><RecordPageControls :snapshot="snapshot" :query="snapshotQuery" :fields="fields" :disabled="loading" @page="pager.turn"/><SBanner v-if="linkedError" type="error" :title="linkedError"/><section v-if="linkedRecord" :id="`restriction-${linkedRecord.id}`" tabindex="-1"><h4>通知关联限制（独立读取）</h4><RestrictionRecord :record="linkedRecord"/></section><p v-if="loading" role="status">正在读取本人限制及服务端资格…</p><SBanner v-if="eligibilityError" type="error" :title="eligibilityError" /><section v-if="eligibility&&!loading"><p>{{ eligibilityText(eligibility) }}。</p><p>服务端核对：{{ eligibility.server_now }}（{{ eligibility.campus_zone }}）；这是本次读取的资格快照，最终提交由服务端再次核对。</p><p v-if="eligibility.active_restrictions.length">当前有{{ eligibility.active_restrictions.length }}条独立有效限制；解除一条不代表其他记录也已解除。</p><RestrictionRecord v-for="record in eligibility.active_restrictions" :key="record.id" :record="record" /></section><p v-if="!eligibility&&!eligibilityError&&!loading">预约资格尚未读取。</p><SBanner v-if="error" type="error" :title="error"><SButton size="sm" @click="refresh">重试查询</SButton></SBanner><template v-if="loaded"><h4>全部本人限制记录</h4><p v-if="!items.length&&!error&&!loading">本次查询尚无本人限制记录；资格仍以上方服务端核对为准。</p><div v-for="record in items" :key="record.id" :id="record.id===linkedId?`restriction-page-${record.id}`:`restriction-${record.id}`" tabindex="-1" :class="{'linked-restriction':record.id===linkedId}"><RestrictionRecord :record="record" /></div></template><p v-else-if="!loaded&&!loading&&!error">本人限制记录尚未读取。</p></section></template>
-<style scoped>.restrictions-panel,.restrictions-panel>section{display:grid;gap:12px;min-width:0}.linked-restriction{outline:2px solid var(--primary);outline-offset:2px;border-radius:var(--r-md)}</style>
+<template>
+  <section id="restrictions" class="card restrictions-panel">
+    <div class="card-title-row"><h3>本人预约限制与当前资格</h3><SButton size="sm" :loading="loading" @click="refresh">刷新</SButton></div>
+    <RecordFilters v-model="filters" :fields="fields" :disabled="loading" @apply="pager.apply"/>
+    <SBanner v-if="linkedError" type="error" :title="linkedError"/>
+    <section v-if="linkedRecord" :id="`restriction-${linkedRecord.id}`" tabindex="-1" class="record-box">
+      <h4>通知关联限制（独立读取）</h4>
+      <RestrictionRecord :record="linkedRecord"/>
+    </section>
+    <p v-if="loading" role="status">正在读取本人限制及服务端资格…</p>
+    <SBanner v-if="eligibilityError" type="error" :title="eligibilityError"/>
+    <section v-if="eligibility&&!loading&&eligibility.active_restrictions.length" class="record-box eligibility-box">
+      <p>当前有 {{ eligibility.active_restrictions.length }} 条独立有效限制；解除一条不代表其他记录也已解除。</p>
+      <RestrictionRecord v-for="record in eligibility.active_restrictions" :key="record.id" :record="record"/>
+    </section>
+    <p v-if="!eligibility&&!eligibilityError&&!loading">预约资格尚未读取。</p>
+    <SBanner v-if="error" type="error" :title="error"><SButton size="sm" @click="refresh">重试查询</SButton></SBanner>
+    <h4 v-if="loaded">全部本人限制记录</h4>
+    <div v-if="loaded" class="record-box">
+      <div v-for="record in items" :key="record.id" :id="record.id===linkedId?`restriction-page-${record.id}`:`restriction-${record.id}`" tabindex="-1" :class="{'linked-restriction':record.id===linkedId}">
+        <RestrictionRecord :record="record"/>
+      </div>
+      <SEmpty v-if="!items.length&&!error&&!loading" description="本次查询尚无本人限制记录" />
+    </div>
+    <p v-else-if="!loading&&!error">本人限制记录尚未读取。</p>
+    <RecordPageControls :snapshot="snapshot" :query="snapshotQuery" :fields="fields" :disabled="loading" @page="pager.turn"/>
+  </section>
+</template>
+<style scoped>
+.restrictions-panel{display:grid;gap:16px;min-width:0}
+.record-box{border:1px solid var(--border);border-radius:var(--r-lg);padding:16px;display:grid;gap:12px;min-width:0;min-height:120px}
+.eligibility-box{background:var(--surface-2)}
+.linked-restriction{outline:2px solid var(--primary);outline-offset:2px;border-radius:var(--r-md)}
+</style>

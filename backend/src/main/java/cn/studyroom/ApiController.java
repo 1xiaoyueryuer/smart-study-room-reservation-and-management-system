@@ -32,6 +32,7 @@ public class ApiController {
     @PostMapping("/auth/logout") Object logout(HttpServletRequest req) { auth.logout((String)req.getAttribute("token"));return ok(Map.of("logged_out",true)); }
     @GetMapping("/auth/profile") Object profile(HttpServletRequest req) { return ok(auth.profile(uid(req))); }
     @PatchMapping("/auth/profile") Object updateProfile(HttpServletRequest req,@RequestBody Map<String,Object> body) { return ok(users.updateContacts(uid(req),body)); }
+    @PatchMapping("/auth/password") Object changePassword(HttpServletRequest req,@Valid @RequestBody Requests.ChangePassword body) { return ok(users.changePassword(uid(req),body)); }
     @GetMapping("/booking-policy") Object bookingPolicy() { return ok(policy.view()); }
     @GetMapping("/rooms") Object rooms() { return ok(resources.rooms()); }
     @GetMapping("/rooms/{id}/seats") Object seats(@PathVariable long id,@RequestParam String date,@RequestParam String start,@RequestParam String end) { return ok(resources.seatMap(id,date,start,end)); }

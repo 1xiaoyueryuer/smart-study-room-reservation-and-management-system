@@ -13,7 +13,6 @@ import { logout as logoutApi } from '../api/auth'
 import AppIcon from '../components/AppIcon.vue'
 import MobileTopbar from '../components/MobileTopbar.vue'
 import SBadge from '../components/ui/SBadge.vue'
-import SButton from '../components/ui/SButton.vue'
 
 const router = useRouter()
 const route = useRoute()
@@ -318,10 +317,6 @@ onUnmounted(() => {
 
     <section ref="contentRef" class="content" @scroll="onContentScroll">
       <main class="page-body">
-        <section v-if="auth.isOrdinary && notifStore.error" class="notification-retry" role="status">
-          <p>{{ notifStore.hasValue ? '未读数保留上次成功值' : '未读数尚未成功读取' }}：{{ notifStore.error }}</p>
-          <SButton size="sm" :disabled="notifStore.loading" @click="refreshUnread">重试未读数量</SButton>
-        </section>
         <router-view v-slot="{ Component }">
           <Transition :css="false" mode="out-in" @enter="pageMotion.enter" @leave="pageMotion.leave" @enter-cancelled="pageMotion.cancel" @leave-cancelled="pageMotion.cancel" @after-enter="setupMobileTitleAnimation">
             <div :key="route.path" class="route-surface"><component :is="Component" /></div>
@@ -339,8 +334,6 @@ onUnmounted(() => {
   flex-direction: column;
   background: var(--canvas);
 }
-.notification-retry { max-width: 1560px; width: 100%; margin: 12px auto 0; padding: 8px 40px; font-size: var(--fs-caption); overflow-wrap: anywhere; }
-.notification-retry p { margin-bottom: 6px; }
 
 /* ============ 桌面顶部导航 ============ */
 .topnav {

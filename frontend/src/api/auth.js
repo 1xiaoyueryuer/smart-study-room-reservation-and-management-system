@@ -21,3 +21,7 @@ export function fetchProfile() {
 export function updateProfile(data) {
   return request.patch('/auth/profile', data)
 }
+
+export function changePassword(data) {
+  return request.patch('/auth/password', data)
+}

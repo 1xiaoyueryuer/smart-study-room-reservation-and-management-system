@@ -12,10 +12,12 @@ import SDialog from '../ui/SDialog.vue'
 import STag from '../ui/STag.vue'
 import SEmpty from '../ui/SEmpty.vue'
 import SBanner from '../ui/SBanner.vue'
+import { usePagination } from '../../composables/usePagination'
 
 const emit = defineEmits(['summary'])
 const auth = useAuthStore()
 const users = ref([])
+const { page: userPage, pages: userPages, pageItems: userPageItems } = usePagination(users, null, 10)
 let loadSequence = 0
 const loading = ref(false)
 const error = ref('')
@@ -110,27 +112,26 @@ defineExpose({ loadUsers, openCreate })
     <p v-if="loading" role="status" class="muted">正在加载校园账号…</p>
     <SBanner v-if="error" type="error" :title="error"><SButton size="sm" :disabled="loading" @click="loadUsers">重试</SButton></SBanner>
     <div v-if="!loading && !error" class="table-wrap"><div class="table-scroll" tabindex="0" aria-label="校园用户列表，可左右滑动"><table class="table account-table">
-      <thead><tr><th>用户名 / 姓名</th><th>校园编号</th><th>角色</th><th>联系方式</th><th>状态</th><th>操作</th></tr></thead>
-      <tbody><tr v-for="user in users" :key="user.id">
-        <td><b>{{ user.username }}</b><div>{{ user.real_name }}</div></td><td>{{ user.campus_id || '未登记' }}</td>
+      <thead><tr><th>学号</th><th>姓名</th><th>角色</th><th>联系方式</th><th>状态</th><th>操作</th></tr></thead>
+      <tbody><tr v-for="user in userPageItems" :key="user.id">
+        <td><b>{{ user.campus_id || '未登记' }}</b></td><td>{{ user.real_name }}</td>
         <td><STag :type="user.role === 'admin' ? 'danger' : 'primary'">{{ ROLE_LABELS[user.role] || '未知角色' }}</STag></td>
         <td><div>{{ user.phone || '—' }}</div><div>{{ user.email || '—' }}</div></td>
         <td><STag :type="user.status === 'active' ? 'success' : 'neutral'">{{ user.status === 'active' ? '正常' : '禁用' }}</STag></td>
         <td><div class="row-actions"><SButton size="sm" @click="openEdit(user)">编辑账号</SButton><SButton v-if="String(user.id) !== String(auth.user?.id)" size="sm" :loading="statusBusy === user.id" :disabled="statusBusy !== null" @click="toggleStatus(user)">{{ user.status === 'active' ? '禁用账号' : '启用账号' }}</SButton><span v-else class="muted">当前账号</span></div></td>
       </tr></tbody>
-    </table><SEmpty v-if="!users.length" description="暂无校园账号，可创建学生或教职工账号" /></div></div>
+    </table><SEmpty v-if="!users.length" description="暂无校园账号，可创建学生或教职工账号" /></div></div><div class="list-footer"><span>共 {{ users.length }} 条</span><span class="page-info">第 {{ userPage }} / {{ userPages }} 页</span><div class="page-actions"><SButton size="sm" :disabled="userPage<=1" @click="userPage--">上一页</SButton><SButton size="sm" :disabled="userPage>=userPages" @click="userPage++">下一页</SButton></div></div>
     <UserImport @imported="loadUsers" @refresh="loadUsers" />
     <SDialog v-model="dialog" :title="editing === null ? '创建校园账号' : '编辑校园账号'" width="660px" :close-on-click-modal="!saving" :show-close="!saving">
       <form id="account-form" class="account-form" @submit.prevent="saveUser">
         <p v-if="formError" role="alert" class="form-error">{{ formError }}</p>
-        <label>用户名<SInput v-model="form.username" required minlength="3" maxlength="50" autocomplete="off" /></label>
         <label>姓名<SInput v-model="form.real_name" required maxlength="50" /></label>
-        <label>校园编号<SInput v-model="form.campus_id" :required="editing === null" maxlength="20" placeholder="遗留未知编号可暂留空" /></label>
+        <label>学号<SInput v-model="form.campus_id" :required="editing === null" maxlength="9" placeholder="如 202600001" /></label><p class="muted full-width">9位学号：4位入学年份 + 1位身份（本科0、研究生1、博士2、教职工3）+ 4位序号。</p>
         <label>角色<SSelect v-model="form.role" :options="roles" :disabled="self" /></label>
         <label>状态<SSelect v-model="form.status" :options="statuses" :disabled="self" /></label>
         <label>联系电话<SInput v-model="form.phone" maxlength="30" type="tel" /></label>
         <label>邮箱<SInput v-model="form.email" maxlength="254" type="email" /></label>
-        <label>{{ editing === null ? '初始口令' : '新口令（留空不修改）' }}<SInput v-model="form.password" type="password" show-password :required="editing === null" minlength="6" maxlength="64" autocomplete="new-password" /></label>
+        <label>{{ editing === null ? '初始密码' : '新密码（留空不修改）' }}<SInput v-model="form.password" type="password" show-password :required="editing === null" minlength="6" maxlength="64" autocomplete="new-password" /></label>
         <label class="full-width">操作理由<SInput v-model="form.reason" type="textarea" required maxlength="1000" /></label>
         <p v-if="self" class="muted full-width">当前管理员不能自行禁用或降级。</p>
       </form>
@@ -139,8 +140,9 @@ defineExpose({ loadUsers, openCreate })
   </section>
 </template>
 
-<style scoped>
-.account-table { min-width: 760px; }
+<style scoped>.list-footer{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;margin-top:12px;color:var(--text-3);font-size:var(--fs-caption)}.page-info{text-align:center;white-space:nowrap}.page-actions{display:flex;gap:10px;justify-content:flex-end}
+
+.account-table { min-width: 900px; }
 .account-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .account-form label { display: grid; gap: 7px; font-size: var(--fs-caption); color: var(--text-2); }
 .full-width, .form-error { grid-column: 1 / -1; }

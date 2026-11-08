@@ -73,6 +73,18 @@ public class UserService {
         audit.record(uid,"user.contacts.update","user",Long.toString(uid),"本人更新联系方式",snapshot(before),snapshot(after));
         return after;
     }
+    public Map<String,Object> changePassword(long uid,Requests.ChangePassword body) {
+        db.lockBookings();
+        var current=db.one("SELECT password_hash,status FROM users WHERE id=?",uid);
+        Api.require("active".equals(current.get("status")),403,"账号当前不可修改口令");
+        Api.require(passwords.matches(body.currentPassword(),Store.text(current,"password_hash")),400,"当前口令不正确");
+        validateInitialPassword(body.newPassword());
+        Api.require(!body.currentPassword().equals(body.newPassword()),400,"新口令不能与当前口令相同");
+        db.update("UPDATE users SET password_hash=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",passwords.encode(body.newPassword()),uid);
+        var after=auth.profile(uid);
+        audit.record(uid,"user.password.change","user",Long.toString(uid),"本人修改登录口令",Map.of(),Map.of("changed",true));
+        return after;
+    }
     @Transactional(propagation=org.springframework.transaction.annotation.Propagation.SUPPORTS)
     public void validateInitialPassword(String password) {
         Api.require(password!=null&&!password.isBlank()&&password.length()>=6&&password.length()<=64&&password.getBytes(StandardCharsets.UTF_8).length<=72,400,"口令须为6至64个字符且UTF-8长度不超过72字节");

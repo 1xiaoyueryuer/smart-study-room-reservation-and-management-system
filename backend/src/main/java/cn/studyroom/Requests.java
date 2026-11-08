@@ -52,6 +52,8 @@ public final class Requests {
             @Size(max=30) String phone,@Email @Size(max=254) String email,
             @Size(max=64) String password,@NotBlank @Size(max=1000) String reason) {}
     public record Contacts(@Size(max=30) String phone,@Email @Size(max=254) String email) {}
+    public record ChangePassword(@JsonProperty("current_password") @NotBlank String currentPassword,
+                                 @JsonProperty("new_password") @NotBlank String newPassword) {}
     public record Reservation(@JsonProperty("seat_id") @Positive long seatId,@NotBlank String date,@JsonProperty("start_time") @NotBlank String startTime,@JsonProperty("end_time") @NotBlank String endTime) {}
     public record Allocation(@JsonProperty("room_id") @Positive long roomId,@NotBlank String date,@JsonProperty("start_time") @NotBlank String startTime,@JsonProperty("end_time") @NotBlank String endTime,
                              @Pattern(regexp="|quiet|regular|discussion|computer") String zone,@JsonProperty("has_power") Boolean hasPower,@JsonProperty("near_window") Boolean nearWindow,

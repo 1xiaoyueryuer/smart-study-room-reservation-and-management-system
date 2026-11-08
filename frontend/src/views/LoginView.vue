@@ -1,8 +1,8 @@
 <script setup>
-import { reactive, ref } from 'vue'
+import { reactive, ref, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { message } from '../components/ui/feedback'
-import { login } from '../api/auth'
+import { login, updateProfile, changePassword } from '../api/auth'
 import { useAuthStore } from '../stores/auth'
 import AppIcon from '../components/AppIcon.vue'
 import SButton from '../components/ui/SButton.vue'
@@ -15,13 +15,18 @@ const auth = useAuthStore()
 
 const loading = ref(false)
 const loginError = ref('')
+const setupVisible = ref(false)
+const setupSaving = ref(false)
+const setupError = ref('')
+const showSetup = computed(() => setupVisible.value || !!auth.user?.must_change_password)
 
-const loginForm = reactive({ username: 'stu01', password: '123456' })
+const loginForm = reactive({ username: '202600001', password: '123456' })
+const setupForm = reactive({ current_password: '', phone: '', email: '', new_password: '', confirm_password: '' })
 
 async function onLogin() {
   if (loading.value) return
   if (!loginForm.username || !loginForm.password) {
-    message.warning('请输入用户名与口令')
+    message.warning('请输入学号与密码')
     return
   }
   loginError.value = ''
@@ -29,6 +34,15 @@ async function onLogin() {
   try {
     const resp = await login(loginForm)
     auth.setLogin(resp.data)
+    if (resp.data.user?.must_change_password) {
+      setupForm.current_password = loginForm.password
+      setupForm.phone = resp.data.user.phone || ''
+      setupForm.email = resp.data.user.email || ''
+      setupVisible.value = true
+      setupError.value = ''
+      message.warning('初次使用请先设置联系电话并修改登录密码')
+      return
+    }
     message.success('登录成功')
     router.push(route.query.redirect || '/')
   } catch (error) {
@@ -38,11 +52,44 @@ async function onLogin() {
   }
 }
 
+function cancelSetup() {
+  auth.logout()
+  setupVisible.value = false
+  setupError.value = ''
+  router.replace('/login')
+}
+
+async function onFirstSetup() {  if (setupSaving.value) return
+  setupError.value = ''
+  const current = setupForm.current_password
+  const phone = setupForm.phone.trim()
+  const newPassword = setupForm.new_password
+  const confirm = setupForm.confirm_password
+  if (!current) { setupError.value = '请输入当前密码'; return }
+  if (!phone) { setupError.value = '联系电话必填'; return }
+  if (phone.length > 30) { setupError.value = '联系电话不超过30个字符'; return }
+  if (newPassword.length < 6 || newPassword.length > 64) { setupError.value = '新密码须为6至64个字符'; return }
+  if (newPassword !== confirm) { setupError.value = '两次输入的新密码不一致'; return }
+  if (newPassword === current) { setupError.value = '新密码不能与当前密码相同'; return }
+  setupSaving.value = true
+  try {
+    await updateProfile({ phone, email: setupForm.email.trim() })
+    const resp = await changePassword({ current_password: current, new_password: newPassword })
+    auth.setUser({ ...resp.data, must_change_password: false })
+    setupVisible.value = false
+    message.success('设置完成，正在进入系统')
+    router.push(route.query.redirect || auth.roleHomePath)
+  } catch (error) {
+    setupError.value = error.message
+  } finally {
+    setupSaving.value = false
+  }
+}
+
 const features = [
-  { icon: 'booking', title: '可视化选座', desc: '平面图实时选座，冲突自动检测' },
-  { icon: 'booking', title: '分钟预约', desc: '校园日期与开放窗口统一复核' },
-  { icon: 'notification', title: '站内消息', desc: '查询预约结果与历史通知' },
-  { icon: 'warning', title: '本人违规', desc: '独立记录未使用事件，保留处理依据' }
+  { icon: 'booking', title: '可视化选座' },
+  { icon: 'booking', title: '分钟预约' },
+  { icon: 'warning', title: '本人记录' }
 ]
 </script>
 
@@ -58,17 +105,14 @@ const features = [
         </div>
       </div>
 
-      <div class="hero-body"><div class="study-art" aria-hidden="true"><span/><span/><span/></div>
-        <h1 class="hero-title">让每一次自习<br />都有理想的位置</h1>
-        <p class="hero-desc">分钟预约 · 可视化选座 · 站内消息 —— 面向校园的一站式自习室数字化系统。</p>
+      <div class="hero-body">
+        <h1 class="hero-title">让每一次自习都有理想的位置</h1>
+        <p class="hero-desc">分钟预约 · 可视化选座 · 面向校园的自习室数字化系统</p>
 
         <ul class="hero-features">
           <li v-for="f in features" :key="f.title">
             <span class="feature-icon"><AppIcon :name="f.icon" :size="18" /></span>
-            <div>
-              <div class="feature-title">{{ f.title }}</div>
-              <div class="feature-desc">{{ f.desc }}</div>
-            </div>
+            <span class="feature-title">{{ f.title }}</span>
           </li>
         </ul>
       </div>
@@ -78,21 +122,21 @@ const features = [
 
     <!-- ============ 右侧：校园账号登录 ============ -->
     <main class="auth-panel">
-      <div class="auth-card"><header class="auth-heading"><h2>欢迎回来</h2><p>为今天的学习，留一个好位置。</p></header>
+      <div v-if="!showSetup" class="auth-card"><header class="auth-heading"><h2>欢迎回来</h2><p>为今天的学习，留一个好位置。</p></header>
         <form class="auth-form" @submit.prevent="onLogin">
           <p v-if="loginError" role="alert" class="form-label">{{ loginError }}</p>
           <div class="form-field">
-            <label class="form-label" for="login-username">用户名</label>
-            <SInput id="login-username" v-model="loginForm.username" size="lg" placeholder="用户名" autocomplete="username" />
+            <label class="form-label" for="login-username">学号 <span class="req">*</span></label>
+            <SInput id="login-username" v-model="loginForm.username" size="lg" placeholder="请输入学号" autocomplete="username" />
           </div>
           <div class="form-field">
-            <label class="form-label" for="login-password">口令</label>
+            <label class="form-label" for="login-password">密码 <span class="req">*</span></label>
             <SInput
               id="login-password"
               v-model="loginForm.password"
               type="password"
               size="lg"
-              placeholder="口令"
+              placeholder="密码"
               show-password
               autocomplete="current-password"
             />
@@ -104,8 +148,39 @@ const features = [
 
         <p class="auth-tip">校园账号由管理员维护，暂不开放自助注册。</p>
         <p class="auth-tip">
-          演示账号：stu01 / 123456 · 管理员：admin / admin123
+          演示账号：学号 202600001 / 123456 · 管理员：admin / admin123
         </p>
+      </div>
+
+      <div v-else class="auth-card">
+        <header class="auth-heading"><h2>首次使用设置</h2><p>请设置联系电话并修改初始登录密码，完成后才能进入系统。</p></header>
+        <form class="auth-form" @submit.prevent="onFirstSetup">
+          <p v-if="setupError" role="alert" class="form-label">{{ setupError }}</p>
+          <div class="form-field">
+            <label class="form-label" for="setup-current">当前密码 <span class="req">*</span></label>
+            <SInput id="setup-current" v-model="setupForm.current_password" type="password" size="lg" placeholder="当前登录密码" show-password autocomplete="current-password" />
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="setup-phone">联系电话 <span class="req">*</span></label>
+            <SInput id="setup-phone" v-model="setupForm.phone" type="tel" size="lg" maxlength="30" placeholder="请输入联系电话" autocomplete="tel" />
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="setup-new">新密码 <span class="req">*</span></label>
+            <SInput id="setup-new" v-model="setupForm.new_password" type="password" size="lg" placeholder="6至64个字符" show-password autocomplete="new-password" />
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="setup-confirm">确认新密码 <span class="req">*</span></label>
+            <SInput id="setup-confirm" v-model="setupForm.confirm_password" type="password" size="lg" placeholder="再次输入新密码" show-password autocomplete="new-password" />
+          </div>
+          <div class="form-field">
+            <label class="form-label" for="setup-email">邮箱（选填）</label>
+            <SInput id="setup-email" v-model="setupForm.email" type="email" size="lg" maxlength="254" placeholder="选填" autocomplete="email" />
+          </div>
+          <SButton type="submit" variant="primary" size="lg" block :loading="setupSaving">
+            完成设置并进入系统
+          </SButton>
+        </form>
+        <p class="auth-tip"><button type="button" class="setup-logout" @click="cancelSetup">退出登录</button></p>
       </div>
     </main>
   </div>
@@ -115,7 +190,7 @@ const features = [
 .auth-shell {
   height: 100%;
   display: grid;
-  grid-template-columns: minmax(420px, 46%) 1fr;
+  grid-template-columns: minmax(0, 1.12fr) minmax(420px, .88fr);
   background: var(--canvas);
 }
 
@@ -125,12 +200,11 @@ const features = [
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 44px 52px 28px;
+  padding: 56px 60px 40px;
   background:
-    radial-gradient(circle at 88% 6%, rgba(59, 102, 218, .07), transparent 42%),
-    radial-gradient(circle at 4% 92%, rgba(31, 145, 96, .05), transparent 40%),
-    var(--surface);
-  border-right: 1px solid var(--border);
+    radial-gradient(circle at 88% 6%, rgba(47, 93, 70, .08), transparent 42%),
+    radial-gradient(circle at 4% 92%, rgba(47, 93, 70, .05), transparent 40%),
+    var(--canvas);
   overflow: hidden;
 }
 
@@ -183,34 +257,41 @@ const features = [
 }
 
 .hero-title {
-  font-size: clamp(28px, 3.2vw, 38px);
-  line-height: 1.28;
-  font-weight: 700;
-  letter-spacing: -.02em;
+  font-family: var(--font-display);
+  font-size: clamp(30px, 3vw, 52px);
+  line-height: 1.22;
+  font-weight: 600;
+  letter-spacing: .02em;
   color: var(--text-1);
+  white-space: nowrap;
 }
 
 .hero-desc {
-  margin-top: 14px;
-  font-size: var(--fs-body);
+  margin-top: 18px;
+  font-size: clamp(13px, 1.15vw, 15px);
   line-height: 1.75;
   color: var(--text-3);
-  max-width: 40ch;
+  white-space: nowrap;
 }
 
 .hero-features {
   list-style: none;
-  margin: 34px 0 0;
+  margin: 42px 0 0;
   padding: 0;
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px 20px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
 }
 
 .hero-features li {
   display: flex;
-  gap: 11px;
-  align-items: flex-start;
+  gap: 10px;
+  align-items: center;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-1);
 }
 
 .feature-icon {
@@ -225,16 +306,10 @@ const features = [
 }
 
 .feature-title {
-  font-size: var(--fs-body-sm);
+  font-size: 15px;
   font-weight: 600;
   color: var(--text-1);
-}
-
-.feature-desc {
-  font-size: var(--fs-caption);
-  color: var(--text-3);
-  margin-top: 2px;
-  line-height: 1.5;
+  white-space: nowrap;
 }
 
 .hero-foot {
@@ -248,13 +323,25 @@ const features = [
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 32px 24px;
+  padding: 40px 48px;
   overflow-y: auto;
 }
 
 .auth-card {
-  width: 400px;
+  width: 460px;
   max-width: 100%;
+  padding: 36px 38px 28px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-2xl);
+  box-shadow: var(--shadow-3);
+}
+
+.auth-heading h2 {
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: 600;
+  color: var(--text-1);
 }
 
 .auth-form {
@@ -276,9 +363,18 @@ const features = [
   color: var(--text-2);
   letter-spacing: .02em;
 }
+.req { color: var(--red); margin-left: 2px; }
+.setup-logout {
+  all: unset;
+  color: var(--primary);
+  font-size: var(--fs-caption);
+  cursor: pointer;
+}
+.setup-logout:hover { text-decoration: underline; }
 
 .auth-form .s-btn {
-  margin-top: 6px;
+  margin-top: 10px;
+  height: 50px;
 }
 
 .auth-tip {
