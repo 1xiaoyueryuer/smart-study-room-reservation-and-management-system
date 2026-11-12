@@ -55,11 +55,24 @@ class MigrationIntegrationTest {
     }
     @Test void emptyInstallationAndRepeatedStartup() throws Exception {
         var f=flyway(); DatabaseMigrations.migrate(f,false); DatabaseMigrations.migrate(f,false);
-        assertEquals(26,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(29,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".booking_mutex WHERE id=1"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".audit_events"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"));
         assertThrows(FlywayException.class,f::clean);
+    }
+    @Test void demoIdentityMigrationChangesOnlyExactBuiltInAccountsAndPreservesReferences() throws Exception {
+        Flyway.configure().dataSource(source).defaultSchema(schema).schemas(schema).cleanDisabled(true).target("26").locations("classpath:db/migration").load().migrate();
+        execute("INSERT INTO "+schema+".users(id,username,password_hash,real_name,campus_id,role,status) VALUES(2,'stu01','hash-student','模拟学生1','DEMO0001','student','active'),(3,'stu02','hash-custom','自定义账号','DEMO0002','student','active'),(4,'admin','hash-admin','管理员',NULL,'admin','active'); INSERT INTO "+schema+".rooms(id,name,seat_rows,seat_cols) VALUES(1,'identity migration room',1,1); INSERT INTO "+schema+".seats(id,room_id,seat_no,row_no,col_no) VALUES(1,1,'01',1,1); INSERT INTO "+schema+".reservations(id,user_id,seat_id,res_date,start_time,end_time) VALUES(1,2,1,'2026-10-30','10:00','11:00')");
+        DatabaseMigrations.migrate(flyway(),false);
+        assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE id=2 AND username='202600001' AND campus_id='202600001' AND password_hash='hash-student' AND role='student'"));
+        assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE id=3 AND username='stu02' AND campus_id='DEMO0002' AND real_name='自定义账号'"));
+        assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE id=4 AND username='202630001' AND campus_id='202630001' AND password_hash='hash-admin' AND role='admin'"));
+        assertEquals(1,count("SELECT count(*) FROM "+schema+".reservations WHERE id=1 AND user_id=2 AND seat_id=1"));
+        assertEquals(4,count("SELECT count(*) FROM "+schema+".audit_events WHERE action='user.identity.normalize'"));
+        assertEquals(1,count("SELECT count(*) FROM "+schema+".audit_events WHERE object_id='2' AND before_values->>'username'='stu01' AND after_values->>'username'='202600001'"));
+        assertEquals(29,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(1,count("SELECT count(*) FROM "+schema+".audit_events WHERE object_id='4' AND reason='恢复本项目确认的内置演示管理员9位校园编号' AND before_values->>'campus_id' IS NULL AND after_values->>'campus_id'='202630001'"));
     }
     @Test void legacyRequiresExplicitAdoptionAndPreservesData() throws Exception {
         legacy(); execute("INSERT INTO "+schema+".users(username,password_hash,student_no) VALUES('known-campus','hash','OLD-01')"); var f=flyway();
@@ -73,7 +86,7 @@ class MigrationIntegrationTest {
         assertEquals(1,count("SELECT count(*) FROM "+schema+".seats WHERE version=1 AND resource_reason IS NULL"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".reservations WHERE user_id=1 AND seat_id=1 AND status='pending'"));
         assertEquals(0,count("SELECT count(*) FROM "+schema+".seat_codes"),"历史座位不能被伪造成已经配置真实贴码");
-        assertEquals(26,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(29,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".users WHERE username='known-campus' AND campus_id='OLD-01' AND student_no='OLD-01'"));
         assertEquals(1,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE type='BASELINE'"));
     }
@@ -281,7 +294,7 @@ class MigrationIntegrationTest {
         var error=assertThrows(FlywayException.class,()->DatabaseMigrations.migrate(broken,false));
         assertTrue(error.getMessage().contains("V9999__broken.sql"));
         assertEquals(0,count("SELECT count(*) FROM information_schema.tables WHERE table_schema='"+schema+"' AND table_name='rollback_probe'"));
-        assertEquals(26,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
+        assertEquals(29,count("SELECT count(*) FROM "+schema+".flyway_schema_history WHERE success"));
     }
 
     @Test void reviewModerationUpgradePreservesOldReceiptAndBindsFunctionsToTheirOwnSchema()throws Exception{

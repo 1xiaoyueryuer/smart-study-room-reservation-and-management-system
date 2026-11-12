@@ -1,6 +1,6 @@
 """仅对studyroom_java_test专用服务验证API；模拟预约最终取消，投诉保留测试历史。
 STUDYROOM_SMOKE_ADMIN/OWNER/OTHER_USERNAME及对应_PASSWORD可覆盖六项登录配置，
-STUDYROOM_SMOKE_ROOM_ID指定已准备空间；默认兼容admin/stu01/stu02种子账号。
+STUDYROOM_SMOKE_ROOM_ID指定已准备空间；默认使用9位模拟校园编号种子账号。
 认证及业务调用前硬核专用库；不自动启用SeedData、不修改开放配置或解除限制。
 """
 import json
@@ -44,7 +44,7 @@ def page_items(response):
 def smoke_settings():
     accounts = {}
     for role, default_name, default_password in (
-            ('admin', 'admin', 'admin123'), ('owner', 'stu01', '123456'), ('other', 'stu02', '123456')):
+            ('admin', '202630001', 'admin123'), ('owner', '202600001', '123456'), ('other', '202600002', '123456')):
         prefix = 'STUDYROOM_SMOKE_' + role.upper()
         username, password = os.environ.get(prefix + '_USERNAME', default_name), os.environ.get(prefix + '_PASSWORD', default_password)
         if not username.strip() or not password:
@@ -226,19 +226,20 @@ def main():
     status, complaints = call('GET','/complaints/mine',token=student)
     complaint_items=page_items(complaints)
     check('刷新仍能查到本人投诉',status == 200 and any(item['id'] == complaint_id for item in complaint_items))
-    service_req = {'type':'service','description':'API工程模拟：无预约的一般服务投诉','attachment_ids':[],'operation_id':str(uuid.uuid4())}
+    service_req = {'type':'service','service_kind':'other_service','service_topic':'环境卫生','room_id':room,'description':'API工程模拟：关联空间的一般服务投诉','attachment_ids':[],'operation_id':str(uuid.uuid4())}
     status, service = call('POST','/complaints',service_req,student)
-    check('一般服务投诉可无预约或图片',status == 200 and service['data']['reservation_id'] is None and service['data']['attachment_count'] == 0)
+    check('一般服务投诉关联空间且不关联预约',status == 200 and service['data']['reservation_id'] is None and service['data']['room_id'] == room and service['data']['attachment_count'] == 0)
     service_target = service['data']['service_target']
-    check('一般服务首次反馈目标从提交起算24小时',service_target['kind'] == 'first_feedback' and service_target['basis'] == 'service_24h' and service_target['status'] == 'running' and datetime.fromisoformat(service_target['due_at']) - datetime.fromisoformat(service['data']['submitted_at']) == timedelta(hours=24))
+    check('一般服务受理目标按空间开放时间累计24小时',service_target['kind'] == 'acceptance' and service_target['basis'] == 'service_open_hours_24' and service_target['status'] == 'running' and service_target['due_at'] is not None)
     service_id = service['data']['id']
     check('普通用户不能读管理投诉',call('GET',f'/admin/complaints/{service_id}',token=student)[0] == 403)
     status, managed = call('GET',f'/admin/complaints/{service_id}',token=admin)
     check('管理员读取待受理服务投诉',status == 200 and managed['data']['status'] == 'submitted')
-    acceptance = {'version':managed['data']['version'],'operation_id':str(uuid.uuid4())}
+    acceptance = {'version':managed['data']['version'],'operation_id':str(uuid.uuid4()),'initial_arrangement':'API工程模拟：核对空间服务情况并记录后续安排'}
     status, accepted = call('POST',f'/admin/complaints/{service_id}/accept',acceptance,admin)
     check('受理只转处理中并保留处理人',status == 200 and accepted['data']['complaint']['status'] == 'processing' and accepted['data']['complaint']['handler'] is not None)
-    check('受理不能冒充一般服务首次正式反馈',accepted['data']['complaint']['service_target']['status'] == 'running' and accepted['data']['complaint']['service_target']['due_at'] == service_target['due_at'])
+    accepted_target=accepted['data']['complaint']['service_target']
+    check('受理以accepted_at完成24开放小时目标并记录初步安排',accepted_target['status'] == 'completed' and accepted_target['completed_at'] == accepted['data']['complaint']['accepted_at'] and accepted_target['due_at'] == service_target['due_at'] and accepted['data']['complaint']['initial_arrangement'] == acceptance['initial_arrangement'])
     status, accepted_again = call('POST',f'/admin/complaints/{service_id}/accept',acceptance,admin)
     check('受理原操作重试不重复',status == 200 and accepted_again['data']['replayed'] is True)
     verification = {'version':accepted['data']['complaint']['version'],'operation_id':str(uuid.uuid4()),'outcome':'service_verified','occurred_at':datetime.now(timezone(timedelta(hours=8))).isoformat(timespec='microseconds'),'public_note':'API工程模拟：服务情况已核实，尚待后续反馈','private_note':'API_PRIVATE_VERIFICATION_TEST_ONLY','facts_confirmed':True}
@@ -260,7 +261,7 @@ def main():
     check('正式反馈转待确认并给出七天',status == 200 and feedback['data']['complaint']['status'] == 'awaiting_confirmation')
     first_feedback = feedback['data']['complaint']['current_feedback']
     first_target = feedback['data']['complaint']['service_target']
-    check('首个正式反馈停止服务目标且保留原截止',first_target['status'] == 'completed' and first_target['completed_at'] == first_feedback['feedback_at'] and first_target['due_at'] == service_target['due_at'] and first_target['remaining_seconds'] is None)
+    check('正式反馈不重写已完成的受理目标',first_target['status'] == 'completed' and first_target['completed_at'] == accepted_target['completed_at'] and first_target['due_at'] == service_target['due_at'] and first_target['remaining_seconds'] is None)
     check('确认期从本次反馈精确起算7乘24小时',datetime.fromisoformat(first_feedback['deadline']) - datetime.fromisoformat(first_feedback['feedback_at']) == timedelta(days=7))
     objection = {'version':feedback['data']['complaint']['version'],'operation_id':str(uuid.uuid4()),'description':'API工程模拟：补充异议，要求继续核查'}
     check('他人不能替本人提交异议',call('POST',f'/complaints/{service_id}/object',objection,other)[0] == 403)

@@ -114,7 +114,7 @@ async function confirmImport() {
 <template>
   <section class="import-section" aria-label="校园账号CSV导入">
     <div class="card-title-row"><h3>CSV批量导入</h3><SButton size="sm" :loading="downloading" @click="downloadTemplate">下载CSV模板</SButton></div>
-    <p class="muted">UTF-8 CSV（可含BOM），最多1MiB、500条数据。必需列：campus_id、username、real_name、role；可选列：phone、email。role为student、staff或admin；学号与登录名必须唯一。CSV不包含密码。结果使用含表头的逻辑记录号；字段内换行不另计记录号，与文本物理行号可能不同。</p>
+    <p class="muted">按模板表头填写CSV，文件中不要填密码；上传后先预检，再在下方设置初始密码。</p>
     <div class="import-actions"><label class="file-label">选择CSV文件<input type="file" accept=".csv,text/csv" :disabled="busy" @change="selectFile" /></label><SButton :disabled="!file || busy" :loading="previewing" @click="inspectFile">预检文件</SButton></div>
     <p v-if="file" class="muted">当前文件：{{ file.name }}（{{ file.size }}字节）</p>
     <SBanner v-if="error" type="error" :title="error"><SButton v-if="unknownResult" size="sm" @click="emit('refresh')">刷新账号列表核对</SButton></SBanner>
@@ -125,7 +125,7 @@ async function confirmImport() {
       <p v-if="preview.invalid_count" class="muted">请修正CSV中的错误后重新选择并预检，不能跳过错误记录导入。</p>
       <div class="table-wrap"><div class="table-scroll" tabindex="0" aria-label="CSV预检逐记录结果，可左右滑动"><table class="table import-table"><thead><tr><th>记录号（含表头）</th><th>学号</th><th>用户名</th><th>姓名</th><th>角色</th><th>联系方式</th><th>预检结果</th></tr></thead><tbody><tr v-for="row in preview.rows" :key="row.row_number"><td>{{ row.row_number }}</td><td>{{ row.campus_id }}</td><td>{{ row.username }}</td><td>{{ row.real_name }}</td><td>{{ ROLE_LABELS[row.role] || row.role }}</td><td>{{ row.phone || '—' }}<br />{{ row.email || '—' }}</td><td>{{ row.errors.length ? row.errors.join('；') : '有效' }}</td></tr></tbody></table></div></div>
       <form class="import-confirm" @submit.prevent="confirmImport">
-        <p class="muted">教学初始化：本批账号使用管理员指定的初始密码，请通过安全方式分别交付。不代表已接入校园认证，也未实现强制首次登录改密。</p>
+        <p class="muted">请通过安全渠道交付初始密码；首次登录强制改密暂未支持。</p>
         <label>本批初始密码<SInput v-model="initialPassword" type="password" show-password required minlength="6" maxlength="64" autocomplete="new-password" :disabled="busy || preview.invalid_count > 0" /></label>
         <label>导入操作理由<SInput v-model="reason" type="textarea" required maxlength="1000" :disabled="busy" /></label>
         <SButton type="submit" variant="primary" :loading="confirming" :disabled="!canConfirm">确认整批导入</SButton>

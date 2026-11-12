@@ -291,7 +291,7 @@ function statusText(row) {
           <ul v-if="auth.isOrdinary" class="tips tips-list">
             <li>可预约当天至后天，单次至少 30 分钟，起止在开放空档内自选。</li>
             <li>开始前取消不记违规；开始后未签到放弃记一次违约。</li>
-            <li>签到窗口为开始时刻起至开始后 15 分钟；符合规则的占座求助可延长一次 15 分钟。</li>
+            <li>签到窗口为开始时刻起至开始后 15 分钟；本系统当前不提供签到延期。</li>
             <li>短暂离开不延长原结束时间；提前签退释放剩余时段。</li>
           </ul>
           <ul v-else class="tips tips-list">

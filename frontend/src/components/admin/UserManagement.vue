@@ -51,7 +51,7 @@ async function loadUsers() {
 function openCreate() {
   if (saving.value) return
   editing.value = null
-  form.value = { username: '', real_name: '', campus_id: '', role: 'student', status: 'active', phone: '', email: '', password: '', reason: '' }
+  form.value = { username: '', real_name: '', campus_id: '', role: 'student', status: 'active', phone: '', email: '', password: '', reason: '', original_identity: null }
   formError.value = ''
   dialog.value = true
 }
@@ -59,6 +59,7 @@ function openEdit(user) {
   if (saving.value) return
   editing.value = user.id
   form.value = Object.fromEntries(['username', 'real_name', 'campus_id', 'role', 'status', 'phone', 'email'].map(key => [key, user[key] ?? '']))
+  form.value.original_identity = { username: user.username, campus_id: user.campus_id ?? '', role: user.role }
   form.value.password = ''
   form.value.reason = ''
   formError.value = ''
@@ -68,7 +69,7 @@ async function saveUser() {
   if (saving.value) return
   formError.value = ''
   let payload
-  try { payload = userPayload(form.value, editing.value === null) }
+  try { payload = userPayload(form.value, editing.value === null, form.value.original_identity) }
   catch (failure) { formError.value = failure.message; return }
   saving.value = true
   try {
@@ -126,7 +127,9 @@ defineExpose({ loadUsers, openCreate })
       <form id="account-form" class="account-form" @submit.prevent="saveUser">
         <p v-if="formError" role="alert" class="form-error">{{ formError }}</p>
         <label>姓名<SInput v-model="form.real_name" required maxlength="50" /></label>
-        <label>学号<SInput v-model="form.campus_id" :required="editing === null" maxlength="9" placeholder="如 202600001" /></label><p class="muted full-width">9位学号：4位入学年份 + 1位身份（本科0、研究生1、博士2、教职工3）+ 4位序号。</p>
+        <label v-if="form.role === 'admin'">管理员登录名<SInput v-model="form.username" required maxlength="50" /></label>
+        <label>{{ form.role === 'admin' ? '校园编号（选填）' : '校园编号（学号/工号）' }}<SInput v-model="form.campus_id" :required="form.role !== 'admin'" :maxlength="form.role === 'admin' ? 20 : 9" :placeholder="form.role === 'admin' ? '管理员可不登记' : '如 202600001'" /></label>
+        <p class="muted full-width">学生与教职工使用9位校园编号登录：4位入学年份 + 1位身份类别（学生本科0、研究生1、博士2；教职工3）+ 4位序号。管理员使用独立登录名，校园编号可不登记；旧账号身份未变更时保留原值。</p>
         <label>角色<SSelect v-model="form.role" :options="roles" :disabled="self" /></label>
         <label>状态<SSelect v-model="form.status" :options="statuses" :disabled="self" /></label>
         <label>联系电话<SInput v-model="form.phone" maxlength="30" type="tel" /></label>

@@ -87,9 +87,10 @@ async function onFirstSetup() {  if (setupSaving.value) return
 }
 
 const features = [
-  { icon: 'booking', title: '可视化选座' },
+  { icon: 'seat', title: '可视化选座' },
   { icon: 'booking', title: '分钟预约' },
-  { icon: 'warning', title: '本人记录' }
+  { icon: 'check', title: '扫码签到' },
+  { icon: 'reservations', title: '本人记录' }
 ]
 </script>
 
@@ -106,8 +107,10 @@ const features = [
       </div>
 
       <div class="hero-body">
-        <h1 class="hero-title">让每一次自习都有理想的位置</h1>
-        <p class="hero-desc">分钟预约 · 可视化选座 · 面向校园的自习室数字化系统</p>
+        <div class="hero-copy">
+          <h1 class="hero-title">让每一次自习都有理想的位置</h1>
+          <p class="hero-desc">分钟预约 · 可视化选座 · 面向校园的自习室数字化系统</p>
+        </div>
 
         <ul class="hero-features">
           <li v-for="f in features" :key="f.title">
@@ -117,7 +120,9 @@ const features = [
         </ul>
       </div>
 
-      <div class="hero-foot">{{ SYSTEM_NAME_ZH }} · 课程设计演示环境</div>
+      <div class="hero-foot">
+        <img src="/images/login-reader.png?v=2" alt="女生在书桌前安静阅读" />
+      </div>
     </aside>
 
     <!-- ============ 右侧：校园账号登录 ============ -->
@@ -148,7 +153,7 @@ const features = [
 
         <p class="auth-tip">校园账号由管理员维护，暂不开放自助注册。</p>
         <p class="auth-tip">
-          演示账号：学号 202600001 / 123456 · 管理员：admin / admin123
+          演示学生：202600001 / 123456<br />管理员：202630001 / admin123
         </p>
       </div>
 
@@ -256,6 +261,12 @@ const features = [
   padding: 24px 0;
 }
 
+.hero-copy {
+  width: 100%;
+  max-width: 100%;
+  text-align: center;
+}
+
 .hero-title {
   font-family: var(--font-display);
   font-size: clamp(30px, 3vw, 52px);
@@ -267,11 +278,13 @@ const features = [
 }
 
 .hero-desc {
+  width: 100%;
   margin-top: 18px;
   font-size: clamp(13px, 1.15vw, 15px);
   line-height: 1.75;
   color: var(--text-3);
   white-space: nowrap;
+  text-align: center;
 }
 
 .hero-features {
@@ -279,7 +292,7 @@ const features = [
   margin: 42px 0 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -312,10 +325,30 @@ const features = [
   white-space: nowrap;
 }
 
+@media (min-width: 1280px) {
+  .hero-features { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .hero-features li { gap: 8px; padding: 14px 12px; }
+  .feature-icon { width: 32px; height: 32px; flex-basis: 32px; }
+  .feature-title { font-size: 14px; }
+}
+
 .hero-foot {
   position: relative;
-  font-size: var(--fs-caption);
-  color: var(--text-4);
+  width: min(calc(100% + 52px), 620px);
+  height: min(30vh, 240px);
+  min-height: 150px;
+  margin-left: -52px;
+  margin-bottom: -32px;
+  display: flex;
+  align-items: flex-end;
+}
+
+.hero-foot img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: left bottom;
 }
 
 /* ============ 右侧表单区 ============ */

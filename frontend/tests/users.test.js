@@ -2,18 +2,32 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { readFile } from 'node:fs/promises'
-import { userPayload, contactPayload } from '../src/components/admin/userForm.js'
+import { userPayload, contactPayload, campusIdentityError } from '../src/components/admin/userForm.js'
 
-const valid = () => ({ username: 'new-user', real_name: '测试用户', campus_id: 'CAMPUS-1', role: 'staff', status: 'active', phone: '', email: '', password: '123456', reason: '创建教学账号' })
+const valid = () => ({ username: 'new-user', real_name: '测试用户', campus_id: '202630001', role: 'staff', status: 'active', phone: '', email: '', password: '123456', reason: '创建教学账号' })
 test('creation requires identity and operation reason; credentials honor BCrypt byte limit', () => {
   assert.throws(() => userPayload({ ...valid(), campus_id: '' }, true), /校园编号/)
   assert.throws(() => userPayload({ ...valid(), reason: ' ' }, true), /理由/)
   assert.throws(() => userPayload({ ...valid(), password: '密'.repeat(25) }, true), /72字节/)
   assert.equal(userPayload({ ...valid(), password: '密'.repeat(24) }, true).password.length, 24)
+  assert.equal(userPayload(valid(), true).username, '202630001')
+})
+test('campus identity policy is role-aware, year-bounded, and shared by new IDs and login names', () => {
+  assert.equal(campusIdentityError('202600001', 'student', 2026), '')
+  assert.equal(campusIdentityError('202610001', 'student', 2026), '')
+  assert.equal(campusIdentityError('202620001', 'student', 2026), '')
+  assert.match(campusIdentityError('202630001', 'student', 2026), /第5位/)
+  assert.equal(campusIdentityError('202630001', 'admin', 2026), '')
+  assert.equal(campusIdentityError('202630001', 'staff', 2026), '')
+  assert.equal(campusIdentityError('202600001', 'staff', 2026), '学生第5位须为0/1/2，教职工或管理员第5位须为3')
+  assert.match(campusIdentityError('202800001', 'student', 2026), /年份/)
+  assert.throws(() => userPayload({ ...valid(), campus_id: '202630001', role: 'student' }, true), /第5位/)
 })
 test('editing preserves unknown identity and omits an empty password', () => {
-  const payload = userPayload({ ...valid(), campus_id: '', password: '' }, false)
+  const form = { ...valid(), username: 'legacy-admin', campus_id: '', role: 'admin', password: '' }
+  const payload = userPayload(form, false, { username: 'legacy-admin', campus_id: '', role: 'admin' })
   assert.equal(payload.campus_id, null)
+  assert.equal(payload.username, 'legacy-admin')
   assert.equal('password' in payload, false)
 })
 test('personal contact payload only includes phone and email, supports clearing, and rejects invalid input', () => {
@@ -35,6 +49,7 @@ async function management(overrides = {}) {
     '../../stores/auth': { ROLE_LABELS: { student: '学生', staff: '教职工', admin: '管理员' }, useAuthStore: () => ({ user: { id: 1 }, setUser: value => { effects.profile = value } }) },
     '../../api/admin': api,
     './userForm.js': { userPayload },
+    '../../composables/usePagination': { usePagination: items => ({ page: { value: 1 }, pages: { value: 1 }, pageItems: items }) },
     './UserImport.vue': { default: {} },
     '../ui/feedback': { message: { success() {} }, promptDialog: async () => ({ value: '测试理由' }) }
   }
@@ -65,7 +80,7 @@ test('account conflict preserves form for correction; refresh failure remains ex
   page.openCreate()
   page.form.value = valid()
   await page.saveUser()
-  assert.equal(page.form.value.campus_id, 'CAMPUS-1')
+  assert.equal(page.form.value.campus_id, '202630001')
   assert.equal(page.dialog.value, true)
   assert.equal(page.formError.value, '校园编号已存在')
   await page.loadUsers()

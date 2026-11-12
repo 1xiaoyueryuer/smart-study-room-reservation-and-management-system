@@ -2,7 +2,7 @@
 import PageHelp from '../components/PageHelp.vue'
 import {ref,computed,onMounted,onBeforeUnmount,watch} from 'vue'
 import {message} from '../components/ui/feedback'
-import {listNotifications,markRead,markAllRead,ackManagementCancellation} from '../api/notification'
+import {listNotifications,markRead,markAllRead} from '../api/notification'
 import {useNotificationStore} from '../stores/notification'
 import {useAuthStore} from '../stores/auth'
 import {createRecordPager} from '../composables/recordPage.js'
@@ -25,7 +25,7 @@ const pager=createRecordPager(async query=>{
  return response
 },{blocked:()=>markingId.value!==null||markingAll.value})
 const {items:list,loading,error,snapshot,snapshotQuery}=pager
-const category=ref('all'),selected=ref(null),ackBusy=ref(false)
+const category=ref('all'),selected=ref(null)
 
 const typeMeta = {
   reservation_checkin:{text:'签到成功',color:'var(--green-strong)',bg:'var(--green-weak)'},
@@ -69,7 +69,7 @@ const visibleItems = computed(() => {
   return allowed ? list.value.filter(item => allowed.includes(item.type)) : list.value
 })
 const unreadCount = computed(() => list.value.filter(item => !item.is_read).length)
-const busy=computed(()=>markingId.value!==null||markingAll.value||ackBusy.value)
+const busy=computed(()=>markingId.value!==null||markingAll.value)
 
 function selectCategory(key){if(busy.value)return;category.value=key}
 function fmtTime(value){return new Date(value).toLocaleString('zh-CN',{hour12:false})}
@@ -113,18 +113,7 @@ function selectItem(item){
   if(!item.is_read)void onMarkRead(item)
 }
 
-async function ackCancellation(action){
-  if(!selected.value||ackBusy.value)return
-  const item=selected.value
-  ackBusy.value=true;actionError.value=''
-  try{
-    const {data}=await ackManagementCancellation(item.id,{action,operation_id:crypto.randomUUID()})
-    writeNotice.value=action==='received'?'已向服务端确认收到本次管理取消通知。':'已提交需要协助，请等待管理员联系。'
-    if(data?.notification)selected.value=data.notification
-    await pager.refresh(true)
-  }catch(e){actionError.value=e.message+'；服务端回执接口未确认，请不要重复提交。'}
-  finally{ackBusy.value=false}
-}
+
 
 function cancelLink(item){const target=reservationTarget(item);return target?{...target,query:{...target.query,action:'cancel'}}:null}
 
@@ -192,14 +181,8 @@ onMounted(pager.refresh);onBeforeUnmount(()=>{alive=false;pager.dispose()})
             <p v-else>预计恢复时间：待定，请以系统可预约状态为准。</p>
             <p>本次管理取消不记本人违规；无需专程到场确认，已到场或需要帮助可点“需要协助”。</p>
             <div class="row-actions">
-              <template v-if="selected.can_ack===true">
-                <SButton variant="primary" :disabled="ackBusy" :loading="ackBusy" @click="ackCancellation('received')">确认收到</SButton>
-                <SButton variant="soft" :disabled="ackBusy" @click="ackCancellation('assist')">需要协助</SButton>
-              </template>
-              <template v-else>
-                <RouterLink v-if="selected.reservation_id" :to="{name:'complaints',query:{type:'service',reservation_id:String(selected.reservation_id)}}" class="action-link">需要协助（发起求助）</RouterLink>
+                              <RouterLink :to="{name:'complaints',query:{type:'service'}}" class="action-link">需要协助（发起求助）</RouterLink>
                 <span class="muted">确认收到回执需服务端接口；当前消息可作为取消依据。</span>
-              </template>
             </div>
           </section>
 

@@ -21,9 +21,14 @@ public class SeedData implements ApplicationRunner {
     @Override @Transactional public void run(ApplicationArguments args) {
         if(!enabled) return;db.lockBookings();if(db.count("SELECT count(*) FROM users")>0) return;
         var bcrypt=new BCryptPasswordEncoder();String studentHash=bcrypt.encode("123456");
-        db.update("INSERT INTO users(username,password_hash,real_name,role) VALUES(?,?,?,'admin')","admin",bcrypt.encode("admin123"),"管理员");
+        db.update("INSERT INTO users(username,password_hash,real_name,role,campus_id) VALUES(?,?,?,'admin',?)","202630001",bcrypt.encode("admin123"),"管理员","202630001");
         var studentIds=new java.util.ArrayList<Long>();
-        for(int i=1;i<=40;i++) studentIds.add(db.insert("INSERT INTO users(username,password_hash,real_name,campus_id) VALUES(?,?,?,?)",String.format("stu%02d",i),studentHash,"模拟学生"+i,"DEMO"+String.format("%04d",i)));
+        // Stable teaching-demo identities match the documented login examples across fresh installs.
+        int admissionYear=2026;
+        for(int i=1;i<=40;i++) {
+            String identity=String.format("%04d%1d%04d",admissionYear,0,i);
+            studentIds.add(db.insert("INSERT INTO users(username,password_hash,real_name,campus_id) VALUES(?,?,?,?)",identity,studentHash,"模拟学生"+i,identity));
+        }
         int[][] layouts={{6,8},{8,10},{5,6}};String[] names={"1F-静音自习室","2F-综合学习区","3F-电脑研学区"};String[] zones={"quiet","regular","computer"};
         for(int r=0;r<3;r++) {
             long room=db.insert("INSERT INTO rooms(name,location,seat_rows,seat_cols,description) VALUES(?,?,?,?,?)",names[r],"示例图书馆 "+(r+1)+"楼",layouts[r][0],layouts[r][1],"课程演示用模拟空间");

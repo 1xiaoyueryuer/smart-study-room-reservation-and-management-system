@@ -14,8 +14,8 @@ import org.springframework.web.multipart.MultipartFile;
 @Service
 public class UserImportService {
     static final int MAX_BYTES=1024*1024, MAX_ROWS=500;
-    static final List<String> FIELDS=List.of("campus_id","username","real_name","role","phone","email");
-    static final Set<String> REQUIRED=Set.of("campus_id","username","real_name","role");
+    static final List<String> FIELDS=List.of("username","real_name","role","campus_id","phone","email");
+    static final Set<String> REQUIRED=Set.of("real_name","role");
     private final Store db;
     private final AuthService auth;
     private final UserService users;
@@ -79,14 +79,20 @@ public class UserImportService {
             Api.require(records.hasNext(),400,"CSV缺少表头");
             CSVRecord header=records.next();List<String> columns=header.toList();
             Api.require(new HashSet<>(columns).size()==columns.size(),400,"CSV表头不能重复");
-            Api.require(FIELDS.containsAll(columns)&&columns.containsAll(REQUIRED),400,"CSV表头仅允许campus_id,username,real_name,role,phone,email，且前四列必需；不得包含凭证");
+            Api.require(FIELDS.containsAll(columns)&&columns.containsAll(REQUIRED),400,"CSV必需列为real_name,role，可选username,campus_id,phone,email；不得包含凭证列");
             while(records.hasNext()) {
                 CSVRecord data=records.next();
                 Api.require(rows.size()<MAX_ROWS,400,"CSV数据不能超过500条");
                 Api.require(data.size()==columns.size(),400,"CSV第"+data.getRecordNumber()+"条记录的列数与表头不符");
                 var fields=new HashMap<String,String>();
                 for(int i=0;i<columns.size();i++) fields.put(columns.get(i),AuthService.blankNull(data.get(i)));
-                Row row=new Row(data.getRecordNumber(),fields.get("campus_id"),fields.get("username"),fields.get("real_name"),fields.get("role"),fields.get("phone"),fields.get("email"),List.of());
+                String campusId=fields.get("campus_id");
+                String role=fields.get("role"),username=fields.get("username");
+                if("student".equals(role)||"staff".equals(role)) {
+                    if(campusId==null&&username!=null&&username.matches("[0-9]{9}")) campusId=username;
+                    if(campusId!=null&&(username==null||username.equals(campusId))) username=campusId;
+                }
+                Row row=new Row(data.getRecordNumber(),campusId,username,fields.get("real_name"),role,fields.get("phone"),fields.get("email"),List.of());
                 List<String> errors=users.creationErrors(row.request(null,"CSV导入预检"));
                 if(fields.values().stream().anyMatch(value->value!=null&&value.indexOf('\0')>=0)) errors.add("字段不能包含NUL控制字符");
                 rows.add(new Row(row.rowNumber(),row.campusId(),row.username(),row.realName(),row.role(),row.phone(),row.email(),errors));

@@ -37,7 +37,7 @@ const statusMeta = {
   violation: { text:'旧违约状态（历史）', type:'info' }
 }
 const sourceMeta = { manual: '手动选座', auto: '历史智能分配', waitlist: '历史候补递补' }
-const terminationLabels = {user_cancelled:'开始前本人取消',abandon:'开始后主动放弃',no_show:'到签到期限仍未签到',no_show_extension_pending_verification:'延期届满仍未签到，预约已释放，等待管理员核实（暂不记违规）',legacy_violation:'历史违约状态，仅作溯源，未转为新独立违规',early_checkout:'提前签退',auto_end:'到期自动结束',legacy_unclassified:'历史结束，具体方式未记录',demo_completed:'演示模拟结束',temp_leave_timeout:'旧暂离流程结束（历史）',admin_resource_change:'资源管理取消（不记用户违约）',admin_restriction:'预约限制管理取消（不记用户违约）'}
+const terminationLabels = {user_cancelled:'开始前本人取消',abandon:'开始后主动放弃',no_show:'到签到期限仍未签到',legacy_violation:'历史违约状态，仅作溯源，未转为新独立违规',early_checkout:'提前签退',auto_end:'到期自动结束',legacy_unclassified:'历史结束，具体方式未记录',demo_completed:'演示模拟结束',temp_leave_timeout:'旧暂离流程结束（历史）',admin_resource_change:'资源管理取消（不记用户违约）',admin_restriction:'预约限制管理取消（不记用户违约）'}
 
 function deadlineOf(row) { return checkinDeadlineOf(row) }
 function fmtStamp(value) { return value ? String(value).replace('T', ' ').slice(0, 19) : '' }
@@ -123,8 +123,7 @@ onMounted(async()=>{await refreshAll();const target=reviewReservationParam(route
           <div class="pending-time">{{ row.res_date }} {{ row.start_time.slice(0, 5) }}—{{ row.end_time.slice(0, 5) }}</div>
           <div class="pending-deadline">
             签到截止 <b>{{ deadlineOf(row).text }}</b>
-            <span v-if="deadlineOf(row).extended" class="ext-tag">已延期（原 {{ deadlineOf(row).baseText }}）</span>
-            <span v-else-if="deadlineOf(row).canRequest === true" class="ext-hint">被占求助通过后可延期 15 分钟</span>
+            <span class="ext-hint">被占求助不会改变原签到截止</span>
           </div>
           <p class="pending-note">开始时刻起至截止前可签到；超过截止仍未签到按规则处理。</p>
           <div class="row-actions">
@@ -176,7 +175,6 @@ onMounted(async()=>{await refreshAll();const target=reviewReservationParam(route
                       签到截止 <b>{{ deadlineOf(row).text }}</b>
                       <span v-if="deadlineOf(row).extended">（原 {{ deadlineOf(row).baseText }}，已延期）</span>
                     </div>
-                    <div v-if="row.extension_verification_pending" class="termination-detail">延期届满未签到，预约已释放，等待管理员核实；暂未登记违规。</div>
                     <div class="termination-detail">{{ terminationLabels[row.termination_reason] || row.termination_reason || '—' }}</div>
                     <div v-if="['admin_resource_change','admin_restriction'].includes(row.termination_reason) && row.termination_note" class="termination-detail">当次公开管理原因：{{ row.termination_note }}</div>
                     <div v-if="row.ended_at" class="termination-detail">结束：{{ fmtStamp(row.ended_at) }}</div>

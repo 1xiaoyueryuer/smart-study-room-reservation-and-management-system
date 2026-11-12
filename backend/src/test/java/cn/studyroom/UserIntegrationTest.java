@@ -35,7 +35,10 @@ class UserIntegrationTest {
         TestDatabaseCleanup.clear(db);
         ids=new LinkedHashMap<>();remote="s03-test-"+UUID.randomUUID();
         String hash=new BCryptPasswordEncoder().encode(PASSWORD);
-        for(String role:List.of("student","staff","admin")) ids.put(role,db.insert("INSERT INTO users(username,password_hash,real_name,campus_id,role) VALUES(?,?,?,?,?)","s03_"+role,hash,"S03模拟"+role,"S03-"+role,role));
+        for(String role:List.of("student","staff","admin")) {
+            String identity=switch(role){case "student"->"202600901";case "staff"->"202630902";default->"202630903";};
+            ids.put(role,db.insert("INSERT INTO users(username,password_hash,real_name,campus_id,role) VALUES(?,?,?,?,?)",identity,hash,"S03模拟"+role,identity,role));
+        }
     }
     @AfterEach void clearOwnLoginRate() { if(remote!=null) redis.delete("studyroom-java:rate:login:"+remote); }
     @AfterAll void leaveExplicitPageFixtures() { fixture(); }
@@ -44,7 +47,7 @@ class UserIntegrationTest {
             .andExpect(status().isOk()).andReturn();
         return json.readTree(result.getResponse().getContentAsString()).path("data").path("token").asText();
     }
-    String token(String role) throws Exception { return token("s03_"+role,PASSWORD); }
+    String token(String role) throws Exception { return token((String)db.one("SELECT username FROM users WHERE id=?",ids.get(role)).get("username"),PASSWORD); }
     Map<String,Object> user(String role,String campus,String username) {
         var fields=new LinkedHashMap<String,Object>();
         fields.put("username",username);fields.put("real_name","新建模拟校园用户");fields.put("campus_id",campus);fields.put("role",role);fields.put("status","active");
@@ -55,27 +58,31 @@ class UserIntegrationTest {
     }
     @Test void createCampusUsersCanActuallyLoginAndNeverExposeCredentials() throws Exception {
         String admin=token("admin");
-        for(String role:List.of("student","staff")) {
-            var response=http.perform(payload(post("/api/admin/users"),admin,user(role,"NEW-"+role,"new_"+role)))
-                .andExpect(status().isOk()).andExpect(jsonPath("$.data.campus_id").value("NEW-"+role)).andExpect(jsonPath("$.data.password_hash").doesNotExist()).andExpect(jsonPath("$.data.password").doesNotExist()).andReturn();
+        for(String role:List.of("student","staff","admin")) {
+            String campus=switch(role){case "student"->"202600201";case "staff"->"202630201";default->"202630202";};
+            var response=http.perform(payload(post("/api/admin/users"),admin,user(role,campus,campus)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.campus_id").value(campus)).andExpect(jsonPath("$.data.username").value(campus)).andExpect(jsonPath("$.data.password_hash").doesNotExist()).andExpect(jsonPath("$.data.password").doesNotExist()).andReturn();
             assertFalse(response.getResponse().getContentAsString().contains("test-pass-123"));
-            token("new_"+role,"test-pass-123");
+            token(campus,"test-pass-123");
         }
-        assertEquals(2,db.count("SELECT count(*) FROM audit_events WHERE action='user.create'"));
-        assertEquals(2,db.count("SELECT count(*) FROM users WHERE username LIKE 'new_%' AND student_no IS NULL"));
+        assertEquals(3,db.count("SELECT count(*) FROM audit_events WHERE action='user.create'"));
+        assertEquals(3,db.count("SELECT count(*) FROM users WHERE campus_id IN ('202600201','202630201','202630202') AND username=campus_id AND student_no IS NULL"));
         for(var record:db.list("SELECT before_values::text AS before_data,after_values::text AS after_data FROM audit_events")) {
             String values=record.toString();assertFalse(values.contains("test-pass-123"));assertFalse(values.contains("password_hash"));assertFalse(values.contains("$2a$"));
         }
     }
     @Test void duplicateOrInvalidCreationIsAtomicAndReportsConflictOrBadRequest() throws Exception {
         String admin=token("admin");
-        http.perform(payload(post("/api/admin/users"),admin,user("student","S03-staff","unique_name"))).andExpect(status().isConflict());
-        http.perform(payload(post("/api/admin/users"),admin,user("staff","unique-campus","s03_student"))).andExpect(status().isConflict());
+        http.perform(payload(post("/api/admin/users"),admin,user("student","202600901","202600901"))).andExpect(status().isConflict());
+        http.perform(payload(post("/api/admin/users"),admin,user("student","202600202","not-the-campus-id"))).andExpect(status().isBadRequest());
+        http.perform(payload(post("/api/admin/users"),admin,user("student","202630202","202630202"))).andExpect(status().isBadRequest());
+        http.perform(payload(post("/api/admin/users"),admin,user("staff","202600203","202600203"))).andExpect(status().isBadRequest());
+        http.perform(payload(post("/api/admin/users"),admin,user("student","199900204","199900204"))).andExpect(status().isBadRequest());
         var missing=user("student",null,"new_one");
         http.perform(payload(post("/api/admin/users"),admin,missing)).andExpect(status().isBadRequest());
-        var oversized=user("student","NEW","new_one");oversized.put("password","密".repeat(25));
+        var oversized=user("student","202600204","202600204");oversized.put("password","密".repeat(25));
         http.perform(payload(post("/api/admin/users"),admin,oversized)).andExpect(status().isBadRequest());
-        var noReason=user("student","NEW","new_one");noReason.put("reason"," ");
+        var noReason=user("student","202600205","202600205");noReason.put("reason"," ");
         http.perform(payload(post("/api/admin/users"),admin,noReason)).andExpect(status().isBadRequest());
         assertEquals(3,db.count("SELECT count(*) FROM users"));assertEquals(0,db.count("SELECT count(*) FROM audit_events"));
     }
@@ -86,7 +93,7 @@ class UserIntegrationTest {
         opening.initializeDefaults(room);
         long seat=db.insert("INSERT INTO seats(room_id,seat_no,row_no,col_no) VALUES(?,'01',1,1)",room);
         db.update("INSERT INTO reservations(user_id,seat_id,res_date,start_time,end_time,status) VALUES(?,?,'2026-10-20','10:00','11:00','completed')",uid,seat);
-        var changes=user("staff","UPDATED-STAFF","s03_staff");changes.remove("password");changes.put("real_name","已编辑模拟姓名");
+        var changes=user("staff","202630902","202630902");changes.remove("password");changes.put("real_name","已编辑模拟姓名");
         http.perform(payload(put("/api/admin/users/"+uid),admin,changes)).andExpect(status().isOk()).andExpect(jsonPath("$.data.real_name").value("已编辑模拟姓名"));
         assertEquals(hash,db.one("SELECT password_hash FROM users WHERE id=?",uid).get("password_hash"));
         assertEquals(1,db.count("SELECT count(*) FROM reservations WHERE user_id=?",uid));
@@ -110,14 +117,23 @@ class UserIntegrationTest {
         assertEquals("student",db.one("SELECT role FROM users WHERE id=?",ids.get("student")).get("role"));
         http.perform(payload(post("/api/admin/users"),student,user("student","FORBIDDEN","forbidden"))).andExpect(status().isForbidden());
     }
+    @Test void ownPasswordCanBeChangedWithoutLoggingCredentials() throws Exception {
+        String student=token("student");
+        http.perform(payload(patch("/api/auth/password"),student,Map.of("current_password","wrong-password","new_password","updated-pass-456"))).andExpect(status().isBadRequest());
+        http.perform(payload(patch("/api/auth/password"),student,Map.of("current_password",PASSWORD,"new_password","updated-pass-456"))).andExpect(status().isOk());
+        http.perform(post("/api/auth/login").with(r->{r.setRemoteAddr(remote);return r;}).contentType("application/json").content(json.writeValueAsString(Map.of("username","202600901","password",PASSWORD)))).andExpect(status().isUnauthorized());
+        token("202600901","updated-pass-456");
+        var audit=db.one("SELECT reason,before_values::text AS before_data,after_values::text AS after_data FROM audit_events WHERE action='user.password.change'");
+        String values=audit.toString();assertFalse(values.contains(PASSWORD));assertFalse(values.contains("updated-pass-456"));assertTrue(values.contains("changed"));
+    }
     @Test void cannotDisableOrDemoteSelfAndPasswordUpdateRemainsSafe() throws Exception {
         String admin=token("admin");long uid=ids.get("admin");
         http.perform(payload(put("/api/admin/users/"+uid+"/status"),admin,Map.of("status","disabled","reason","试图禁用本人"))).andExpect(status().isBadRequest());
-        var demote=user("student","S03-admin","s03_admin");demote.remove("password");
+        var demote=user("student","202600301","202600301");demote.remove("password");
         http.perform(payload(put("/api/admin/users/"+uid),admin,demote)).andExpect(status().isBadRequest());
-        var reset=user("staff","S03-staff","s03_staff");reset.put("password","updated-pass-123");
+        var reset=user("staff","202630902","202630902");reset.put("password","updated-pass-123");
         http.perform(payload(put("/api/admin/users/"+ids.get("staff")),admin,reset)).andExpect(status().isOk());
-        token("s03_staff","updated-pass-123");
+        token("202630902","updated-pass-123");
         http.perform(payload(put("/api/admin/users/"+ids.get("student")+"/status"),admin,Map.of("status","disabled"))).andExpect(status().isBadRequest());
     }
     @Test void auditFailureRollsBackCreateAndContactChanges() throws Exception {
@@ -125,9 +141,9 @@ class UserIntegrationTest {
         // 数据库真实故障注入，验证审计与业务共享同一事务。
         db.update("ALTER TABLE audit_events ADD CONSTRAINT s03_reject_audit CHECK (false) NOT VALID");
         try {
-            http.perform(payload(post("/api/admin/users"),admin,user("student","ROLLBACK","rollback_user"))).andExpect(status().isInternalServerError());
+            http.perform(payload(post("/api/admin/users"),admin,user("student","202600401","202600401"))).andExpect(status().isInternalServerError());
             http.perform(payload(patch("/api/auth/profile"),student,Map.of("phone","not-saved"))).andExpect(status().isInternalServerError());
-            assertEquals(0,db.count("SELECT count(*) FROM users WHERE username='rollback_user'"));
+            assertEquals(0,db.count("SELECT count(*) FROM users WHERE username='202600401'"));
             assertNull(db.one("SELECT phone FROM users WHERE id=?",ids.get("student")).get("phone"));
             assertEquals(0,db.count("SELECT count(*) FROM audit_events"));
         } finally { db.update("ALTER TABLE audit_events DROP CONSTRAINT s03_reject_audit"); }

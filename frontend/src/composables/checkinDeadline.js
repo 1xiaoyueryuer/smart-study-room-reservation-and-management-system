@@ -1,9 +1,8 @@
 /**
  * 签到截止时间的唯一前端展示口径。
  *
- * 服务端字段优先；字段尚未接入时，仅按“开始时刻 + 15 分钟”计算展示值，
- * 不据此判断是否可签到。是否可签、能否延期一律以服务端返回的
- * checkin_deadline / server_now / can_request_extension 为准。
+ * 当前后端不支持签到延期。这里只展示服务端截止；缺字段时按原15分钟规则显示，
+ * 不自行推断签到资格，也不显示延期能力。
  */
 const pad = value => String(value).padStart(2, '0')
 
@@ -39,19 +38,17 @@ function fallbackBaseText(row) {
 export function checkinDeadlineOf(row) {
   if (!row) return null
   const apiDeadline = row.checkin_deadline || row.deadline || ''
-  const apiBase = row.base_checkin_deadline || ''
-  const extended = Boolean(row.extension_applied) || row.checkin_deadline_source === 'extension'
-  const baseText = timeText(apiBase) || fallbackBaseText(row)
+  const baseText = fallbackBaseText(row)
   const text = timeText(apiDeadline) || baseText
   if (!text) return null
   return {
     text,
     baseText,
-    extended: extended && text !== baseText,
-    source: row.checkin_deadline_source || (extended ? 'extension' : 'base'),
-    canRequest: typeof row.can_request_extension === 'boolean' ? row.can_request_extension : null,
-    blockedReason: row.extension_blocked_reason || '',
-    pendingVerification: Boolean(row.extension_verification_pending),
+    extended: false,
+    source: 'base',
+    canRequest: false,
+    blockedReason: '',
+    pendingVerification: false,
     raw: apiDeadline || null
   }
 }

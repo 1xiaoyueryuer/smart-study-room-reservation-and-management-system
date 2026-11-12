@@ -1,20 +1,22 @@
-export function userPayload(form, creating) {
+export function userPayload(form, creating, originalIdentity = form.original_identity || null) {
   const data = Object.fromEntries(['username', 'real_name', 'campus_id', 'phone', 'email', 'reason'].map(key => [key, (form[key] || '').trim()]))
   if (!data.real_name || data.real_name.length > 50) throw new Error('请输入不超过50个字符的姓名')
-  if (creating) data.username = data.campus_id
-  if (data.username.length < 3 || data.username.length > 50) throw new Error('登录名须为3—50个字符')
-  if (creating && !data.campus_id) throw new Error('新账号须填写学号')
-  if (data.campus_id) {
-    if (!/^20\d{2}[0-3]\d{4}$/.test(data.campus_id)) throw new Error('学号须为9位：4位入学年份+1位身份+4位序号')
-    const digit = data.campus_id[4]
-    const year = Number(data.campus_id.slice(0, 4))
-    if (year < 2000 || year > new Date().getFullYear() + 1) throw new Error('学号入学年份不合理')
-    if (form.role === 'student') {
-      if (!['0', '1', '2'].includes(digit)) throw new Error('学生学号第5位须为0（本科）、1（研究生）或2（博士）')
-    } else if (digit !== '3') {
-      throw new Error('教职工和管理员学号第5位须为3')
-    }
+  const campusIdentityRequired = form.role === 'student' || form.role === 'staff'
+  if (creating && campusIdentityRequired && !data.campus_id) throw new Error('新学生/教职工账号须填写校园编号')
+  if (creating && form.role === 'admin' && !data.username) throw new Error('管理员账号须填写登录名')
+  const sameLegacyIdentity = !creating && originalIdentity
+    && data.campus_id === originalIdentity.campus_id
+    && form.role === originalIdentity.role
+    && data.username === originalIdentity.username
+  if (campusIdentityRequired && data.campus_id && !sameLegacyIdentity) {
+    const error = campusIdentityError(data.campus_id, form.role)
+    if (error) throw new Error(error)
+    data.username = data.campus_id
   }
+  if (campusIdentityRequired && !sameLegacyIdentity && !data.campus_id) throw new Error('新学生/教职工账号须填写校园编号')
+  if (form.role === 'admin' && data.campus_id.length > 20) throw new Error('管理员校园编号不超过20个字符')
+  if (data.username.length < 3 || data.username.length > 50) throw new Error('登录名须为3—50个字符')
+  if (data.campus_id && sameLegacyIdentity) data.username = originalIdentity.username
   data.reason = operationReason(data.reason)
   Object.assign(data, contactPayload(form))
   const password = form.password || ''
@@ -22,6 +24,18 @@ export function userPayload(form, creating) {
     data.password = validatePassword(password)
   }
   return { ...data, campus_id: data.campus_id || null, role: form.role, status: form.status }
+}
+
+export function campusIdentityError(campusId, role, currentYear = Number(new Intl.DateTimeFormat('en', { timeZone: 'Asia/Shanghai', year: 'numeric' }).format(new Date()))) {
+  if (role === 'admin' && !campusId) return null
+  if (!/^[0-9]{4}[0-3][0-9]{4}$/.test(campusId)) return '校园编号须为9位：4位入学年份+1位身份类别+4位序号'
+  const year = Number(campusId.slice(0, 4))
+  if (year < 2000 || year > currentYear + 1) return '校园编号入学年份不合理'
+  const category = campusId[4]
+  if (role === 'student' && ['0', '1', '2'].includes(category)) return ''
+  if (role === 'staff' && category === '3') return ''
+  if (role === 'admin' && category === '3') return ''
+  return '学生第5位须为0/1/2，教职工第5位须为3'
 }
 
 export function contactPayload(form) {

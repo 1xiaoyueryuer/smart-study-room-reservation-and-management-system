@@ -29,14 +29,17 @@ class UserImportIntegrationTest {
     Map<String,Long> ids;
     String remote;
     static final String PASSWORD="S02-test-only-password";
-    static final String HEADER="campus_id,username,real_name,role,phone,email\r\n";
-    static final String VALID=HEADER+"I-01,import_student,导入模拟学生,student,,student@example.edu\r\nI-02,import_staff,导入模拟教职工,staff,+86 123,staff@example.edu\r\n";
+    static final String HEADER="campus_id,real_name,role,phone,email\r\n";
+    static final String VALID=HEADER+"202600011,导入模拟学生,student,,student@example.edu\r\n202630012,导入模拟教职工,staff,+86 123,staff@example.edu\r\n";
     @BeforeEach void fixture() {
         assertEquals("studyroom_java_test",db.one("SELECT current_database() AS name").get("name"));
         TestDatabaseCleanup.clear(db);
         ids=new LinkedHashMap<>();remote="s04-test-"+UUID.randomUUID();
         String hash=new BCryptPasswordEncoder().encode(PASSWORD);
-        for(String role:List.of("student","staff","admin")) ids.put(role,db.insert("INSERT INTO users(username,password_hash,real_name,campus_id,role) VALUES(?,?,?,?,?)","s04_"+role,hash,"S04模拟"+role,"S04-"+role,role));
+        for(String role:List.of("student","staff","admin")) {
+            String identity=switch(role){case "student"->"202600801";case "staff"->"202630802";default->"202630803";};
+            ids.put(role,db.insert("INSERT INTO users(username,password_hash,real_name,campus_id,role) VALUES(?,?,?,?,?)",identity,hash,"S04模拟"+role,identity,role));
+        }
     }
     @AfterEach void clearOwnLoginRate() { if(remote!=null) redis.delete("studyroom-java:rate:login:"+remote); }
     @AfterAll void leaveExplicitFixtures() { fixture(); }
@@ -45,7 +48,7 @@ class UserImportIntegrationTest {
             .andExpect(status().isOk()).andReturn();
         return json.readTree(response.getResponse().getContentAsString()).path("data").path("token").asText();
     }
-    String token(String role) throws Exception { return token("s04_"+role,PASSWORD); }
+    String token(String role) throws Exception { return token((String)db.one("SELECT username FROM users WHERE id=?",ids.get(role)).get("username"),PASSWORD); }
     MockMultipartFile file(String csv) { return new MockMultipartFile("file","campus.csv","text/csv",csv.getBytes(StandardCharsets.UTF_8)); }
     String preview(String admin,String csv) throws Exception {
         var response=http.perform(multipart("/api/admin/users/import/preview").file(file(csv)).header("Authorization","Bearer "+admin))
@@ -62,8 +65,8 @@ class UserImportIntegrationTest {
         String hash=preview(admin,VALID);
         assertEquals(3,db.count("SELECT count(*) FROM users"));assertEquals(0,db.count("SELECT count(*) FROM audit_events"));
         var result=http.perform(confirmation(VALID,hash,"Import-test-only-123").header("Authorization","Bearer "+admin))
-            .andExpect(status().isOk()).andExpect(jsonPath("$.data.imported_count").value(2)).andExpect(jsonPath("$.data.users[0].campus_id").value("I-01")).andReturn();
-        token("import_student","Import-test-only-123");token("import_staff","Import-test-only-123");
+            .andExpect(status().isOk()).andExpect(jsonPath("$.data.imported_count").value(2)).andExpect(jsonPath("$.data.users[0].campus_id").value("202600011")).andExpect(jsonPath("$.data.users[0].username").value("202600011")).andReturn();
+        token("202600011","Import-test-only-123");token("202630012","Import-test-only-123");
         assertFalse(result.getResponse().getContentAsString().contains("Import-test-only-123"));
         assertEquals(3,db.count("SELECT count(*) FROM audit_events"));
         assertEquals(1,db.count("SELECT count(*) FROM audit_events WHERE action='user.import' AND after_values->>'imported_count'='2'"));
@@ -72,7 +75,7 @@ class UserImportIntegrationTest {
         }
     }
     @Test void rowErrorsLocateDuplicatesIllegalRolesAndExistingIdentityWithoutWriting() throws Exception {
-        String csv=HEADER+"DUP,user_one,甲,student,,\r\nDUP,user_one,乙,staff,,\r\nS04-student,s04_staff,丙,invalid,,not-an-email\r\n";
+        String csv=HEADER+"202600022,甲,student,,\r\n202600022,乙,student,,\r\n202630003,丙,student,,not-an-email\r\n";
         String admin=token("admin");
         var response=http.perform(multipart("/api/admin/users/import/preview").file(file(csv)).header("Authorization","Bearer "+admin))
             .andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(3)).andExpect(jsonPath("$.data.valid_count").value(0)).andExpect(jsonPath("$.data.invalid_count").value(3))
@@ -84,13 +87,13 @@ class UserImportIntegrationTest {
     @Test void changedFileAndDatabaseConflictBetweenPreviewAndConfirmRejectWholeBatch() throws Exception {
         String admin=token("admin"),hash=preview(admin,VALID);
         http.perform(confirmation(VALID+"\r\n",hash,"Import-test-only-123").header("Authorization","Bearer "+admin)).andExpect(status().isConflict()).andExpect(jsonPath("$.details.reason").value("file_changed"));
-        db.update("INSERT INTO users(username,password_hash,campus_id) VALUES('another-user','unused','I-02')");
+        db.update("INSERT INTO users(username,password_hash,real_name,campus_id,role) VALUES('202630012','unused','冲突模拟用户','202630012','staff')");
         http.perform(confirmation(VALID,hash,"Import-test-only-123").header("Authorization","Bearer "+admin)).andExpect(status().isConflict()).andExpect(jsonPath("$.details.rows[0].row_number").value(3));
-        assertEquals(0,db.count("SELECT count(*) FROM users WHERE username='import_student'"));
+        assertEquals(0,db.count("SELECT count(*) FROM users WHERE username='202600011'"));
         assertEquals(0,db.count("SELECT count(*) FROM audit_events"));
     }
     @Test void parserAcceptsBomQuotesCommaEscapedQuoteAndMultilineFields() throws Exception {
-        String csv="\uFEFF"+HEADER+"Q-01,quoted_user,\"模拟,\"\"姓名\"\"\n第二行\",staff,,\r\n";
+        String csv="\uFEFF"+HEADER+"202630013,\"模拟,\"\"姓名\"\"\n第二行\",staff,,\r\n";
         String admin=token("admin");
         http.perform(multipart("/api/admin/users/import/preview").file(file(csv)).header("Authorization","Bearer "+admin)).andExpect(status().isOk())
             .andExpect(jsonPath("$.data.valid_count").value(1)).andExpect(jsonPath("$.data.rows[0].real_name").value("模拟,\"姓名\"\n第二行"));
@@ -103,9 +106,9 @@ class UserImportIntegrationTest {
         http.perform(multipart("/api/admin/users/import/preview").file(new MockMultipartFile("file","bad.csv","text/csv",new byte[]{(byte)0xC3,(byte)0x28})).header("Authorization","Bearer "+admin)).andExpect(status().isBadRequest());
         http.perform(multipart("/api/admin/users/import/preview").file(new MockMultipartFile("file","large.csv","text/csv",new byte[1024*1024+1])).header("Authorization","Bearer "+admin)).andExpect(status().isBadRequest());
         StringBuilder huge=new StringBuilder(HEADER);
-        for(int i=0;i<500;i++) huge.append("ID-").append(i).append(",user_").append(i).append(",姓名,student,,\n");
+        for(int i=1;i<=500;i++) { String id=String.format("2026%1d%04d",0,i);huge.append(id).append(",姓名,student,,\n"); }
         http.perform(multipart("/api/admin/users/import/preview").file(file(huge.toString())).header("Authorization","Bearer "+admin)).andExpect(status().isOk()).andExpect(jsonPath("$.data.total").value(500));
-        huge.append("ID-500,user_500,姓名,student,,\n");
+        String extra=String.format("2026%1d%04d",0,501);huge.append(extra).append(",姓名,student,,\n");
         http.perform(multipart("/api/admin/users/import/preview").file(file(huge.toString())).header("Authorization","Bearer "+admin)).andExpect(status().isBadRequest());
         assertEquals(3,db.count("SELECT count(*) FROM users"));
     }
@@ -136,17 +139,17 @@ class UserImportIntegrationTest {
             assertTrue(ready.await(5,java.util.concurrent.TimeUnit.SECONDS));start.countDown();
             var statuses=new ArrayList<Integer>();for(var result:results) statuses.add(result.get(30,java.util.concurrent.TimeUnit.SECONDS));
             Collections.sort(statuses);assertEquals(List.of(200,409),statuses);
-            assertEquals(2,db.count("SELECT count(*) FROM users WHERE username IN ('import_student','import_staff')"));
+            assertEquals(2,db.count("SELECT count(*) FROM users WHERE username IN ('202600011','202630012')"));
             assertEquals(1,db.count("SELECT count(*) FROM audit_events WHERE action='user.import'"));
         } finally { start.countDown();pool.shutdownNow(); }
     }
     @Test void auditFailureAfterFirstUserRollsBackEntireBatchAndReportsServerFailure() throws Exception {
         String admin=token("admin"),hash=preview(admin,VALID);
         // 第一条user.create审计可成功，第二条被故障约束拒绝，确保不是“仅第一条没写”测试。
-        db.update("ALTER TABLE audit_events ADD CONSTRAINT s04_reject_second CHECK (after_values->>'username' IS DISTINCT FROM 'import_staff') NOT VALID");
+        db.update("ALTER TABLE audit_events ADD CONSTRAINT s04_reject_second CHECK (after_values->>'username' IS DISTINCT FROM '202630012') NOT VALID");
         try {
             http.perform(confirmation(VALID,hash,"Import-test-only-123").header("Authorization","Bearer "+admin)).andExpect(status().isInternalServerError());
-            assertEquals(0,db.count("SELECT count(*) FROM users WHERE username IN ('import_student','import_staff')"));
+            assertEquals(0,db.count("SELECT count(*) FROM users WHERE username IN ('202600011','202630012')"));
             assertEquals(0,db.count("SELECT count(*) FROM audit_events"));
         } finally { db.update("ALTER TABLE audit_events DROP CONSTRAINT s04_reject_second"); }
     }

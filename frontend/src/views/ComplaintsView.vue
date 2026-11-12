@@ -2,7 +2,8 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { listMyComplaints, getComplaint } from '../api/complaint'
-import { complaintStatuses, complaintCategory, parseRepair } from '../composables/complaintForm.js'
+import { complaintStatuses, complaintCategory, complaintNumber, parseRepair } from '../composables/complaintForm.js'
+import { formatCampusDateTime } from '../composables/campusDateTime.js'
 import { useServiceTargetClock } from '../composables/useServiceTargetClock.js'
 import ComplaintForm from '../components/ComplaintForm.vue'
 import ComplaintRecord from '../components/ComplaintRecord.vue'
@@ -51,8 +52,7 @@ function titleOf(item) {
   return first.length > 24 ? first.slice(0, 24) + '…' : first
 }
 function timeOf(item) {
-  const value = item.submitted_at || ''
-  return value ? String(value).replace('T', ' ').slice(0, 16) : '—'
+  return formatCampusDateTime(item.submitted_at)
 }
 
 function selectCategory(key) {
@@ -132,7 +132,8 @@ onBeforeUnmount(() => { alive = false; detailSequence++; pager.dispose() })
             <button type="button" class="ticket-item" :class="{active: selectedId === item.id}" @click="selectItem(item)">
               <span class="pill" :class="item.status === 'closed' ? 'pill-success' : item.status === 'submitted' ? 'pill-neutral' : 'pill-warning'">{{ complaintStatuses[item.status] || item.status }}</span>
               <b>{{ titleOf(item) }}</b>
-              <small>{{ categoryOf(item) }} · {{ roomOf(item) }} · {{ timeOf(item) }}</small>
+              <small><b class="ticket-code">{{ complaintNumber(item.id) }}</b> · {{ categoryOf(item) }} · {{ roomOf(item) }}</small>
+              <small class="ticket-time">提交时间 {{ timeOf(item) }}</small>
             </button>
           </li>
         </ul>
@@ -147,7 +148,7 @@ onBeforeUnmount(() => { alive = false; detailSequence++; pager.dispose() })
         </div>
         <p v-if="detailLoading" role="status">正在读取本人详情…</p>
         <SBanner v-if="detailError" type="error" :title="detailError"><SButton size="sm" @click="selectItem({id:selectedId})">重试详情</SButton></SBanner>
-        <ComplaintRecord v-if="detail && !detailLoading" :record="detail" :target-progress="targetClock.progress(detail)" />
+        <ComplaintRecord v-if="detail && !detailLoading" :record="detail" :target-progress="targetClock.progress(detail)" compact />
         <SEmpty v-else-if="!detailLoading && !detailError" description="从左侧选择一条记录查看详情" />
       </section>
     </div>
@@ -158,6 +159,7 @@ onBeforeUnmount(() => { alive = false; detailSequence++; pager.dispose() })
 .complaints-page { max-width: 1480px; }
 .view-heading.with-action { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
 .form-panel { margin-bottom: 20px; }
+.complaints-page>.card,.complaint-workbench>.card{border:1px solid var(--border-strong);box-shadow:0 3px 14px rgba(50,45,34,.055)}
 .complaint-workbench { display: grid; grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); gap: 20px; align-items: start; }
 .list-panel { display: flex; flex-direction: column; min-width: 0; max-height: calc(100vh - 240px); }
 .complaint-tabs { display: flex; flex-wrap: wrap; gap: 4px; padding-bottom: 12px; border-bottom: 1px solid var(--hairline); margin-bottom: 10px; }
@@ -191,6 +193,7 @@ onBeforeUnmount(() => { alive = false; detailSequence++; pager.dispose() })
 .ticket-item.active { border-color: var(--primary); background: var(--primary-faint); }
 .ticket-item b { color: var(--text-1); font-size: 15px; font-weight: 600; line-height: 1.45; }
 .ticket-item small { color: var(--text-3); font-size: 11px; line-height: 1.5; }
+.ticket-item .ticket-code{color:var(--primary-active);font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}.ticket-item .ticket-time{font-variant-numeric:tabular-nums}
 .ticket-item .pill { justify-self: start; }
 .detail-panel { min-width: 0; min-height: 420px; }
 .detail-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 12px; margin-bottom: 14px; border-bottom: 1px solid var(--hairline); }

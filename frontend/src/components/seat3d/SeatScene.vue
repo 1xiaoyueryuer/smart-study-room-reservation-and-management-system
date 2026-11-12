@@ -79,7 +79,7 @@ function fadeSwitch(change, animate = true) {
     .to(renderer.domElement, { opacity: 1, duration })
 }
 function enterSeat(animate = true) {
-  const seat = props.seats.find(s => s.id === props.selectedId && s.status === 'available' && s.available_windows?.length > 0)
+  const seat = props.seats.find(s => s.id === props.selectedId && s.status === 'available' && s.matching_windows?.length > 0)
   if (!seat) { emit('exit-first-person'); return }
   fadeSwitch(() => {
     seated = true
@@ -122,7 +122,7 @@ function hit(event) {
   const item = ray.intersectObjects(model.pickables, false)[0]
   const seat = item?.object.userData.seats?.[item.instanceId]
   tip.value = seat ? { seat, x: Math.max(8, Math.min(event.clientX - rect.left + 14, rect.width - 225)), y: Math.max(8, Math.min(event.clientY - rect.top + 14, rect.height - 100)) } : null
-  renderer.domElement.style.cursor = seat ? 'pointer' : 'grab'
+  renderer.domElement.style.cursor = seat?.status === 'available' && seat.matching_windows?.length ? 'pointer' : 'grab'
   return seat
 }
 function onDown(e) {
@@ -145,7 +145,7 @@ function onUp(e) {
   pointerCount = Math.max(0, pointerCount - 1)
   if (host.value?.hasPointerCapture(e.pointerId)) host.value.releasePointerCapture(e.pointerId)
   if (!seated && !transitioning.value && down?.id === e.pointerId && !props.blocked && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 6) {
-    const seat = hit(e); if (seat) emit('select', seat)
+    const seat = hit(e); if (seat?.status === 'available' && seat.matching_windows?.length) emit('select', seat)
   }
   down = null
 }
@@ -192,6 +192,7 @@ onBeforeUnmount(() => {
       <strong>{{ tip.seat.seat_no }} · {{ stateLabels[seatState(tip.seat, selectedId)] }}</strong>
       <span>{{ seatType(tip.seat) }} · {{ zoneName[tip.seat.zone] }}</span>
       <span v-if="tip.seat.near_window">靠窗座位</span>
+      <span>全部空闲时间：{{ tip.seat.all_windows?.map(window => `${window.available_start}–${window.available_end}`).join('、') || '无' }}</span>
     </div>
   </div>
 </template>
