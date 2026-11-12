@@ -38,7 +38,7 @@ class RepositoryConventionsTest(unittest.TestCase):
         self.assertTrue(check.file_errors(paths))
 
     def test_archived_reference_is_not_treated_as_a_new_feature(self):
-        self.assertEqual([], check.file_errors(set(check.REQUIRED) | {'docs/upstream/README-original.md', 'docs/MIGRATION.md'}))
+        self.assertEqual([], check.file_errors(set(check.REQUIRED) | {'docs/archive/旧版说明.md', 'docs/MIGRATION.md'}))
 
     def test_personal_config_and_build_outputs_cannot_be_tracked(self):
         for path in ['.local/postgres.env', '.env', 'backend/target/app.jar', 'frontend/node_modules/vue/index.js', 'work/debug.txt']:

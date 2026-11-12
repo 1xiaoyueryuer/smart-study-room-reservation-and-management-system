@@ -30,7 +30,7 @@ public class SeedData implements ApplicationRunner {
             opening.initializeDefaults(room);
             for(int row=1;row<=layouts[r][0];row++) for(int col=1;col<=layouts[r][1];col++) {
                 long seat=db.insert("INSERT INTO seats(room_id,seat_no,row_no,col_no,zone,has_power,near_window) VALUES(?,?,?,?,?,?,?)",room,String.format("%02d-%02d",row,col),row,col,zones[r],col%2==0,col==1);
-                // 明确为模拟历史，随当天生成，不复制原项目已过期的固定日期。
+                // 明确为模拟历史，随当天生成，不复制早期固定的过期日期。
                 if((row+col)%4==0) for(int d=1;d<=14;d++) {
                     LocalDate day=LocalDate.now(clock).minusDays(d);int hour=9+(row+col+d)%8;
                     long user=studentIds.get((row*col+d)%40);
