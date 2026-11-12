@@ -4,7 +4,7 @@
 |---|---|
 | 根 README.md | 系统入口、运行与 PostgreSQL 连接说明 |
 | AGENTS.md | 智能体规则唯一入口 |
-| CONTRIBUTING.md | 当前单人main直推流程、可选PR与外部设置边界 |
+| CONTRIBUTING.md | 固定成员分支、PR、D 审核与普通合并的实际流程 |
 | docs/团队分工.md | 成员身份、真实路径与共享范围 |
 | docs/BASELINE-v1.0.0-postgresql.md | 首个 PostgreSQL 基线，标签固定，不覆盖其历史含义 |
 | docs/MIGRATION.md | 当前迁移事实与需求差距，原位更新 |

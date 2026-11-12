@@ -1,3 +1,6 @@
-# Responsibility declaration; enforced review protection is not yet configured.
-# Current single-developer phase does not require independent approval or PRs.
+# Responsibility declaration; enforced review protection is configured in GitHub settings.
+# D (@1xiaoyueryuer) is the lead and first reviewer of other members' PRs.
+# A second authorized Code Owner is pending. Until that account is added, D's own PRs
+# cannot satisfy the Code Owner approval requirement and must stay unmerged.
+# A/B/C per-path ownership is added after their GitHub accounts are confirmed.
 * @1xiaoyueryuer
