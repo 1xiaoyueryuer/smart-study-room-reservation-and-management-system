@@ -22,7 +22,7 @@ public class DatabaseMigrations {
     }
 
     static void migrate(Flyway flyway, boolean adoptLegacy) {
-        // 仅显式接管且结构完全吻合的旧库；不启用 baselineOnMigrate。
+        // 仅显式接管且结构完全吻合的既有库；不启用 baselineOnMigrate。
         try (Connection c = flyway.getConfiguration().getDataSource().getConnection()) {
             String schema = flyway.getConfiguration().getDefaultSchema();
             if (schema == null) schema = c.getSchema();
@@ -31,7 +31,7 @@ public class DatabaseMigrations {
                 try (ResultSet rows = q.executeQuery()) {
                     rows.next();
                     if (rows.getInt(1) == 0 && !signature(c, schema).isEmpty()) {
-                        if (!adoptLegacy) throw new IllegalStateException("旧库尚未接管：备份并核对后显式设置 studyroom.migration.adopt-legacy=true；禁止盲目 baseline");
+                        if (!adoptLegacy) throw new IllegalStateException("数据库尚未纳管：备份并核对后显式设置 studyroom.migration.adopt-legacy=true；禁止盲目 baseline");
                         verifyLegacy(c, schema);
                         flyway.baseline();
                     }
@@ -53,10 +53,10 @@ public class DatabaseMigrations {
             if (!actual.equals(expected)) {
                 Set<String> missing = new TreeSet<>(expected); missing.removeAll(actual);
                 Set<String> extra = new TreeSet<>(actual); extra.removeAll(expected);
-                throw new IllegalStateException("旧库结构与 V1 不符，拒绝接管；缺少/变化=" + missing + "; 多出/变化=" + extra);
+                throw new IllegalStateException("库结构与 V1 不符，拒绝接管；缺少/变化=" + missing + "; 多出/变化=" + extra);
             }
         } finally {
-            // 参考结构仅用于核对，始终回滚，绝不修改旧业务数据。
+            // 参考结构仅用于核对，始终回滚，绝不修改既有业务数据。
             c.rollback(); c.setAutoCommit(true);
         }
     }

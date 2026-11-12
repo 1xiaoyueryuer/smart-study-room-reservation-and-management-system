@@ -74,7 +74,7 @@ def git(*args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--base', help='仅检查该完整SHA之后的新增提交，不追溯上游历史')
+    parser.add_argument('--base', help='仅检查该完整SHA之后的新增提交，不追溯已有历史')
     parser.add_argument('--head', default='HEAD')
     parser.add_argument('--check-head', action='store_true')
     parser.add_argument('--branch')

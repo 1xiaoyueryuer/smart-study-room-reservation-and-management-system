@@ -1,10 +1,3 @@
-# Go
-backend/studyroom-server
-backend/bin/
-*.exe
-*.test
-*.out
-
 # Node
 frontend/node_modules/
 frontend/dist/
@@ -24,8 +17,6 @@ logs/
 
 # 本地临时
 tmp/
-.gocache/
-**/.gocache/
 .qa-docx/
 **/.qa-docx/
 
