@@ -35,7 +35,7 @@ HTTP检查覆盖健康探针明确返回 PostgreSQL、登录、权限、座位�
 
 在backend以 `java '-Dfile.encoding=UTF-8' -jar target/studyroom-server-1.0.0.jar --server.port=8081 --spring.datasource.url=jdbc:postgresql://127.0.0.1:5433/studyroom_java_test --studyroom.seed=false --studyroom.scheduler-enabled=false` 启动独立服务。health确认库名后，另一终端根目录运行 `python scripts/teaching_performance.py`。每次保留独立UTC+UUID结果于work/s31-performance-runs，记录源码SHA、HEAD/dirty、环境、每项样本、全部慢/失败、未知提交及清理结果；不将最后成功结果覆盖早先失败。每个地图样本实际顺序读取两房共1000座，计两HTTP及JSON解码之和；磁盘落盘、登录与实际0.6秒限流间隔不计单样本。查询与创建各至少20成功且无失败，按最近秩ceil(0.95n)取p95，与2000ms教学目标比较；同机单客户端不证明校园高并发容量。
 
-HTTPsmoke为 `python scripts/api_smoke.py`，可设置进程环境 `STUDYROOM_API`、`STUDYROOM_SMOKE_ADMIN/OWNER/OTHER_USERNAME`及各自`_PASSWORD`（三账号六项凭据）、`STUDYROOM_SMOKE_ROOM_ID`。不配置时兼容旧admin/stu01/stu02种子；不会自动启种子或改开放时间/解除限制。本轮夹具账号为s31_smoke_admin/owner/other，另staff供页面；只使用源码中明确的工程测试口令。日志不输出凭据/令牌。先health硬核测试库，再读取凭据、登录和业务操作；配置检查及故障清理断言由scripts/tests验证。
+HTTPsmoke为 `python scripts/api_smoke.py`，可设置进程环境 `STUDYROOM_API`、`STUDYROOM_SMOKE_ADMIN/OWNER/OTHER_USERNAME`及各自`_PASSWORD`（三账号六项凭据）、`STUDYROOM_SMOKE_ROOM_ID`。S31历史真实批次使用当时的s31_smoke_admin/owner/other工程夹具；当前脚本默认已随S33改为9位演示账号`202630001`、`202600001`、`202600002`，不会自动启种子或改开放时间/解除限制。本轮夹具账号另staff供页面；只使用源码中明确的工程测试口令。日志不输出凭据/令牌。先health硬核测试库，再读取凭据、登录和业务操作；配置检查及故障清理断言由scripts/tests验证。
 
 ## S31 本轮实际结果（2026-10-30）
 

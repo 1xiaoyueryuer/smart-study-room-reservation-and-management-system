@@ -2,12 +2,14 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { getReservation, checkinReservation } from '../api/reservation'
 import { createSeatScanner } from '../composables/seatScanner.js'
+import { checkinDeadlineOf } from '../composables/checkinDeadline.js'
 import SButton from '../components/ui/SButton.vue'
 import SBanner from '../components/ui/SBanner.vue'
 import UsageRecordSummary from '../components/UsageRecordSummary.vue'
 const props = defineProps({ id: { type: [String, Number], required: true } })
 const reservation = ref(null), loading = ref(false), detailError = ref(''), scanError = ref(''), scanNotice = ref(''), uncertainResult = ref(false), accepted = ref(false), success = ref(false), submitting = ref(false), decoding = ref(false), cameraActive = ref(false), video = ref(null)
 const canCheckin = computed(() => !loading.value && !detailError.value && reservation.value?.allowed_actions?.includes('checkin'))
+const deadline = computed(() => checkinDeadlineOf(reservation.value))
 let loadSequence = 0, reservationScope = 0, disposed = false
 const scanner = createSeatScanner({ onCode: submitCode, onError: text => { scanError.value = text }, onCamera: active => { cameraActive.value = active } })
 async function load() {
@@ -80,12 +82,27 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; scanner.stop() })
 </script>
 <template>
   <div class="page-view checkin-page">
-    <header class="view-heading" data-page-title><div><h1>扫码签到</h1><p class="heading-sub">扫描本人预约座位的二维码；签到窗口为开始起至开始后15分钟之前。</p></div></header>
+    <header class="view-heading" data-page-title><div><h1>扫码签到</h1><p class="heading-sub">签到窗口为开始时刻（含）至开始后 15 分钟（不含）；扫描本人预约座位的二维码。</p></div></header>
     <section class="card">
       <div class="card-title-row"><h3>预约信息</h3><SButton :disabled="submitting || decoding" :loading="loading" @click="refresh">刷新预约</SButton></div>
       <p v-if="loading" role="status">正在核对本人预约及签到权限…</p>
       <SBanner v-if="detailError" type="error" :title="detailError"><SButton :disabled="submitting || decoding" @click="refresh">重试查询</SButton></SBanner>
-      <template v-if="reservation && !loading && !detailError"><p>{{ reservation.room_name }} · {{ reservation.seat_no }} · {{ reservation.res_date }} {{ reservation.start_time }}—{{ reservation.end_time }}</p><p v-if="!canCheckin && !success" role="status">当前预约不可签到（{{ reservation.status === 'unused_ended' ? '未使用结束' : reservation.status === 'checked_in' ? '使用中' : reservation.status === 'completed' ? '已结束' : reservation.status === 'cancelled' ? '已取消' : '请以我的预约当前操作为准' }}）。<RouterLink to="/mine">返回我的预约</RouterLink></p><p v-if="['admin_resource_change','admin_restriction'].includes(reservation.termination_reason)">管理取消（不记用户违约），当次公开原因：{{ reservation.termination_note || '未提供' }}</p><UsageRecordSummary :record="reservation.usage_record" /></template>
+      <template v-if="reservation && !loading && !detailError">
+        <p>{{ reservation.room_name }} · {{ reservation.seat_no }} · {{ reservation.res_date }} {{ reservation.start_time }}—{{ reservation.end_time }}</p>
+        <div v-if="deadline" class="deadline-box" :class="{ extended: deadline.extended }">
+          <span class="deadline-label">签到截止</span>
+          <b>{{ deadline.text }}</b>
+          <span class="deadline-extra">被占求助不会改变原签到截止</span>
+        </div>
+        <p v-if="deadline" class="rule-note">
+          截止时刻不含在可签时间内，例如 15:10 开始、截止 15:25:00，则 15:24:59 可签、15:25:00 起不可签。
+          投诉或求助不会改变该截止时刻；请按当前预约操作及时签到。
+        </p>
+        <p v-if="!canCheckin && !success" role="status">当前预约不可签到（{{ reservation.status === 'unused_ended' ? '未使用结束' : reservation.status === 'checked_in' ? '使用中' : reservation.status === 'completed' ? '已结束' : reservation.status === 'cancelled' ? '已取消' : '请以我的预约当前操作为准' }}）。<RouterLink to="/mine">返回我的预约</RouterLink></p>
+        <p v-if="['admin_resource_change','admin_restriction'].includes(reservation.termination_reason)">管理取消（不记用户违约），当次公开原因：{{ reservation.termination_note || '未提供' }}</p>
+        <p v-if="reservation.status === 'pending'" class="rule-note">发现座位被占？可提交求助，但签到截止不变。<RouterLink :to="{ name: 'complaints', query: { type: 'occupation', reservation_id: String(reservation.id) } }">发起座位被占求助</RouterLink></p>
+        <UsageRecordSummary :record="reservation.usage_record" />
+      </template>
       <SBanner v-if="success" type="success" title="签到及使用记录已确认，请查看当前预约状态。"><RouterLink to="/mine">返回我的预约</RouterLink></SBanner>
       <SBanner v-if="scanNotice" type="info" :title="scanNotice" />
       <SBanner v-if="scanError" type="error" :title="scanError" />
@@ -102,4 +119,12 @@ onBeforeUnmount(() => { disposed = true; loadSequence++; scanner.stop() })
 </template>
 <style scoped>
 .checkin-page{max-width:900px}.scan-controls{display:grid;gap:14px;margin-top:20px}.upload-label{display:grid;gap:8px;max-width:100%;overflow-wrap:anywhere}.upload-label input{max-width:100%;min-width:0}.scan-video{width:100%;max-height:440px;border-radius:var(--r-md);background:#111}.row-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.deadline-box{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;margin:14px 0 6px;padding:14px 18px;border-radius:var(--r-lg);background:var(--surface-2);border:1px solid var(--hairline)}
+.deadline-label{color:var(--text-3);font-size:var(--fs-caption);letter-spacing:.08em}
+.deadline-box b{font-family:var(--font-display);font-size:30px;color:var(--primary);font-variant-numeric:tabular-nums}
+.deadline-box.extended b{color:var(--amber-strong)}
+.deadline-extra{color:var(--text-3);font-size:var(--fs-caption)}
+.rule-note{color:var(--text-3);font-size:var(--fs-caption);line-height:1.7;margin-top:6px}
+.rule-note.warn{color:var(--amber-strong)}
+.rule-note a{color:var(--primary)}
 </style>

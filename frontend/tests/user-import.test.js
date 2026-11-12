@@ -4,11 +4,11 @@ import vm from 'node:vm'
 import { readFile } from 'node:fs/promises'
 import { operationReason, validatePassword } from '../src/components/admin/userForm.js'
 
-const file = () => new File(['campus_id,username,real_name,role\nC1,user1,测试,staff'], 'users.csv', { type: 'text/csv' })
-const validPreview = () => ({ file_sha256: 'sha256-test', total: 1, valid_count: 1, invalid_count: 0, rows: [{ row_number: 2, campus_id: 'C1', username: 'user1', real_name: '测试', role: 'staff', phone: '', email: '', errors: [] }] })
+const file = () => new File(['campus_id,real_name,role\n202630001,测试,staff'], 'users.csv', { type: 'text/csv' })
+const validPreview = () => ({ file_sha256: 'sha256-test', total: 1, valid_count: 1, invalid_count: 0, rows: [{ row_number: 2, campus_id: '202630001', username: '202630001', real_name: '测试', role: 'staff', phone: '', email: '', errors: [] }] })
 async function importer(overrides = {}) {
   const effects = { confirms: 0, emitted: [] }
-  const api = { userImportTemplate: async () => new Blob(['campus_id,username,real_name,role']), previewUserImport: async () => ({ data: validPreview() }), confirmUserImport: async (...args) => { effects.confirms++; effects.args = args; return { data: { imported_count: 1 } } }, ...overrides }
+  const api = { userImportTemplate: async () => new Blob(['campus_id,real_name,role,phone,email']), previewUserImport: async () => ({ data: validPreview() }), confirmUserImport: async (...args) => { effects.confirms++; effects.args = args; return { data: { imported_count: 1 } } }, ...overrides }
   const mocks = {
     vue: { ref: value => ({ value }), computed: getter => ({ get value() { return getter() } }) },
     '../../api/admin': api,

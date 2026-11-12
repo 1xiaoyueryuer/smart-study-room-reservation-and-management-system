@@ -23,6 +23,7 @@ public class OpeningScheduleService {
     }
     private record Schedule(Integer weekday,LocalDate date,String reason,List<Window> windows) {}
     public static final class Calendar {
+        public record OpenTarget(LocalDateTime dueAt,List<Map<String,String>> intervals) {}
         public final Map<String,Object> room;
         public final List<Map<String,Object>> seats;
         private final List<Schedule> schedules;
@@ -30,6 +31,31 @@ public class OpeningScheduleService {
         Calendar(Map<String,Object> room,List<Map<String,Object>> seats,List<Schedule> schedules,List<Map<String,Object>> blocks) { this.room=room;this.seats=seats;this.schedules=schedules;this.blocks=blocks; }
         Calendar withRoom(Map<String,Object> candidate) { return new Calendar(candidate,seats,schedules,blocks); }
         Calendar withSeat(Map<String,Object> candidate) { return new Calendar(room,seats.stream().map(seat->Store.id(seat,"id")==Store.id(candidate,"id")?candidate:seat).toList(),schedules,blocks); }
+        /** Accumulates only whole-room open intervals from the submission instant; seat closures are excluded. */
+        public OpenTarget targetAfterOpenDuration(LocalDateTime submitted,Duration required) {
+            if(required.isNegative()||required.isZero())throw new IllegalArgumentException("开放时长必须为正数");
+            var cursor=submitted;var remaining=required;var intervals=new ArrayList<Map<String,String>>();
+            while(!remaining.isZero()) {
+                LocalDateTime start=nextOpening(cursor);if(start==null)return new OpenTarget(null,List.copyOf(intervals));
+                LocalDate date=start.toLocalDate();LocalDateTime end=null;
+                for(var window:day(date,null).windows()) {
+                    var left=date.atStartOfDay().plusMinutes(window.startMinute());var right=date.atStartOfDay().plusMinutes(window.endMinute());
+                    if(!start.isBefore(left)&&start.isBefore(right)){end=right;break;}
+                }
+                if(end==null||!end.isAfter(start))throw new IllegalStateException("开放目标区间与空间开放日历不一致");
+                Duration available=Duration.between(start,end);Duration consumed=available.compareTo(remaining)>=0?remaining:available;LocalDateTime segmentEnd=start.plus(consumed);
+                var interval=new LinkedHashMap<String,String>();interval.put("start_at",start.toString());interval.put("end_at",segmentEnd.toString());intervals.add(Collections.unmodifiableMap(interval));
+                if(consumed.equals(remaining))return new OpenTarget(segmentEnd,List.copyOf(intervals));
+                remaining=remaining.minus(consumed);cursor=end;
+            }
+            throw new IllegalStateException("开放时长累计未返回目标时刻");
+        }
+        public Map<String,Object> snapshot() {
+            var result=new LinkedHashMap<String,Object>();result.put("campus_zone",ZONE);result.put("room_id",room.get("id"));result.put("room_version",room.get("version"));result.put("room_enabled",room.get("enabled"));
+            var weekly=new ArrayList<Map<String,Object>>();var exceptions=new ArrayList<Map<String,Object>>();
+            for(var schedule:schedules){var entry=new LinkedHashMap<String,Object>();if(schedule.weekday()!=null)entry.put("weekday",schedule.weekday());else entry.put("date",schedule.date().toString());entry.put("windows",schedule.windows().stream().map(window->Map.of("start_minute",window.startMinute(),"end_minute",window.endMinute())).toList());entry.put("reason",schedule.reason());(schedule.weekday()!=null?weekly:exceptions).add(entry);}
+            result.put("weekly",List.copyOf(weekly));result.put("exceptions",List.copyOf(exceptions));result.put("whole_room_unavailability",blocks.stream().filter(block->block.get("seat_id")==null).map(block->{var row=new LinkedHashMap<String,Object>();for(String key:List.of("id","start_at","end_at","reason"))row.put(key,block.get(key));return row;}).toList());return result;
+        }
         /** 仅空间级开放；候选来自同day语义，整段临停跳至并集终点，不设预约日期/天数上限。 */
         public LocalDateTime nextOpening(LocalDateTime from) {
             if(!Boolean.TRUE.equals(room.get("enabled")))return null;var base=new Calendar(room,seats,schedules,List.of());var roomBlocks=blocks.stream().filter(block->block.get("seat_id")==null).sorted(Comparator.comparing(block->LocalDateTime.parse(Store.text(block,"start_at")))).toList();var cursor=from;
