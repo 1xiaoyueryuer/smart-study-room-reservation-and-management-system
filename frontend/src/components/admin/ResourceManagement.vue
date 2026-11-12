@@ -14,6 +14,7 @@ import SSelect from '../ui/SSelect.vue'
 import SDialog from '../ui/SDialog.vue'
 import SBanner from '../ui/SBanner.vue'
 import SEmpty from '../ui/SEmpty.vue'
+import { usePagination } from '../../composables/usePagination'
 
 const emit = defineEmits(['summary'])
 const codeDialog = ref(false), codeSeat = ref(null), codeBusy = ref(false)
@@ -21,6 +22,7 @@ function openSeatCode(seat) { codeSeat.value = seat; codeDialog.value = true }
 const openingDialog = ref(false), openingRoom = ref(null)
 function openSchedule(room) { openingRoom.value = room; openingDialog.value = true }
 const rooms = ref([]), loading = ref(false), error = ref('')
+const { page: roomPage, pages: roomPages, pageItems: roomPageItems } = usePagination(rooms, null, 10)
 const roomDialog = ref(false), editingRoom = ref(null), roomForm = ref({})
 const seatsDialog = ref(false), seatRoom = ref(null), seats = ref([]), seatLoading = ref(false), seatError = ref('')
 const seatDialog = ref(false), editingSeat = ref(null), seatForm = ref({})
@@ -198,7 +200,7 @@ defineExpose({ loadRooms, openCreate })
     <SBanner v-if="writeNotice" type="info" :title="writeNotice" />
     <p v-if="loading" role="status">正在加载空间…</p>
     <SBanner v-if="error" type="error" :title="error"><SButton size="sm" @click="loadRooms">重试</SButton></SBanner>
-    <div v-if="!loading && !error" class="table-wrap"><div class="table-scroll" tabindex="0" aria-label="资源管理列表，可左右滑动"><table class="table resource-table"><thead><tr><th>空间 / 位置</th><th>开放安排</th><th>真实座位 / 有效容量 / 可约容量</th><th>布局范围</th><th>状态 / 原因</th><th>版本</th><th>操作</th></tr></thead><tbody><tr v-for="room in rooms" :key="room.id"><td><b>{{ room.name }}</b><div>{{ room.building || '楼栋未登记' }} · {{ room.floor || '楼层未登记' }}</div><div>{{ room.location || '详细位置未登记' }}</div></td><td><SButton size="sm" @click="openSchedule(room)">开放安排</SButton></td><td>{{ room.seat_count }} / {{ room.capacity }} / {{ room.bookable_capacity }}</td><td>{{ room.seat_rows }}行 × {{ room.seat_cols }}列</td><td>{{ room.enabled ? '启用' : '停用' }}<div>{{ room.resource_reason || '—' }}</div></td><td>{{ room.version }}</td><td><div class="row-actions"><SButton size="sm" @click="openEdit(room)">编辑空间</SButton><SButton size="sm" @click="openSeats(room)">座位维护</SButton><SButton v-if="room.seat_count === 0" size="sm" @click="openBatch(room)">生成座位</SButton><SButton size="sm" :disabled="saving" @click="removeResource(room)">删除空间</SButton></div></td></tr></tbody></table><SEmpty v-if="!rooms.length" description="暂无空间，可新建自习室" /></div></div>
+    <div v-if="!loading && !error" class="table-wrap"><div class="table-scroll" tabindex="0" aria-label="资源管理列表，可左右滑动"><table class="table resource-table"><thead><tr><th>空间 / 位置</th><th>开放安排</th><th>座位 / 容量 / 可约</th><th>布局</th><th>状态</th><th>版本</th><th>操作</th></tr></thead><tbody><tr v-for="room in roomPageItems" :key="room.id"><td><b>{{ room.name }}</b><div>{{ room.location || room.floor || room.building || '位置未登记' }}</div></td><td><SButton size="sm" @click="openSchedule(room)">开放安排</SButton></td><td>{{ room.seat_count }} / {{ room.capacity }} / {{ room.bookable_capacity }}</td><td>{{ room.seat_rows }}行 × {{ room.seat_cols }}列</td><td>{{ room.enabled ? '启用' : '停用' }}<div v-if="room.resource_reason">{{ room.resource_reason }}</div></td><td>{{ room.version }}</td><td><div class="row-actions"><SButton size="sm" @click="openEdit(room)">编辑空间</SButton><SButton size="sm" @click="openSeats(room)">座位维护</SButton><SButton v-if="room.seat_count === 0" size="sm" @click="openBatch(room)">生成座位</SButton><SButton size="sm" :disabled="saving" @click="removeResource(room)">删除空间</SButton></div></td></tr></tbody></table><SEmpty v-if="!rooms.length" description="暂无空间，可新建自习室" /></div></div><div class="list-footer"><span>共 {{ rooms.length }} 条</span><span class="page-info">第 {{ roomPage }} / {{ roomPages }} 页</span><div class="page-actions"><SButton size="sm" :disabled="roomPage<=1" @click="roomPage--">上一页</SButton><SButton size="sm" :disabled="roomPage>=roomPages" @click="roomPage++">下一页</SButton></div></div>
 
     <SDialog v-model="openingDialog" :title="`开放安排 - ${openingRoom?.name || ''}`" width="960px"><OpeningManagement v-if="openingDialog" :room-id="openingRoom.id" @changed="loadRooms" /></SDialog>
     <SDialog v-model="roomDialog" :title="editingRoom === null ? '新建自习室' : '编辑自习室'" width="680px" :show-close="!saving" :close-on-click-modal="!saving">
@@ -214,7 +216,7 @@ defineExpose({ loadRooms, openCreate })
       <SBanner v-if="writeNotice" type="info" :title="writeNotice" /><p class="muted">{{ seatRoom?.building || '楼栋未登记' }} · {{ seatRoom?.floor || '楼层未登记' }} · {{ seatRoom?.location || '位置未登记' }}。实际座位{{ seatRoom?.seat_count }}，有效容量{{ seatRoom?.capacity }}；布局{{ seatRoom?.seat_rows }}行×{{ seatRoom?.seat_cols }}列。</p>
       <div class="row-actions"><SButton size="sm" :loading="seatLoading" @click="loadSeats">刷新座位</SButton><SButton size="sm" variant="primary" :disabled="seatLoading || !!seatError" @click="editSeat()">新增单座位</SButton></div>
       <p v-if="seatLoading" role="status">正在加载全部座位…</p><SBanner v-if="seatError" type="error" :title="seatError"><SButton size="sm" @click="loadSeats">重试</SButton></SBanner>
-      <div v-if="!seatLoading && !seatError" class="table-wrap"><div class="table-scroll" tabindex="0" aria-label="管理座位列表，可左右滑动"><table class="table resource-table"><thead><tr><th>编号</th><th>行 / 列</th><th>区域</th><th>电源 / 靠窗</th><th>状态 / 原因</th><th>版本</th><th>操作</th></tr></thead><tbody><tr v-for="seat in seats" :key="seat.id"><td>{{ seat.seat_no }}</td><td>{{ seat.row_no }} / {{ seat.col_no }}</td><td>{{ zoneLabels[seat.zone] }}</td><td>{{ seat.has_power ? '有电源' : '无电源' }} / {{ seat.near_window ? '靠窗' : '非靠窗' }}</td><td>{{ stateLabels[seat.status] }}<div>{{ seat.resource_reason || '—' }}</div></td><td>{{ seat.version }}</td><td><div class="row-actions"><SButton size="sm" @click="editSeat(seat)">编辑座位</SButton><SButton size="sm" @click="openSeatCode(seat)">座位码</SButton><SButton size="sm" :disabled="saving" @click="removeResource(seat,true)">删除座位</SButton></div></td></tr></tbody></table><SEmpty v-if="!seats.length" description="尚无座位，可新增单座位或在空房批量生成" /></div></div>
+      <div v-if="!seatLoading && !seatError" class="table-wrap"><div class="table-scroll" tabindex="0" aria-label="管理座位列表，可左右滑动"><table class="table resource-table"><thead><tr><th>编号</th><th>行 / 列</th><th>区域</th><th>电源 / 靠窗</th><th>状态</th><th>版本</th><th>操作</th></tr></thead><tbody><tr v-for="seat in seats" :key="seat.id"><td>{{ seat.seat_no }}</td><td>{{ seat.row_no }} / {{ seat.col_no }}</td><td>{{ zoneLabels[seat.zone] }}</td><td>{{ seat.has_power ? '有电源' : '无电源' }} / {{ seat.near_window ? '靠窗' : '非靠窗' }}</td><td>{{ stateLabels[seat.status] }}<div>{{ seat.resource_reason || '—' }}</div></td><td>{{ seat.version }}</td><td><div class="row-actions"><SButton size="sm" @click="editSeat(seat)">编辑座位</SButton><SButton size="sm" @click="openSeatCode(seat)">座位码</SButton><SButton size="sm" :disabled="saving" @click="removeResource(seat,true)">删除座位</SButton></div></td></tr></tbody></table><SEmpty v-if="!seats.length" description="尚无座位，可新增单座位或在空房批量生成" /></div></div>
     </SDialog>
 
     <SDialog v-model="codeDialog" title="座位码管理" width="620px" :show-close="!codeBusy" :close-on-click-modal="!codeBusy"><SeatCodePanel v-if="codeDialog && codeSeat" :key="codeSeat.id" :seat="codeSeat" :room-name="seatRoom?.name" @busy="codeBusy=$event" /></SDialog>
@@ -225,8 +227,11 @@ defineExpose({ loadRooms, openCreate })
     <ResourceChangeConfirm ref="changeConfirm" />
   </section>
 </template>
-<style scoped>
-.resource-table { min-width: 920px; }
+<style scoped>.list-footer{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;margin-top:12px;color:var(--text-3);font-size:var(--fs-caption)}.page-info{text-align:center;white-space:nowrap}.page-actions{display:flex;gap:10px;justify-content:flex-end}
+
+.resource-table { min-width: 1020px; }
+.resource-table .row-actions { flex-wrap: nowrap; white-space: nowrap; }
+.resource-table th:last-child, .resource-table td:last-child { width: 290px; }
 .resource-form { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; }
 .resource-form label { display: grid; gap: 7px; color: var(--text-2); font-size: var(--fs-caption); }
 .full-width,.form-error { grid-column: 1 / -1; }

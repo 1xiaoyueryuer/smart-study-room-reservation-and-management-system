@@ -20,8 +20,8 @@ class SmokeConfigurationTest(unittest.TestCase):
     def test_seed_defaults_remain_compatible_without_room_override(self):
         with patch.dict(os.environ, {}, clear=True):
             accounts, room = smoke.smoke_settings()
-        self.assertEqual(accounts, {'admin': {'username': 'admin', 'password': 'admin123'},
-            'owner': {'username': 'stu01', 'password': '123456'}, 'other': {'username': 'stu02', 'password': '123456'}})
+        self.assertEqual(accounts, {'admin': {'username': '202630001', 'password': 'admin123'},
+            'owner': {'username': '202600001', 'password': '123456'}, 'other': {'username': '202600002', 'password': '123456'}})
         self.assertIsNone(room)
 
     def test_six_overrides_drive_real_login_requests_without_printing_secrets(self):
@@ -61,7 +61,7 @@ class SmokeConfigurationTest(unittest.TestCase):
             with self.subTest(room=room), patch.dict(os.environ, {'STUDYROOM_SMOKE_ROOM_ID': room}, clear=True):
                 with self.assertRaisesRegex(AssertionError, '空间编号'):
                     smoke.smoke_settings()
-        for config in ({'STUDYROOM_SMOKE_ADMIN_PASSWORD': ''}, {'STUDYROOM_SMOKE_OTHER_USERNAME': 'stu01'}):
+        for config in ({'STUDYROOM_SMOKE_ADMIN_PASSWORD': ''}, {'STUDYROOM_SMOKE_OTHER_USERNAME': '202600001'}):
             with patch.dict(os.environ, config, clear=True), self.assertRaises(AssertionError):
                 smoke.smoke_settings()
 

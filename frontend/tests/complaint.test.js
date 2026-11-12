@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import { readFile } from 'node:fs/promises'
 import { ref, computed } from 'vue'
-import { complaintPayload, validateEvidenceFile, positiveId, complaintTypes, complaintStatuses, reservationStatuses, ownerComplaintActions } from '../src/composables/complaintForm.js'
+import { complaintPayload, validateEvidenceFile, positiveId, complaintTypes, serviceKinds, serviceTopics, complaintDisplayType, complaintStatuses, reservationStatuses, ownerComplaintActions, serviceProgressPayload } from '../src/composables/complaintForm.js'
 import {useEvidenceUploadQueue} from '../src/composables/useEvidenceUploadQueue.js'
 const tick=()=>new Promise(resolve=>setImmediate(resolve))
 async function script(file,mocks,exports,extra={}) {
@@ -18,18 +18,31 @@ async function form(overrides={}) {
   const api={createComplaint:async body=>{calls.push(['create',body]);saved=detail(body);return{data:saved}},getComplaint:async id=>{calls.push(['detail',id]);return{data:saved}},uploadComplaintAttachment:async file=>{calls.push(['upload',file]);return{data:meta}},...overrides}
   const page=await script('../src/components/ComplaintForm.vue',{
     vue:{ref,computed,onMounted(){},onBeforeUnmount:handler=>cleanup.push(handler),watch:(source,callback)=>callback()},
-    '../composables/useEvidenceUploadQueue.js':{useEvidenceUploadQueue},'../api/complaint':api,'../api/room':{getRooms:async()=>({data:[]})},'../api/reservation':{getReservation:overrides.getReservation|| (async id=>({data:{id,room_name:'模拟空间',seat_no:'A1',res_date:'2026-10-29',start_time:'08:00',end_time:'09:00',status:'completed'}})),listMyReservations:async()=>({data:[]})},
-    '../composables/complaintForm.js':{complaintPayload,positiveId,complaintTypes,complaintStatuses,reservationStatuses,validateEvidenceFile:overrides.validateEvidenceFile|| (async()=>{})}
-  },'type,description,useReservation,reservationId,roomId,context,contextError,choices,reservationOptions,items,uploading,submitting,uncertain,error,receipt,record,readError,locked,submit,selectFiles,uploadItem,removeItem,selectReservation,reset,refreshCreated',{defineProps:()=>({initialType:'service',initialReservationId:null}),defineEmits:()=>()=>{},crypto:{randomUUID:()=>`00000000-0000-4000-8000-${String(++uuid).padStart(12,'0')}`}})
-  page.description.value='工程模拟：一般服务情况';return{...page,calls,cleanup}
+    '../composables/useEvidenceUploadQueue.js':{useEvidenceUploadQueue},'../api/complaint':{getComplaintPriorityOptions:async()=>({data:{version:1,rules:[]}}),...api},'../api/room':{getRooms:async()=>({data:[{id:1,name:'模拟空间'}]})},'../api/reservation':{getReservation:overrides.getReservation|| (async id=>({data:{id,room_name:'模拟空间',seat_no:'A1',res_date:'2026-10-29',start_time:'08:00',end_time:'09:00',status:'completed'}})),listMyReservations:async()=>({data:[]})},
+    '../composables/complaintForm.js':{complaintPayload,positiveId,complaintTypes,serviceKinds,serviceTopics,complaintStatuses,reservationStatuses,validateEvidenceFile:overrides.validateEvidenceFile|| (async()=>{})}
+  },'branch,description,serviceTopic,reservationId,roomId,context,faultType,impactScope,safetyRisk,unsafeArea,contextError,choices,reservationOptions,items,uploading,submitting,uncertain,error,receipt,record,readError,locked,submit,selectFiles,uploadItem,removeItem,selectReservation,reset,refreshCreated',{defineProps:()=>({initialType:'other_service',initialReservationId:null}),defineEmits:()=>()=>{},crypto:{randomUUID:()=>`00000000-0000-4000-8000-${String(++uuid).padStart(12,'0')}`}})
+  page.description.value='工程模拟：一般服务情况';page.roomId.value=1;page.serviceTopic.value='环境卫生';return{...page,calls,cleanup}
 }
-test('complaint payload permits text-only service or own historical reservation, never guesses occupier or sends a mismatched room',()=>{
-  const base={type:'service',description:'  工程模拟说明  ',reservationId:null,roomId:null,items:[],context:null}
-  assert.equal(complaintPayload(base).description,'工程模拟说明');assert.equal(complaintPayload(base).attachment_ids.length,0)
-  assert.throws(()=>complaintPayload({...base,type:'occupation'}),/必须关联本人预约/)
-  const historical=complaintPayload({...base,type:'occupation',reservationId:5,roomId:99,context:{id:5,status:'cancelled'}})
+test('V1.1 complaint branches require service context and only occupation binds an owned historical reservation',()=>{
+  const base={branch:'other_service',serviceTopic:'环境卫生',description:'  工程模拟说明  ',reservationId:null,roomId:1,items:[],context:null}
+  assert.equal(complaintPayload(base).description,'工程模拟说明');assert.equal(complaintPayload(base).attachment_ids.length,0);assert.equal(complaintPayload(base).service_kind,'other_service')
+  assert.throws(()=>complaintPayload({...base,roomId:null}),/必须选择所属空间/)
+  assert.throws(()=>complaintPayload({...base,branch:'occupation'}),/必须关联本人预约/)
+  const historical=complaintPayload({...base,branch:'occupation',roomId:null,reservationId:5,context:{id:5,status:'cancelled'}})
   assert.equal(historical.reservation_id,5);assert.equal('room_id' in historical,false);assert.equal('occupier_id' in historical,false)
   assert.throws(()=>complaintPayload({...base,description:' '.repeat(10)}),/1至2000/);assert.throws(()=>complaintPayload({...base,description:'字'.repeat(2001)}),/1至2000/)
+})
+test('repair payload carries only repair facts while an unconfigured mapping never becomes a guessed priority',()=>{
+  const payload=complaintPayload({branch:'facility_repair',description:'安全用电情况',reservationId:null,roomId:1,items:[],context:null,faultType:' 电气问题 ',impactScope:'多座',safetyRisk:false,unsafeArea:false})
+  assert.equal(payload.type,'service');assert.equal(payload.service_kind,'facility_repair');assert.equal(payload.fault_type,'电气问题');assert.equal(payload.impact_scope,'多座');assert.equal(payload.room_id,1);assert.equal('initial_priority'in payload,false);assert.equal('priority'in payload,false)
+  assert.throws(()=>complaintPayload({branch:'facility_repair',description:'事实',roomId:1,items:[],faultType:'电气问题',impactScope:'一座',safetyRisk:false,unsafeArea:null}),/安全风险/)
+  assert.equal(complaintPayload({branch:'other_service',serviceTopic:'噪音秩序',description:'工程模拟诉求',roomId:1,items:[],context:null}).service_topic,'噪音秩序')
+  assert.throws(()=>complaintPayload({branch:'other_service',serviceTopic:'卫生',description:'不支持的维修照片',roomId:1,items:[{phase:'uploaded',metadata:{id:'uuid'}}],context:null}),/不接收设施报修现场照片/)
+})
+test('historical service complaints without a subtype display as unknown rather than guessed',()=>{
+  assert.match(complaintTypes.facility_repair,/设施报修/);assert.match(complaintTypes.other_service,/其他服务问题/)
+  assert.equal(complaintDisplayType({type:'service',service_kind:null}),'历史服务问题（类别未留存）')
+  assert.equal(complaintDisplayType({type:'service',service_kind:'facility_repair'}),'设施报修')
 })
 test('evidence validation enforces byte and pixel bounds and revokes local inspection URL on success and failure',async()=>{
   const revoked=[],urls={createObjectURL:()=> 'blob:local',revokeObjectURL:url=>revoked.push(url)}
@@ -41,22 +54,22 @@ test('evidence validation enforces byte and pixel bounds and revokes local inspe
   await assert.rejects(validateEvidenceFile({type:'image/png',size:5*1024*1024+1},{urls,ImageClass:Image}),/5MiB/)
 })
 test('text-only submission writes once, then reads persisted detail and stays submitted rather than accepted or solved',async()=>{
-  const page=await form();await page.submit();assert.deepEqual(page.calls.map(call=>call[0]),['create','detail']);assert.equal(page.receipt.value.status,'submitted');assert.equal(page.record.value.status,'submitted');assert.equal(page.receipt.value.attachment_count,0)
+  const page=await form();page.roomId.value=1;page.serviceTopic.value='环境卫生';await page.submit();assert.deepEqual(page.calls.map(call=>call[0]),['create','detail']);assert.equal(page.receipt.value.status,'submitted');assert.equal(page.record.value.status,'submitted');assert.equal(page.receipt.value.attachment_count,0)
   await page.submit();assert.equal(page.calls.filter(call=>call[0]==='create').length,1)
 })
 test('occupation uses real historical detail and rejects unavailable ownership context without changing reservation state',async()=>{
-  const page=await form();page.type.value='occupation';page.useReservation.value=true;page.choices.value=[{id:5,room_name:'模拟空间',seat_no:'A1',res_date:'2026-10-29',start_time:'08:00',end_time:'09:00',status:'pending'}];await page.selectReservation('5');assert.match(page.reservationOptions.value[0].label,/已结束/);assert.equal(page.context.value.status,'completed');await page.submit();assert.equal(page.calls[0][1].reservation_id,5)
-  const rejected=await form({getReservation:async()=>{throw{status:403,message:'不可读取他人预约'}}});rejected.type.value='occupation';rejected.useReservation.value=true;await rejected.selectReservation(9);await rejected.submit();assert.match(rejected.contextError.value,/他人预约/);assert.equal(rejected.calls.length,0)
+  const page=await form();page.branch.value='occupation';page.choices.value=[{id:5,room_name:'模拟空间',seat_no:'A1',res_date:'2026-10-29',start_time:'08:00',end_time:'09:00',status:'pending'}];await page.selectReservation('5');assert.match(page.reservationOptions.value[0].label,/已结束/);assert.equal(page.context.value.status,'completed');await page.submit();assert.equal(page.calls[0][1].reservation_id,5)
+  const rejected=await form({getReservation:async()=>{throw{status:403,message:'不可读取他人预约'}}});rejected.branch.value='occupation';await rejected.selectReservation(9);await rejected.submit();assert.match(rejected.contextError.value,/他人预约/);assert.equal(rejected.calls.length,0)
 })
 test('failed selected photo remains with text and blocks create until explicit retry succeeds or file is removed',async()=>{
   let fail=true
-  const page=await form({uploadComplaintAttachment:async()=>{if(fail)throw{status:400,message:'照片格式错误'};return{data:meta}}})
+  const page=await form({uploadComplaintAttachment:async()=>{if(fail)throw{status:400,message:'照片格式错误'};return{data:meta}}});page.branch.value='facility_repair';page.faultType.value='照明故障';page.impactScope.value='单座';page.unsafeArea.value=false
   const file={name:'proof.png',type:'image/png',size:100};await page.selectFiles({target:{files:[file],value:'selected'}})
   assert.equal(page.items.value.length,1);assert.equal(page.items.value[0].phase,'error');assert.equal(page.description.value,'工程模拟：一般服务情况');await page.submit();assert.equal(page.calls.length,0);assert.match(page.error.value,/全部已选照片/)
   fail=false;await page.uploadItem(page.items.value[0]);assert.equal(page.items.value[0].phase,'uploaded');await page.submit();assert.equal(page.calls[0][1].attachment_ids[0],meta.id)
 })
 test('unknown upload cannot supply an attachment ID and explicit local removal enables text-only submission',async()=>{
-  const page=await form({uploadComplaintAttachment:async()=>{throw{status:null,message:'timeout'}}})
+  const page=await form({uploadComplaintAttachment:async()=>{throw{status:null,message:'timeout'}}});page.branch.value='facility_repair';page.faultType.value='照明故障';page.impactScope.value='单座';page.unsafeArea.value=false
   await page.selectFiles({target:{files:[{name:'proof.jpg',type:'image/jpeg',size:100}],value:''}})
   assert.match(page.items.value[0].error,/上传结果未确认/);assert.equal(page.items.value[0].metadata,null);page.removeItem(page.items.value[0]);await page.submit();assert.equal(page.calls[0][1].attachment_ids.length,0)
 })
@@ -90,17 +103,17 @@ test('complaint APIs use multipart single file and Bearer blob path, never stati
 })
 
 test('over-limit selection retains file items and cannot silently become a photo-free successful complaint',async()=>{
-  const page=await form();await page.selectFiles({target:{files:Array.from({length:4},(_,i)=>({name:`proof-${i}.png`,type:'image/png',size:100})),value:''}})
+  const page=await form();page.branch.value='facility_repair';page.faultType.value='照明故障';page.impactScope.value='单座';page.unsafeArea.value=false;await page.selectFiles({target:{files:Array.from({length:4},(_,i)=>({name:`proof-${i}.png`,type:'image/png',size:100})),value:''}})
   assert.equal(page.items.value.length,4);assert.equal(page.items.value.every(item=>item.phase==='error'),true);await page.submit();assert.equal(page.calls.length,0)
   page.removeItem(page.items.value[3]);await page.uploadItem(page.items.value[0]);assert.equal(page.items.value[0].phase,'uploaded')
 })
 test('successful receipt omitting a chosen photo stays unknown instead of claiming all attachments saved',async()=>{
-  const page=await form({createComplaint:async body=>({data:{...detail(body),attachments:[]}})})
+  const page=await form({createComplaint:async body=>({data:{...detail(body),attachments:[]}})});page.branch.value='facility_repair';page.faultType.value='照明故障';page.impactScope.value='单座';page.unsafeArea.value=false
   page.items.value=[{phase:'uploaded',metadata:meta}];await page.submit();assert.equal(page.receipt.value,null);assert.equal(page.uncertain.value,true)
 })
 test('own list distinguishes not-yet-read, failed and verified empty responses',async()=>{
   let fail=true
-  const page=await script('../src/views/ComplaintsView.vue',{vue:{ref,computed,onMounted(){},onBeforeUnmount(){}},'vue-router':{useRoute:()=>({query:{}})},'../api/complaint':{listMyComplaints:async()=>{if(fail)throw new Error('本人列表失败');return{data:[]}}},'../composables/complaintForm.js':{complaintTypes,complaintStatuses}},'load,items,loaded,loading,error')
+  const page=await script('../src/views/ComplaintsView.vue',{vue:{ref,computed,onMounted(){},onBeforeUnmount(){}},'vue-router':{useRoute:()=>({query:{}})},'../api/complaint':{listMyComplaints:async()=>{if(fail)throw new Error('本人列表失败');return{data:[]}}},'../composables/complaintForm.js':{complaintDisplayType:record=>record?.type==='service'?'空间服务':record?.type,complaintStatuses}},'load,items,loaded,loading,error')
   assert.equal(page.loaded.value,false);await page.load();assert.equal(page.loaded.value,false);assert.match(page.error.value,/列表失败/)
   fail=false;await page.load();assert.equal(page.loaded.value,true);assert.equal(page.items.value.length,0);assert.equal(page.error.value,'')
 })
@@ -125,4 +138,12 @@ test('creation replay accepts every implemented current state with matching oper
     await page.submit();assert.equal(page.uncertain.value,false);assert.equal(page.receipt.value.status,status);assert.equal(page.record.value.status,status)
   }
   const invalid=await form({createComplaint:async body=>({data:{...detail(body),replayed:false,status:'closed'}})});await invalid.submit();assert.equal(invalid.receipt.value,null);assert.equal(invalid.uncertain.value,true)
+})
+test('repair handoff/progress payload stays structured, explicit-offset and bounded',()=>{
+  const input={stage:'handoff',maintenance_channel:'校内后勤报修平台',handed_off_at:'2026-10-30T09:05',public_note:'工程模拟：已按现有渠道转交，等待确认；非真实派单。'}
+  assert.deepEqual(serviceProgressPayload(input),{...input,handed_off_at:'2026-10-30T09:05:00+08:00'})
+  assert.throws(()=>serviceProgressPayload({...input,stage:'auto_dispatch'}),/进度类型/)
+  assert.throws(()=>serviceProgressPayload({...input,maintenance_channel:' '}),/维修渠道/)
+  assert.throws(()=>serviceProgressPayload({...input,handed_off_at:'2026-10-30T09:05Z'}),/交接时刻/)
+  assert.throws(()=>serviceProgressPayload({...input,public_note:'x'.repeat(1001)}),/公开维修进度/)
 })

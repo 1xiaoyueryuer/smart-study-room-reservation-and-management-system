@@ -4,9 +4,10 @@ import {createRecordPager,recordFields} from '../composables/recordPage.js'
 import RecordFilters from '../components/RecordFilters.vue'
 import RecordPageControls from '../components/RecordPageControls.vue'
 
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {reviewReservationParam} from '../composables/reviewManagement.js'
+import {checkinDeadlineOf, deadlineLabel} from '../composables/checkinDeadline.js'
 import { message, confirmDialog } from '../components/ui/feedback'
 import {
   listMyReservations, cancelReservation, abandonReservation,
@@ -16,7 +17,6 @@ import SButton from '../components/ui/SButton.vue'
 import STag from '../components/ui/STag.vue'
 import SEmpty from '../components/ui/SEmpty.vue'
 import SBanner from '../components/ui/SBanner.vue'
-import ViolationsPanel from '../components/ViolationsPanel.vue'
 import UsageRecordSummary from '../components/UsageRecordSummary.vue'
 import ReviewEditor from '../components/ReviewEditor.vue'
 
@@ -26,7 +26,7 @@ const reviewEditor=ref(null)
 const linkedReservation=ref(null),linkedLoading=ref(false),linkedError=ref('');let linkedAlive=true,linkedSequence=0
 const pager=createRecordPager(listMyReservations,{initial:{record_type:'reservation'},blocked:()=>busyId.value!==null}),fields=recordFields('reservation')
 const {items:list,loading,error,filters,snapshot,snapshotQuery}=pager
-const actionError = ref(''), busyId = ref(null), violations = ref(null)
+const actionError = ref(''), busyId = ref(null)
 
 const statusMeta = {
   pending:     { text: '待签到',   type: 'warning' },
@@ -38,6 +38,10 @@ const statusMeta = {
 }
 const sourceMeta = { manual: '手动选座', auto: '历史智能分配', waitlist: '历史候补递补' }
 const terminationLabels = {user_cancelled:'开始前本人取消',abandon:'开始后主动放弃',no_show:'到签到期限仍未签到',legacy_violation:'历史违约状态，仅作溯源，未转为新独立违规',early_checkout:'提前签退',auto_end:'到期自动结束',legacy_unclassified:'历史结束，具体方式未记录',demo_completed:'演示模拟结束',temp_leave_timeout:'旧暂离流程结束（历史）',admin_resource_change:'资源管理取消（不记用户违约）',admin_restriction:'预约限制管理取消（不记用户违约）'}
+
+function deadlineOf(row) { return checkinDeadlineOf(row) }
+function fmtStamp(value) { return value ? String(value).replace('T', ' ').slice(0, 19) : '' }
+const pendingRows = computed(() => list.value.filter(row => row.status === 'pending' && deadlineOf(row)).slice(0, 3))
 
 const load=()=>pager.refresh(true)
 onBeforeUnmount(()=>{pager.dispose();linkedAlive=false;linkedSequence++})
@@ -64,7 +68,6 @@ function actionsOf(row) {
 const apiMap = { cancel:cancelReservation,abandon:abandonReservation,checkout:checkoutReservation }
 async function refreshAll() {
   await Promise.all([load(),readLinkedReservation()])
-  await violations.value?.refresh()
 }
 function requestOccupationHelp(row) { if (!loading.value && !error.value && busyId.value === null) return router.push({name:'complaints',query:{type:'occupation',reservation_id:String(row.id)}}) }
 async function doAction(row, key) {
@@ -110,66 +113,77 @@ onMounted(async()=>{await refreshAll();const target=reviewReservationParam(route
         </ul>
       </PageHelp></header>
     <!-- 我的预约：页面级双栏 = 左状态筛选 | 右列表 -->
-    <div class="split mine-split">
-    <div class="split-left"><section class="card"><h3>预约与使用记录筛选</h3><RecordFilters v-model="filters" :fields="fields" :disabled="loading||busyId!==null" @apply="pager.apply"/><SButton :disabled="loading||busyId!==null" @click="refreshAll">刷新已应用条件</SButton><p>状态数量与总数均以当前服务端查询为准，不从当前页推算全部记录。</p></section></div>
-    <div class="split-right">
-      <section v-if="route.query.reservation_id" class="card"><h3>消息关联预约（独立读取）</h3><SButton :disabled="linkedLoading||busyId!==null" @click="readLinkedReservation">刷新关联预约</SButton><p v-if="linkedLoading" role="status">正在核对本人关联预约及真实使用记录…</p><SBanner v-if="linkedError" type="error" :title="linkedError"/><template v-if="linkedReservation"><h4>预约#{{linkedReservation.id}} · {{statusMeta[linkedReservation.status]?.text||linkedReservation.status}}</h4><p>{{linkedReservation.room_name}} / {{linkedReservation.seat_no}} · {{linkedReservation.res_date}} {{linkedReservation.start_time}}—{{linkedReservation.end_time}}</p><p>{{terminationLabels[linkedReservation.termination_reason]||linkedReservation.termination_reason||'尚未终止'}}</p><UsageRecordSummary :record="linkedReservation.usage_record"/><p>这是一条独立的本人记录，不计入当前筛选页总数。</p><div class="row-actions"><SButton v-for="action in actionsOf(linkedReservation)" :key="action.key" :disabled="busyId!==null" @click="doAction(linkedReservation,action.key)">{{action.label}}</SButton><SButton :disabled="busyId!==null" @click="reviewEditor?.open(linkedReservation.id)">查看本人评价</SButton></div></template></section>
+    <div class="mine-stack">
+      <section v-if="pendingRows.length" class="pending-strip" aria-label="待签到预约">
+        <article v-for="row in pendingRows" :key="row.id" class="pending-card">
+          <div class="pending-head">
+            <STag type="warning" dot>待签到</STag>
+            <span class="pending-room">{{ row.room_name }} · {{ row.seat_no }}</span>
+          </div>
+          <div class="pending-time">{{ row.res_date }} {{ row.start_time.slice(0, 5) }}—{{ row.end_time.slice(0, 5) }}</div>
+          <div class="pending-deadline">
+            签到截止 <b>{{ deadlineOf(row).text }}</b>
+            <span class="ext-hint">被占求助不会改变原签到截止</span>
+          </div>
+          <p class="pending-note">开始时刻起至截止前可签到；超过截止仍未签到按规则处理。</p>
+          <div class="row-actions">
+            <SButton v-for="a in actionsOf(row)" :key="a.key" size="sm" :variant="actionVariant[a.type]" :disabled="busyId !== null" @click="doAction(row, a.key)">{{ a.label }}</SButton>
+            <SButton size="sm" variant="soft" :disabled="busyId !== null" @click="requestOccupationHelp(row)">座位被占求助</SButton>
+          </div>
+        </article>
+      </section>
 
-      <section class="card">
+      <section class="card mine-card">
         <div class="card-title-row">
-          <h3>
-            预约记录
-            <span class="muted">共 {{ snapshot?.total ?? '—' }} 条</span>
-          </h3>
+          <h3>预约与使用记录</h3>
+          <SButton size="sm" :disabled="loading||busyId!==null" @click="refreshAll">刷新</SButton>
         </div>
+        <RecordFilters v-model="filters" :fields="fields" :disabled="loading||busyId!==null" @apply="pager.apply" />
 
         <p v-if="loading" role="status">正在读取预约、结算已到期状态并查询使用记录…</p>
         <SBanner v-if="error" type="error" :title="error"><SButton size="sm" :disabled="busyId !== null" @click="refreshAll">重试预约查询</SButton></SBanner>
         <SBanner v-if="actionError" type="error" :title="actionError" />
-        <div v-list-motion="pageItems.map(row => row.id + row.status).join()" class="table-wrap">
-          <div class="table-scroll" v-loading="loading" tabindex="0" aria-label="预约记录表格，可左右滑动">
+        <div v-list-motion="pageItems.map(row => row.id + row.status).join()" class="table-wrap mine-table-wrap">
+          <div class="table-scroll no-x" v-loading="loading" aria-label="预约记录">
             <table class="table mine-table">
+              <colgroup>
+                <col style="width:11%" />
+                <col style="width:14%" />
+                <col style="width:8%" />
+                <col style="width:18%" />
+                <col style="width:30%" />
+                <col style="width:19%" />
+              </colgroup>
               <thead>
                 <tr>
-                  <th style="width:106px">日期</th>
-                  <th style="width:128px">时段</th>
-                  <th style="min-width:118px">自习室</th>
-                  <th style="width:64px">座位</th>
-                  <th style="width:90px">来源</th>
-                  <th style="width:96px">状态</th>
-                  <th style="min-width:260px">使用记录</th><th style="width:178px">操作</th>
+                  <th>日期 / 时段</th>
+                  <th>自习室 / 座位</th>
+                  <th>来源</th>
+                  <th>状态</th>
+                  <th>使用记录</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="row in pageItems" :key="row.id">
-                  <td class="num">{{ row.res_date }}</td>
-                  <td class="num">{{ row.start_time.slice(0, 5) }} - {{ row.end_time.slice(0, 5) }}</td>
-                  <td>{{ row.room_name }}</td>
-                  <td class="cell-strong">{{ row.seat_no }}</td>
+                  <td class="num"><b>{{ row.res_date }}</b><div class="time-line">{{ row.start_time.slice(0, 5) }}–{{ row.end_time.slice(0, 5) }}</div></td>
+                  <td class="room-cell"><div class="room-name" :title="row.room_name">{{ row.room_name }}</div><div class="seat-line">座位 {{ row.seat_no }}</div></td>
                   <td><STag>{{ sourceMeta[row.source] || row.source }}</STag></td>
-                  <td>
-                    <STag :type="statusMeta[row.status]?.type" dot :line="row.status === 'cancelled'">
-                      {{ statusMeta[row.status]?.text || row.status }}
-                    </STag>
+                  <td class="status-cell">
+                    <STag :type="statusMeta[row.status]?.type" dot :line="row.status === 'cancelled'">{{ statusMeta[row.status]?.text || row.status }}</STag>
+                    <div v-if="deadlineOf(row) && ['pending','checked_in'].includes(row.status)" class="deadline-line" :class="{ extended: deadlineOf(row).extended }">
+                      签到截止 <b>{{ deadlineOf(row).text }}</b>
+                      <span v-if="deadlineOf(row).extended">（原 {{ deadlineOf(row).baseText }}，已延期）</span>
+                    </div>
                     <div class="termination-detail">{{ terminationLabels[row.termination_reason] || row.termination_reason || '—' }}</div>
                     <div v-if="['admin_resource_change','admin_restriction'].includes(row.termination_reason) && row.termination_note" class="termination-detail">当次公开管理原因：{{ row.termination_note }}</div>
-                    <div v-if="row.ended_at" class="termination-detail">结束：{{ row.ended_at }}（校园时间）</div>
+                    <div v-if="row.ended_at" class="termination-detail">结束：{{ fmtStamp(row.ended_at) }}</div>
                     <div v-if="row.legacy_status" class="termination-detail">历史原状态：{{ row.legacy_status === 'temp_leave' ? '暂离（已退出该流程）' : row.legacy_status }}</div>
                   </td>
-                  <td><UsageRecordSummary :record="row.usage_record" /><div v-if="row.legacy_status === 'temp_leave' && row.leave_at" class="termination-detail">历史暂离登记：{{ row.leave_at }}；不延长原结束。</div></td>
-                  <td>
+                  <td class="usage-cell"><UsageRecordSummary :record="row.usage_record" /><div v-if="row.legacy_status === 'temp_leave' && row.leave_at" class="termination-detail">历史暂离登记：{{ fmtStamp(row.leave_at) }}；不延长原结束。</div></td>
+                  <td class="actions-cell">
                     <span class="row-actions">
-                      <SButton
-                        v-for="a in actionsOf(row)"
-                        :key="a.key"
-                        size="sm"
-                        :variant="actionVariant[a.type]"
-                        :disabled="loading || !!error || busyId !== null"
-                        :loading="busyId === row.id"
-                        @click="doAction(row, a.key)"
-                      >
-                        {{ a.label }}
-                      </SButton>
+                      <SButton v-for="a in actionsOf(row)" :key="a.key" size="sm" :variant="actionVariant[a.type]" :disabled="loading || !!error || busyId !== null" :loading="busyId === row.id" @click="doAction(row, a.key)">{{ a.label }}</SButton>
                       <SButton size="sm" variant="soft" :disabled="loading || !!error || busyId !== null" @click="requestOccupationHelp(row)">座位被占求助</SButton>
                       <SButton size="sm" variant="soft" :disabled="loading || !!error || busyId !== null" @click="reviewEditor?.open(row.id)">评价/查看本人评价</SButton>
                     </span>
@@ -182,9 +196,10 @@ onMounted(async()=>{await refreshAll();const target=reviewReservationParam(route
         </div>
         <RecordPageControls :snapshot="snapshot" :query="snapshotQuery" :fields="fields" :disabled="loading||busyId!==null" @page="pager.turn"/>
       </section>
-      <ViolationsPanel ref="violations" :auto-load="false" />
+
+      <section v-if="route.query.reservation_id" class="card"><h3>消息关联预约（独立读取）</h3><SButton :disabled="linkedLoading||busyId!==null" @click="readLinkedReservation">刷新关联预约</SButton><p v-if="linkedLoading" role="status">正在核对本人关联预约及真实使用记录…</p><SBanner v-if="linkedError" type="error" :title="linkedError"/><template v-if="linkedReservation"><h4>预约#{{linkedReservation.id}} · {{statusMeta[linkedReservation.status]?.text||linkedReservation.status}}</h4><p>{{linkedReservation.room_name}} / {{linkedReservation.seat_no}} · {{linkedReservation.res_date}} {{linkedReservation.start_time}}—{{linkedReservation.end_time}}</p><p v-if="deadlineOf(linkedReservation)" class="linked-deadline">签到截止 <b>{{ deadlineOf(linkedReservation).text }}</b><span v-if="deadlineOf(linkedReservation).extended">（已延期，原 {{ deadlineOf(linkedReservation).baseText }}）</span></p><p>{{terminationLabels[linkedReservation.termination_reason]||linkedReservation.termination_reason||'尚未终止'}}</p><UsageRecordSummary :record="linkedReservation.usage_record"/><p>这是一条独立的本人记录，不计入当前筛选页总数。</p><div class="row-actions"><SButton v-for="action in actionsOf(linkedReservation)" :key="action.key" :disabled="busyId!==null" @click="doAction(linkedReservation,action.key)">{{action.label}}</SButton><SButton :disabled="busyId!==null" @click="reviewEditor?.open(linkedReservation.id)">查看本人评价</SButton></div></template></section>
+
       <ReviewEditor ref="reviewEditor"/>
-    </div>
     </div>
   </div>
 </template>
@@ -193,16 +208,46 @@ onMounted(async()=>{await refreshAll();const target=reviewReservationParam(route
 
 
 .kpi-lg .kpi-num { font-size: 24px; }
-.mine-table { min-width: 1220px; }
+.mine-stack { display: flex; flex-direction: column; gap: 16px; }
+.mine-card { min-width: 0; }
+.mine-table-wrap { margin-top: 20px; overflow: hidden; }
+.mine-table-wrap .table-scroll { overflow-x: hidden; }
+.mine-table { width: 100%; table-layout: fixed; }
+.mine-table th, .mine-table td { padding: 10px; vertical-align: top; font-size: 13px; }
+.mine-table thead th { font-size: 11px; }
+.mine-table .num b { display: block; color: var(--text-1); font-weight: 600; font-variant-numeric: tabular-nums; }
+.time-line { color: var(--text-3); font-size: 12px; margin-top: 3px; }
+.room-cell { min-width: 0; }
+.room-name { color: var(--text-1); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.seat-line { color: var(--text-3); font-size: 12px; margin-top: 3px; }
+.status-cell, .usage-cell { min-width: 0; }
+.status-cell .termination-detail { max-width: none; }
+.actions-cell .row-actions { display: flex; flex-wrap: wrap; gap: 6px; white-space: normal; }
+.actions-cell :deep(.s-btn) { font-size: 11px; }
+.deadline-line { margin-top: 6px; color: var(--text-3); font-size: var(--fs-caption); white-space: nowrap; }
+.deadline-line b { color: var(--text-1); font-variant-numeric: tabular-nums; }
+.deadline-line.extended b { color: var(--amber-strong); }
+.pending-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.pending-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 18px 20px;
+  background: linear-gradient(160deg, #fffdf8, #faf3e4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-1);
+}
+.pending-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.pending-room { color: var(--text-2); font-size: var(--fs-body-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pending-time { font-family: var(--font-display); font-size: 20px; color: var(--text-1); }
+.pending-deadline { color: var(--text-2); font-size: var(--fs-body-sm); display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.pending-deadline b { font-family: var(--font-display); font-size: 24px; color: var(--primary); font-variant-numeric: tabular-nums; }
+.ext-tag { background: var(--amber-weak); color: var(--amber-strong); border-radius: var(--r-full); padding: 2px 8px; font-size: 11px; }
+.ext-hint { color: var(--text-4); font-size: 11px; }
+.pending-note { color: var(--text-3); font-size: 11px; line-height: 1.6; }
+.pending-card .row-actions { margin-top: auto; }
+.linked-deadline { color: var(--text-2); font-size: var(--fs-body-sm); }
+.linked-deadline b { color: var(--amber-strong); font-variant-numeric: tabular-nums; }
 .termination-detail { font-size:var(--fs-caption); max-width:240px; overflow-wrap:anywhere; color:var(--text-3); margin-top:5px; }
-.mine-table .row-actions {
-  flex-wrap: nowrap;
-  white-space: nowrap;
-}
-.mine-table td:nth-child(3) {
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 </style>

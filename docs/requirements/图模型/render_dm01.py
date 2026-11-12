@@ -14,11 +14,12 @@ ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / "模型源与图件.md"
 OUTPUT = ROOT / "图件" / "DM-01.png"
 SIZE = (3120, 2520)
-BOX = (440, 200)
+BOX = (440, 260)
 LAYOUT = {
     "自习空间": (130, 260), "座位": (130, 930),
     "投诉": (800, 260), "预约": (800, 930), "评价": (800, 1570),
-    "用户": (1440, 260), "违规": (1440, 1410), "申诉": (1440, 1920),
+    "用户": (1440, 620), "违规": (1440, 1410), "申诉": (1440, 1920),
+    "报修映射版本": (2320, 260),
     "预约限制": (2320, 930),
 }
 
@@ -78,7 +79,7 @@ def render():
     image = Image.new("RGB", SIZE, "#F8FAFC"); draw = ImageDraw.Draw(image)
     navy, ink, line, teal = "#17324D", "#233D56", "#6B829B", "#0F766E"
     draw.text((100, 58), "DM-01 核心领域类图", fill=navy, font=font(64, True))
-    draw.text((100, 148), "配套规格 v0.25 · S20 新增自动处罚来源关联；其他核心类与属性保持原源", fill="#536C83", font=font(31))
+    draw.text((100, 148), "配套规格 v0.26 · V1.1设施报修映射快照与原处罚来源约束", fill="#536C83", font=font(31))
     labels = []
     for a, left, right, b, caption in edges:
         p, q = point_on_box(a, b), point_on_box(b, a)
@@ -95,7 +96,7 @@ def render():
     for name, attributes in classes.items():
         x, y = LAYOUT[name]; w, h = BOX
         if 77 + len(attributes)*43 + 28 > h: raise ValueError("Attributes exceed node height: " + name)
-        emphasized = name in {"违规", "预约限制"}
+        emphasized = name in {"违规", "预约限制", "报修映射版本"}
         draw.rounded_rectangle([x,y,x+w,y+h], radius=19, fill="#F0FDFA" if emphasized else "white", outline=teal if emphasized else "#7A96B0", width=4)
         draw.line([(x+2,y+76),(x+w-2,y+76)], fill="#B8CCDB", width=2)
         draw.text((x+w/2,y+38), name, anchor="mm", fill=navy, font=font(42, True))
