@@ -2,7 +2,7 @@
 
 智慧自习室预约与管理系统。当前基线版本：**v1.0.0-postgresql（Java + PostgreSQL）**。后续需求实现继续在本项目迭代；此版本通过 Git 标签保留，源码快照不含个人口令、运行日志或本机工具配置。
 
-基于 [imicola/smart-study-room](https://github.com/imicola/smart-study-room) 的课程项目二次开发：保留原 Vue 3 前端，后端改为 Java 17 + Spring Boot，使用 Docker PostgreSQL 17 和已有 Redis，已移除智能助手。保留原作者 MIT 许可证。
+基于 [imicola/smart-study-room](https://github.com/imicola/smart-study-room)（MIT 许可）的课程项目二次开发，保留原作者 MIT 许可证。
 
 当前已接入校园账号、开放安排、预约签到与使用结算、三种连续空档找座方案、资源变更善后，以及投诉材料、管理核实、独立提醒、反馈确认结案、处理目标提示、核实事件的手动违规登记，以及独立预约限制、30天累计触发、统一资格和本人申诉、审核与违规限制重算。核实补签也已接入；本人使用评价已接入；评价管理回复隐藏及校园公开也已接入；后续记录查询、消息整合和统计仍待继续落实，详见 [迁移说明与需求差距](docs/MIGRATION.md)。
 
@@ -80,9 +80,9 @@ Java 从 `.local/server.jar` 独立副本运行，不锁定 Maven 构建产物�
 | 应用配置 | `.local/application-local.properties` |
 | Docker 密码文件 | `.local/postgres.env` |
 
-随机口令只保存在上述被 Git 忽略的本地文件中。可在 IDEA、DataGrip、DBeaver 等工具中按该配置连接。数据库与旧 openGauss 的5432端口独立；没有改动原有业务数据。
+随机口令只保存在上述被 Git 忽略的本地文件中。可在 IDEA、DataGrip、DBeaver 等工具中按该配置连接。数据库使用独立端口，不与本机其他数据库实例共用数据。
 
-数据库结构由 Flyway 增量迁移管理。旧版无迁移历史的数据库首次升级默认拒绝启动；停服务并备份后，通过应用参数 `--studyroom.migration.adopt-legacy=true` 一次接管，程序核对结构与V1一致后才升级，完成后移除参数。未知结构不能盲目baseline；恢复与验证见 [F01架构方案](docs/features/F01-校园账号与权限/校园账号与权限功能架构方案.md)。
+数据库结构由 Flyway 增量迁移管理。已有数据但缺少迁移记录的库首次升级默认拒绝启动；停服务并备份后，通过应用参数 `--studyroom.migration.adopt-existing=true` 一次纳管，程序核对结构与V1一致后才建立基线，完成后移除参数。未知结构不能盲目baseline；恢复与验证见 [F01架构方案](docs/features/F01-校园账号与权限/校园账号与权限功能架构方案.md)。
 
 首次部署或换一台电脑时：
 
@@ -106,11 +106,11 @@ Java 从 `.local/server.jar` 独立副本运行，不锁定 Maven 构建产物�
 
 集成测试只使用并清理专用测试库 `studyroom_java_test`，代码会检查库名。普通构建可省略 `-Integration`。需要额外HTTP联调时，先在8081启动明确连接测试库且已有模拟种子的独立服务，再执行 `python ./scripts/api_smoke.py`；脚本默认8081，并在任何业务写入前核对健康响应的实际库名，只允许 `studyroom_java_test`。可通过 `STUDYROOM_API` 指定专用测试服务地址，但不能指向开发库；模拟预约最终取消，临时无历史房间会删除。
 
-[本次验证结果](docs/VALIDATION.md) 与上游资料分开保存。`docs/upstream/` 和 `diagrams/` 是原作者材料，不等于本组贡献或本次测试结果。
+[本次验证结果](docs/VALIDATION.md) 单独保存，内容以本组实际执行的范围与结果为准。
 
 后端入口为 `backend/src/main/java/cn/studyroom/`：`Requests` 定义前端契约，控制器提供接口，`AuthService`/`WebSecurity` 负责权限，`UserService` 维护校园账号，`ResourceService` 管理资源，`OpeningScheduleService` 计算合法窗口，`ResourceChangeService` 编排预览与管理取消，`Slot`/`BookingService` 统一预约时间与事务，`UsageService` 记录实际使用，`RestrictionPolicy` 维护限制事实与资格、`RestrictionWorkflow` 编排限制及既有预约善后，`AvailabilityService` 计算连续空档，`StatsService` 汇总统计，`Store` 处理 SQL 和保真时间映射。
 
-应用仅监听127.0.0.1。上游来源和许可证在本项目中保留；原作者材料不能作为本组的实现或测试结果。
+应用仅监听127.0.0.1。许可证信息见仓库内 LICENSE 文件。
 
 
 核实补签：管理端“核实补签”按真实预约编号查询，填写业务签到时刻、公开理由及私有核实依据，明确自报后确认。仅原签到期限内仍有效、账号与资源可用且无冲突的待签到预约允许操作；截止、已终止或已有使用记录不能补签恢复。本人使用记录展示补签来源、业务时刻与真实操作时刻，可沿原流程签退；私有依据仅管理员可见。

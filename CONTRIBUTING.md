@@ -76,7 +76,7 @@ git push origin member/a
 
 不接受 update、fix bug、前端：更新、文档：修改一下等空泛标题。PR 标题和最终合并提交标题也遵守此格式。首次推送前，同一未分享且无人依赖的小功能修正可 amend；已推送或有依赖后追加修复提交，不擅自 rebase、reset、force push 或更改他人历史，不用 --no-verify 绕过检查。
 
-v1.0.0-postgresql 固定第一个 PostgreSQL 版本，后续 main 继续迭代；检查只针对新增提交，不追溯重写上游或已发布基线。
+v1.0.0-postgresql 固定第一个 PostgreSQL 版本，后续 main 继续迭代；检查只针对新增提交，不追溯重写已有基线。
 
 ## 审核与权限的实际边界
 
@@ -103,7 +103,7 @@ v1.0.0-postgresql 固定第一个 PostgreSQL 版本，后续 main 继续迭代�
 - 仓库检查：`python scripts/check_repository.py`；检查器测试：`python -m unittest discover -s scripts/tests -v`。
 - Java/Vue业务构建：`./scripts/Build.ps1 -Integration`；运行服务接口联调：`python scripts/api_smoke.py`。按本次变更选择，不为文档调整重复全部数据库测试。
 - 集成测试只使用 studyroom_java_test。`.local/`、`.env`、口令、JWT密钥、真实学生数据、依赖缓存和完整日志不上传。
-- 保留原作者 MIT 和来源，真实报告与上游参考材料分开。
+- 保留原作者 MIT 和来源，真实报告与参考资料分开。
 
 ## 本次调整（2026-11-08）
 
